@@ -1,0 +1,10 @@
+fastapi
+alembic
+celery
+minio
+psycopg[binary]
+pydantic-settings
+python-multipart
+redis
+SQLAlchemy
+uvicorn[standard]
