@@ -39,6 +39,8 @@ class OpenAICompatibleLLMProvider:
     def __init__(self, config: LLMRequestConfig) -> None:
         self.config = config
         self.model_name = config.model
+        self.last_provider_name = self.provider_name
+        self.last_provider_model = self.model_name
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         payload = {
@@ -78,6 +80,8 @@ class CustomJSONEndpointLLMProvider:
     def __init__(self, config: LLMRequestConfig) -> None:
         self.config = config
         self.model_name = config.model
+        self.last_provider_name = self.provider_name
+        self.last_provider_model = self.model_name
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         response = _post_json(
@@ -109,6 +113,8 @@ class OllamaLLMProvider:
     def __init__(self, config: LLMRequestConfig) -> None:
         self.config = config
         self.model_name = config.model
+        self.last_provider_name = self.provider_name
+        self.last_provider_model = self.model_name
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         response = _post_json(
@@ -141,12 +147,28 @@ class FallbackLLMProvider:
         self.primary = primary
         self.fallback = fallback
         self.model_name = f"{primary.provider_name}:{primary.model_name}|{fallback.provider_name}:{fallback.model_name}"
+        self.last_provider_name = primary.provider_name
+        self.last_provider_model = primary.model_name
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         try:
-            return self.primary.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            result = self.primary.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            self.last_provider_name = getattr(self.primary, "last_provider_name", self.primary.provider_name)
+            self.last_provider_model = getattr(self.primary, "last_provider_model", self.primary.model_name)
+            return result
         except LLMProviderError:
-            return self.fallback.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            result = self.fallback.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            self.last_provider_name = getattr(self.fallback, "last_provider_name", self.fallback.provider_name)
+            self.last_provider_model = getattr(self.fallback, "last_provider_model", self.fallback.model_name)
+            return result
+
+
+def get_effective_provider_name(provider: LLMProvider) -> str:
+    return getattr(provider, "last_provider_name", provider.provider_name)
+
+
+def get_effective_model_name(provider: LLMProvider) -> str:
+    return getattr(provider, "last_provider_model", provider.model_name)
 
 
 def build_llm_provider(settings: Settings) -> LLMProvider:

@@ -10,6 +10,8 @@ services:
       - "${APP_BIND_IP:?APP_BIND_IP is required}:${NGINX_PORT:?NGINX_PORT is required}:80"
     volumes:
       - ./infras/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    expose:
+      - "8081"
     networks:
       - public
       - internal
@@ -57,12 +59,36 @@ services:
       PROMETHEUS_URL: "${PROMETHEUS_URL:-http://prometheus:9090}"
       ADMIN_METRICS_CACHE_KEY: "${ADMIN_METRICS_CACHE_KEY:-admin:metrics:snapshot}"
       ADMIN_METRICS_CACHE_TTL_SECONDS: "${ADMIN_METRICS_CACHE_TTL_SECONDS:-10}"
-      ASR_PROVIDER: "${ASR_PROVIDER:-local}"
-      SPEAKER_EMBEDDING_PROVIDER: "${SPEAKER_EMBEDDING_PROVIDER:-wespeaker}"
-      ANALYSIS_PROVIDER: "${ANALYSIS_PROVIDER:-local}"
-      TEXT_EMBEDDING_PROVIDER: "${TEXT_EMBEDDING_PROVIDER:-local}"
-      EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-64}"
-      RERANK_PROVIDER: "${RERANK_PROVIDER:-local}"
+      AUTH_SESSION_TTL_HOURS: "${AUTH_SESSION_TTL_HOURS:-168}"
+      MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
+      HF_HOME: "${HF_HOME:-/models/.hf-cache}"
+      VOICE_FFMPEG_PATH: "${VOICE_FFMPEG_PATH:-ffmpeg}"
+      VOICE_WORK_DIR: "${VOICE_WORK_DIR:-/tmp/omnicall-audio}"
+      VAD_MIN_SPEECH_MS: "${VAD_MIN_SPEECH_MS:-300}"
+      VAD_SILENCE_GAP_MS: "${VAD_SILENCE_GAP_MS:-500}"
+      VAD_ENERGY_THRESHOLD: "${VAD_ENERGY_THRESHOLD:-0.012}"
+      ASR_MODEL: "${ASR_MODEL:-whisper-small-int8}"
+      ASR_COMPUTE_TYPE: "${ASR_COMPUTE_TYPE:-int8}"
+      ASR_COMMAND: "${ASR_COMMAND:-}"
+      ASR_TIMEOUT_SECONDS: "${ASR_TIMEOUT_SECONDS:-120}"
+      DIARIZATION_MODEL: "${DIARIZATION_MODEL:-wespeaker-voxceleb-resnet34}"
+      DIARIZATION_COMMAND: "${DIARIZATION_COMMAND:-}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-nomic-embed-text}"
+      EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-768}"
+      EMBEDDING_TIMEOUT_SECONDS: "${EMBEDDING_TIMEOUT_SECONDS:-30}"
+      RERANK_MODEL: "${RERANK_MODEL:-bge-reranker-v2-m3}"
+      RERANK_COMMAND: "${RERANK_COMMAND:-}"
+      RERANK_TOP_K: "${RERANK_TOP_K:-12}"
+      RERANK_OUTPUT_K: "${RERANK_OUTPUT_K:-6}"
+      RERANK_TIMEOUT_SECONDS: "${RERANK_TIMEOUT_SECONDS:-30}"
+      GUARDRAIL_MODEL: "${GUARDRAIL_MODEL:-llama-guard3:1b}"
+      GUARDRAIL_TIMEOUT_SECONDS: "${GUARDRAIL_TIMEOUT_SECONDS:-20}"
+      GUARDRAIL_MAX_RETRIES: "${GUARDRAIL_MAX_RETRIES:-0}"
+      GUARDRAIL_INPUT_ENABLED: "${GUARDRAIL_INPUT_ENABLED:-true}"
+      GUARDRAIL_TRANSCRIPT_ENABLED: "${GUARDRAIL_TRANSCRIPT_ENABLED:-true}"
+      GUARDRAIL_CONTEXT_ENABLED: "${GUARDRAIL_CONTEXT_ENABLED:-true}"
+      GUARDRAIL_OUTPUT_ENABLED: "${GUARDRAIL_OUTPUT_ENABLED:-true}"
+      GUARDRAIL_STRICT_MODE: "${GUARDRAIL_STRICT_MODE:-false}"
       LLM_PROVIDER: "${LLM_PROVIDER:-endpoint}"
       LLM_API_BASE_URL: "${LLM_API_BASE_URL:-http://localhost:8001/v1}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
@@ -72,14 +98,19 @@ services:
       LLM_MAX_RETRIES: "${LLM_MAX_RETRIES:-1}"
       LLM_RETRY_BACKOFF_SECONDS: "${LLM_RETRY_BACKOFF_SECONDS:-0.2}"
       LLM_FALLBACK_PROVIDER: "${LLM_FALLBACK_PROVIDER:-ollama}"
-      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
-      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:3b}"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://ollama:11434}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TZ: "${TZ:-Asia/Ho_Chi_Minh}"
     expose:
       - "8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+      model-init:
+        condition: service_completed_successfully
+    volumes:
+      - model_cache:${MODEL_CACHE_DIR:-/models}
     networks:
       - internal
     healthcheck:
@@ -138,12 +169,35 @@ services:
       MILVUS_PORT: "${MILVUS_PORT:-19530}"
       MILVUS_COLLECTION: "${MILVUS_COLLECTION:-meeting_chunks}"
       VECTOR_PROVIDER: "${VECTOR_PROVIDER:-milvus}"
-      ASR_PROVIDER: "${ASR_PROVIDER:-local}"
-      SPEAKER_EMBEDDING_PROVIDER: "${SPEAKER_EMBEDDING_PROVIDER:-wespeaker}"
-      ANALYSIS_PROVIDER: "${ANALYSIS_PROVIDER:-local}"
-      TEXT_EMBEDDING_PROVIDER: "${TEXT_EMBEDDING_PROVIDER:-local}"
-      EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-64}"
-      RERANK_PROVIDER: "${RERANK_PROVIDER:-local}"
+      MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
+      HF_HOME: "${HF_HOME:-/models/.hf-cache}"
+      VOICE_FFMPEG_PATH: "${VOICE_FFMPEG_PATH:-ffmpeg}"
+      VOICE_WORK_DIR: "${VOICE_WORK_DIR:-/tmp/omnicall-audio}"
+      VAD_MIN_SPEECH_MS: "${VAD_MIN_SPEECH_MS:-300}"
+      VAD_SILENCE_GAP_MS: "${VAD_SILENCE_GAP_MS:-500}"
+      VAD_ENERGY_THRESHOLD: "${VAD_ENERGY_THRESHOLD:-0.012}"
+      ASR_MODEL: "${ASR_MODEL:-whisper-small-int8}"
+      ASR_COMPUTE_TYPE: "${ASR_COMPUTE_TYPE:-int8}"
+      ASR_COMMAND: "${ASR_COMMAND:-}"
+      ASR_TIMEOUT_SECONDS: "${ASR_TIMEOUT_SECONDS:-120}"
+      DIARIZATION_MODEL: "${DIARIZATION_MODEL:-wespeaker-voxceleb-resnet34}"
+      DIARIZATION_COMMAND: "${DIARIZATION_COMMAND:-}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-nomic-embed-text}"
+      EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-768}"
+      EMBEDDING_TIMEOUT_SECONDS: "${EMBEDDING_TIMEOUT_SECONDS:-30}"
+      RERANK_MODEL: "${RERANK_MODEL:-bge-reranker-v2-m3}"
+      RERANK_COMMAND: "${RERANK_COMMAND:-}"
+      RERANK_TOP_K: "${RERANK_TOP_K:-12}"
+      RERANK_OUTPUT_K: "${RERANK_OUTPUT_K:-6}"
+      RERANK_TIMEOUT_SECONDS: "${RERANK_TIMEOUT_SECONDS:-30}"
+      GUARDRAIL_MODEL: "${GUARDRAIL_MODEL:-llama-guard3:1b}"
+      GUARDRAIL_TIMEOUT_SECONDS: "${GUARDRAIL_TIMEOUT_SECONDS:-20}"
+      GUARDRAIL_MAX_RETRIES: "${GUARDRAIL_MAX_RETRIES:-0}"
+      GUARDRAIL_INPUT_ENABLED: "${GUARDRAIL_INPUT_ENABLED:-true}"
+      GUARDRAIL_TRANSCRIPT_ENABLED: "${GUARDRAIL_TRANSCRIPT_ENABLED:-true}"
+      GUARDRAIL_CONTEXT_ENABLED: "${GUARDRAIL_CONTEXT_ENABLED:-true}"
+      GUARDRAIL_OUTPUT_ENABLED: "${GUARDRAIL_OUTPUT_ENABLED:-true}"
+      GUARDRAIL_STRICT_MODE: "${GUARDRAIL_STRICT_MODE:-false}"
       LLM_PROVIDER: "${LLM_PROVIDER:-endpoint}"
       LLM_API_BASE_URL: "${LLM_API_BASE_URL:-http://localhost:8001/v1}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
@@ -153,8 +207,8 @@ services:
       LLM_MAX_RETRIES: "${LLM_MAX_RETRIES:-1}"
       LLM_RETRY_BACKOFF_SECONDS: "${LLM_RETRY_BACKOFF_SECONDS:-0.2}"
       LLM_FALLBACK_PROVIDER: "${LLM_FALLBACK_PROVIDER:-ollama}"
-      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
-      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:3b}"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://ollama:11434}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TZ: "${TZ:-Asia/Ho_Chi_Minh}"
     depends_on:
@@ -166,8 +220,12 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      ollama-init:
+        condition: service_completed_successfully
+      model-init:
+        condition: service_completed_successfully
+    volumes:
+      - model_cache:${MODEL_CACHE_DIR:-/models}
     networks:
       - internal
     healthcheck:
@@ -180,6 +238,65 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  ollama:
+    image: ollama/ollama:latest
+    expose:
+      - "11434"
+    ports:
+      - "${LOCAL_BIND_IP:?LOCAL_BIND_IP is required}:${OLLAMA_PORT:?OLLAMA_PORT is required}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - internal
+      - public
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: "${OLLAMA_BASE_URL:-http://ollama:11434}"
+      OLLAMA_BOOTSTRAP_MODELS: "${OLLAMA_BOOTSTRAP_MODELS-qwen2.5:1.5b nomic-embed-text llama-guard3:1b}"
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "set -eu;
+      for model in $${OLLAMA_BOOTSTRAP_MODELS}; do
+        echo \"Pulling Ollama model: $${model}\";
+        ollama pull \"$${model}\";
+      done"
+    networks:
+      - internal
+    restart: "no"
+
+  model-init:
+    build:
+      context: .
+      dockerfile: infras/model-init/Dockerfile
+    environment:
+      MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
+      HF_HOME: "${HF_HOME:-/models/.hf-cache}"
+      ASR_HF_REPO: "${ASR_HF_REPO-Systran/faster-whisper-small}"
+      ASR_HF_REVISION: "${ASR_HF_REVISION-main}"
+      ASR_DOWNLOAD_COMMAND: "${ASR_DOWNLOAD_COMMAND-}"
+      DIARIZATION_HF_REPO: "${DIARIZATION_HF_REPO-Wespeaker/wespeaker-voxceleb-resnet34-LM}"
+      DIARIZATION_HF_REVISION: "${DIARIZATION_HF_REVISION-main}"
+      DIARIZATION_DOWNLOAD_COMMAND: "${DIARIZATION_DOWNLOAD_COMMAND-}"
+      RERANK_HF_REPO: "${RERANK_HF_REPO-BAAI/bge-reranker-v2-m3}"
+      RERANK_HF_REVISION: "${RERANK_HF_REVISION-main}"
+      RERANK_DOWNLOAD_COMMAND: "${RERANK_DOWNLOAD_COMMAND-}"
+    volumes:
+      - model_cache:${MODEL_CACHE_DIR:-/models}
+    networks:
+      - internal
+    restart: "no"
 
   frontend:
     build:
@@ -260,11 +377,13 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management-alpine
+    command: ["sh", "-c", "rabbitmq-plugins enable --offline rabbitmq_prometheus && rabbitmq-server"]
     environment:
       RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
       RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
     expose:
       - "5672"
+      - "15692"
     ports:
       - "${LOCAL_BIND_IP:?LOCAL_BIND_IP is required}:${RABBITMQ_MANAGEMENT_PORT:?RABBITMQ_MANAGEMENT_PORT is required}:15672"
     volumes:
@@ -284,6 +403,7 @@ services:
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
+      MINIO_PROMETHEUS_AUTH_TYPE: "public"
     expose:
       - "9000"
     ports:
@@ -298,25 +418,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
-      MINIO_BUCKET: "${MINIO_BUCKET:?MINIO_BUCKET is required}"
-      MILVUS_BUCKET: "${MILVUS_BUCKET:?MILVUS_BUCKET is required}"
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" &&
-      mc mb --ignore-existing \"local/$${MINIO_BUCKET}\" &&
-      mc mb --ignore-existing \"local/$${MILVUS_BUCKET}\""
-    networks:
-      - internal
-    restart: "no"
 
   etcd:
     image: quay.io/coreos/etcd:v3.5.18
@@ -343,8 +444,8 @@ services:
     depends_on:
       etcd:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     environment:
       ETCD_ENDPOINTS: "etcd:2379"
       MINIO_ADDRESS: "minio:9000"
@@ -355,6 +456,8 @@ services:
     expose:
       - "19530"
       - "9091"
+    ports:
+      - "${LOCAL_BIND_IP:?LOCAL_BIND_IP is required}:${MILVUS_WEBUI_PORT:?MILVUS_WEBUI_PORT is required}:9091"
     volumes:
       - milvus_data:/var/lib/milvus
     networks:
@@ -365,6 +468,70 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  docker-exporter:
+    image: python:3.12-alpine
+    command: ["python", "/app/exporter.py"]
+    expose:
+      - "9104"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infras/docker-exporter/exporter.py:/app/exporter.py:ro
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:9104/health', timeout=3).read().strip()==b'ok'\""
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}?sslmode=disable"
+    expose:
+      - "9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9187/metrics >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    command:
+      - "--redis.addr=redis://redis:6379"
+      - "--redis.password=${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+    expose:
+      - "9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.4.0
+    command:
+      - "--nginx.scrape-uri=http://nginx:8081/nginx_status"
+    expose:
+      - "9113"
+    depends_on:
+      nginx:
+        condition: service_healthy
+    networks:
+      - internal
 
   prometheus:
     image: prom/prometheus:v3.0.1
@@ -398,3 +565,5 @@ volumes:
   etcd_data:
   milvus_data:
   prometheus_data:
+  ollama_data:
+  model_cache:

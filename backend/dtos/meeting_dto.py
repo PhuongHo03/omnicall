@@ -48,6 +48,7 @@ class ProcessingJobResponse(BaseModel):
 class ProcessingStatusResponse(BaseModel):
     meeting: MeetingResponse
     latest_job: ProcessingJobResponse | None
+    latest_asset: MeetingAssetResponse | None
 
 
 class MeetingChatRequest(BaseModel):

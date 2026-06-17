@@ -2,14 +2,6 @@ export type MeetingStatus = "DRAFT" | "UPLOADED" | "QUEUED" | "PROCESSING" | "RE
 
 export type ProcessingJobStatus = "PENDING" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 
-export type DevAuthContext = {
-  userId: string;
-  workspaceId: string;
-  userEmail: string;
-  userName: string;
-  workspaceName: string;
-};
-
 export type Meeting = {
   id: string;
   workspaceId: string;
@@ -44,6 +36,7 @@ export type ProcessingJob = {
 export type ProcessingStatus = {
   meeting: Meeting;
   latestJob: ProcessingJob | null;
+  latestAsset: MeetingAsset | null;
 };
 
 export type MeetingDraft = {
@@ -87,4 +80,19 @@ export type MeetingChatHistory = {
   meetingId: string;
   title: string;
   messages: MeetingChatMessage[];
+};
+
+export type MeetingIntelligenceResult = Record<string, unknown>;
+
+export type AccountFile = {
+  id: string;
+  workspaceId: string;
+  ownerUserId: string;
+  meetingId: string | null;
+  assetId: string | null;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  linkedToMeeting: boolean;
+  createdAt: string;
 };

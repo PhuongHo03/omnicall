@@ -7,12 +7,12 @@ from backend.configs.database import SessionLocal
 from backend.models.core_models import User, Workspace
 from backend.models.enums import MeetingStatus, ProcessingJobStatus
 from backend.providers.analysis_provider import SCHEMA_VERSION
-from backend.providers.embedding_provider import LocalHashEmbeddingProvider
 from backend.providers.vector_provider import VectorProviderError, VectorSearchHit
 from backend.repositories.auth_repository import AuthRepository
 from backend.repositories.meeting_repository import MeetingIntelligenceResultRepository, MeetingRepository, ProcessingJobRepository
 from backend.repositories.retrieval_repository import MeetingChunkRepository
 from backend.services.retrieval_search_service import RetrievalSearchService
+from backend.tests.fakes import TestEmbeddingProvider
 
 
 class FakeVectorProvider:
@@ -38,6 +38,14 @@ class BrokenVectorProvider:
 
     def search_chunk_ids(self, *, workspace_id: str, meeting_id: str, query_vector: list[float], limit: int) -> list[VectorSearchHit]:
         raise VectorProviderError("vector unavailable")
+
+
+class ReverseRerankProvider:
+    provider_name = "reverse-rerank"
+    model_name = "test-rerank"
+
+    def rerank(self, *, query: str, chunks: list, output_k: int) -> list:
+        return list(reversed(chunks))[:output_k]
 
 
 class RetrievalSearchServiceTestCase(unittest.TestCase):
@@ -88,7 +96,13 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
                 provider_model="test",
                 result_json={"schemaVersion": SCHEMA_VERSION},
             )
-            provider = LocalHashEmbeddingProvider(dimensions=8)
+            provider = TestEmbeddingProvider(dimensions=8)
+            summary_text = "The meeting covers processed JSON retrieval and chatbot evidence."
+            detailed_text = "The customer returned a coat because the size was wrong and the desired size was unavailable."
+            key_point_text = "Key point: structured summaries should answer overview questions."
+            requirement_text = "The customer requires a refund for a returned coat."
+            constraint_text = "The return request was made outside the standard refund timeframe."
+            blocker_text = "The first order number was not accepted by the database."
             action_text = "Bob must index action items by Friday."
             risk_text = "Risk is low quality audio reducing answer confidence."
             MeetingChunkRepository(session).replace_for_result(
@@ -96,6 +110,12 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
                 meeting_id=meeting.id,
                 intelligence_result_id=result.id,
                 chunks=[
+                    _chunk("summary-executive", "summary.executive", summary_text, provider),
+                    _chunk("summary.detailed-001", "summary.detailed", detailed_text, provider),
+                    _chunk("summary.keyPoints-001", "summary.keyPoints", key_point_text, provider),
+                    _chunk("analysis.requirements-001", "analysis.requirements", requirement_text, provider),
+                    _chunk("analysis.constraints-001", "analysis.constraints", constraint_text, provider),
+                    _chunk("analysis.blockers-001", "analysis.blockers", blocker_text, provider),
                     _chunk("analysis.actionItems-001", "analysis.actionItems", action_text, provider),
                     _chunk("analysis.risks-001", "analysis.risks", risk_text, provider),
                 ],
@@ -115,13 +135,13 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         with SessionLocal() as session:
             service = RetrievalSearchService(
                 session,
-                embedding_provider=LocalHashEmbeddingProvider(dimensions=8),
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
                 vector_provider=vector_provider,
             )
             results = service.search_meeting(
                 workspace_id=self.workspace_id,
                 meeting_id=meeting_id,
-                query="What risk affects confidence?",
+                query="What affects confidence?",
             )
 
         self.assertEqual([result.record.chunk_id for result in results], ["analysis.risks-001"])
@@ -132,7 +152,7 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         with SessionLocal() as session:
             service = RetrievalSearchService(
                 session,
-                embedding_provider=LocalHashEmbeddingProvider(dimensions=8),
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
                 vector_provider=BrokenVectorProvider(),
             )
             results = service.search_meeting(
@@ -144,30 +164,97 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         self.assertTrue(results)
         self.assertEqual(results[0].record.chunk_id, "analysis.actionItems-001")
 
-    def test_local_embedding_vector_hits_without_text_evidence_are_filtered(self) -> None:
+    def test_vietnamese_overview_question_pins_summary_chunks(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Cuộc họp này bàn về vấn đề gì?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "summary-executive")
+        self.assertEqual(results[1].record.chunk_id, "summary.detailed-001")
+        self.assertEqual(results[2].record.chunk_id, "summary.keyPoints-001")
+        self.assertEqual(service.last_rerank_metadata["intentPinnedCount"], 3)
+
+    def test_vietnamese_reason_question_pins_detailed_reason_chunks(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Tại sao khách lại muốn đổi trả áo?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "summary.detailed-001")
+        self.assertEqual(results[1].record.chunk_id, "summary-executive")
+        self.assertEqual(results[2].record.chunk_id, "analysis.requirements-001")
+        self.assertEqual(service.last_rerank_metadata["intentPinnedCount"], 6)
+
+    def test_vietnamese_return_process_question_pins_return_context(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Khách có thể đổi trả hàng như nào?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "summary.detailed-001")
+        self.assertEqual(results[1].record.chunk_id, "analysis.requirements-001")
+        self.assertEqual(results[2].record.chunk_id, "analysis.constraints-001")
+        self.assertEqual(service.last_rerank_metadata["intentPinnedCount"], 5)
+
+    def test_rerank_provider_reorders_vector_candidates(self) -> None:
         meeting_id = self.create_meeting_chunks()
         vector_provider = FakeVectorProvider(
             [
                 VectorSearchHit(chunk_id="analysis.risks-001", score=0.99),
+                VectorSearchHit(chunk_id="analysis.actionItems-001", score=0.91),
             ]
         )
 
         with SessionLocal() as session:
             service = RetrievalSearchService(
                 session,
-                embedding_provider=LocalHashEmbeddingProvider(dimensions=8),
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
                 vector_provider=vector_provider,
+                rerank_provider=ReverseRerankProvider(),
             )
             results = service.search_meeting(
                 workspace_id=self.workspace_id,
                 meeting_id=meeting_id,
-                query="What is tomorrow's Bitcoin price?",
+                query="risk action",
             )
 
-        self.assertEqual(results, [])
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "analysis.actionItems-001")
+        self.assertEqual(service.last_rerank_metadata["provider"], "reverse-rerank")
 
 
-def _chunk(chunk_id: str, section_type: str, text: str, provider: LocalHashEmbeddingProvider) -> dict:
+def _chunk(chunk_id: str, section_type: str, text: str, provider: TestEmbeddingProvider) -> dict:
     embedding = provider.embed_text(text)
     return {
         "chunkId": chunk_id,

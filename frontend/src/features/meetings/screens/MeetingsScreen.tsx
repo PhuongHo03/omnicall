@@ -1,26 +1,24 @@
-import { useState } from "react";
-
-import { DevContextPanel } from "../components/DevContextPanel";
+import type { Account } from "../../auth/types/authTypes";
+import { AccountFileLibrary } from "../components/AccountFileLibrary";
+import { MeetingAssetPlaybackPanel } from "../components/MeetingAssetPlaybackPanel";
+import { MeetingIntelligenceResultPanel } from "../components/MeetingIntelligenceResultPanel";
 import { MeetingActionPanel } from "../components/MeetingActionPanel";
 import { MeetingChatPanel } from "../components/MeetingChatPanel";
 import { MeetingCreateForm } from "../components/MeetingCreateForm";
 import { MeetingList } from "../components/MeetingList";
 import { useMeetingWorkspace } from "../hooks/useMeetingWorkspace";
 
-type DetailTab = "operations" | "chat";
+type MeetingsScreenProps = {
+  account: Account;
+  token: string;
+};
 
-export function MeetingsScreen() {
-  const workspace = useMeetingWorkspace();
-  const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("operations");
+export function MeetingsScreen({ account, token }: MeetingsScreenProps) {
+  const workspace = useMeetingWorkspace(token, account.role === "Admin");
 
   return (
     <div className="workspace-screen">
-      <div className="workspace-rail">
-        <DevContextPanel
-          context={workspace.authContext}
-          disabled={workspace.isLoading}
-          onChange={workspace.setAuthContext}
-        />
+      <aside className="workspace-sidebar">
         <MeetingCreateForm
           draft={workspace.draft}
           disabled={workspace.isLoading}
@@ -34,55 +32,60 @@ export function MeetingsScreen() {
           onRefresh={workspace.refreshMeetings}
           onSelect={workspace.setSelectedMeetingId}
         />
-      </div>
+        <AccountFileLibrary
+          disabled={workspace.isLoading}
+          files={workspace.accountFiles}
+          playbackUrl={workspace.filePlaybackUrl}
+          selectedFileId={workspace.selectedFileId}
+          onDelete={workspace.deleteLibraryFile}
+          onPlay={workspace.playLibraryFile}
+          onRefresh={workspace.refreshAccountFiles}
+          onUpload={workspace.uploadLibraryFile}
+        />
+      </aside>
 
       <div className="workspace-main">
-        <div className="detail-tabs" role="tablist" aria-label="Meeting workspace views">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeDetailTab === "operations"}
-            className={activeDetailTab === "operations" ? "detail-tabs__item detail-tabs__item--active" : "detail-tabs__item"}
-            onClick={() => setActiveDetailTab("operations")}
-          >
-            Operations
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeDetailTab === "chat"}
-            className={activeDetailTab === "chat" ? "detail-tabs__item detail-tabs__item--active" : "detail-tabs__item"}
-            onClick={() => setActiveDetailTab("chat")}
-          >
-            Chat
-          </button>
+        <div className="account-banner">
+          <div>
+            <strong>{account.displayName}</strong>
+            <span>{account.email}</span>
+          </div>
+          <span className="status-pill status-pill--teal">{account.role}</span>
         </div>
+        <MeetingActionPanel
+          canProcess={workspace.canProcess}
+          canUpload={workspace.canUpload}
+          disabled={workspace.isLoading}
+          hasLockedAsset={workspace.hasLockedAsset}
+          isRecording={workspace.isRecording}
+          lastAsset={workspace.lastAsset}
+          latestJob={workspace.latestJob}
+          selectedMeeting={workspace.selectedMeeting}
+          showAdminActions={account.role === "Admin"}
+          onDeleteMeeting={workspace.deleteSelectedMeeting}
+          onFileUpload={workspace.uploadFile}
+          onProcess={workspace.queueProcessing}
+          onRefreshStatus={workspace.refreshStatus}
+          onStartRecording={workspace.startRecording}
+          onStopRecording={workspace.stopRecording}
+        />
 
-        {activeDetailTab === "operations" ? (
-          <MeetingActionPanel
-            disabled={workspace.isLoading}
-            isRecording={workspace.isRecording}
-            lastAsset={workspace.lastAsset}
-            latestJob={workspace.latestJob}
-            selectedMeeting={workspace.selectedMeeting}
-            onFileUpload={workspace.uploadFile}
-            onProcess={workspace.queueProcessing}
-            onRefreshStatus={workspace.refreshStatus}
-            onStartRecording={workspace.startRecording}
-            onStopRecording={workspace.stopRecording}
-          />
-        ) : (
-          <MeetingChatPanel
-            disabled={workspace.isLoading}
-            messages={workspace.chatMessages}
-            question={workspace.chatQuestion}
-            selectedMeeting={workspace.selectedMeeting}
-            sessionId={workspace.chatSessionId}
-            onQuestionChange={workspace.setChatQuestion}
-            onRefreshHistory={workspace.refreshChatHistory}
-            onSubmitQuestion={workspace.submitChatQuestion}
-          />
-        )}
+        {workspace.selectedMeeting?.status === "READY" ? (
+          <>
+            <MeetingAssetPlaybackPanel asset={workspace.lastAsset} playbackUrl={workspace.assetPlaybackUrl} />
+            <MeetingIntelligenceResultPanel result={workspace.intelligenceResult} />
+            <MeetingChatPanel
+              disabled={workspace.isLoading}
+              messages={workspace.chatMessages}
+              question={workspace.chatQuestion}
+              selectedMeeting={workspace.selectedMeeting}
+              sessionId={workspace.chatSessionId}
+              onQuestionChange={workspace.setChatQuestion}
+              onRefreshHistory={workspace.refreshChatHistory}
+              onSubmitQuestion={workspace.submitChatQuestion}
+            />
+          </>
+        ) : null}
 
         <div className="event-strip" aria-live="polite">
           <span className={workspace.error ? "event-strip__error" : ""}>

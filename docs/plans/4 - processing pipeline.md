@@ -138,15 +138,16 @@
 ### What was implemented
 
 - Phase 4 is complete.
-- Implemented the first worker-backed processing slice: Celery worker, RabbitMQ queue consumption, Redis processing lock, deterministic ASR/analysis provider stubs, JSONB persistence for `meeting_intelligence_result`, and read APIs for transcript, insights, and complete intelligence JSON.
+- Implemented the first worker-backed processing slice: Celery worker, RabbitMQ queue consumption, Redis processing lock, initial provider stubs, JSONB persistence for `meeting_intelligence_result`, and read APIs for transcript, insights, and complete intelligence JSON.
 - Verified one uploaded `.wav` meeting through the gateway. The meeting reached `READY`, the processing job reached `SUCCEEDED`, and the persisted JSON used schema `meeting-intelligence-result.v1`.
 - Updated the backend unittest flow to assert worker-backed result persistence and the three intelligence read endpoints.
 - Added `LLMProvider` adapters for OpenAI-compatible API/private endpoints, custom JSON endpoints, Ollama, and primary-to-Ollama fallback selection.
-- Added `LLMAnalysisProvider`, gated by `ANALYSIS_PROVIDER=llm`, to generate `meeting-intelligence-result.v1` sections from LLM JSON while preserving the authoritative ASR transcript and falling back to deterministic analysis on provider failure.
+- Added `LLMAnalysisProvider` to generate `meeting-intelligence-result.v1` sections from LLM JSON while preserving the authoritative ASR transcript.
+- Added a one-time LLM analysis repair prompt for providers that return parseable JSON but echo the input or omit required intelligence sections such as `summary.executive`.
 - Added worker service tests for locked jobs, already-succeeded job skip behavior, duplicate-result prevention, and provider failure state transitions.
 - Added `DocumentTextExtractionProvider` for `.txt`, `.md`, `.vtt`, and `.srt` transcript or note uploads. Text uploads are parsed into transcript segments and recorded with `source.transcriptionProvider=local-text-extraction`.
 - Added derived PostgreSQL rows for `transcript_segments` and `meeting_insights`, rebuilt from the versioned JSON result for retrieval/filter/citation workflows.
-- Added rule-based deterministic extraction for decisions, action items, notes, timeline items, risks, blockers, dependencies, follow-ups, questions, metrics, entities, and important quotes.
+- Added initial structured extraction coverage for decisions, action items, notes, timeline items, risks, blockers, dependencies, follow-ups, questions, metrics, entities, and important quotes. Later phases replaced production analysis with the LLM analysis boundary.
 - Added LLM retry/backoff configuration and retryable provider failure classification.
 
 ### What was changed from original plan
@@ -156,8 +157,7 @@
 
 ### Notes for future sessions
 
-- The current transcription and analysis providers are deterministic placeholders. They validate the processing contract, not production insight quality.
-- The LLM analysis path is implemented and tested behind `ANALYSIS_PROVIDER=llm`, but local Compose defaults to deterministic analysis until a real provider endpoint is configured.
+- Later phases superseded the placeholder provider behavior: production analysis now uses `LLMAnalysisProvider`, and provider/model failures create safe failed jobs rather than synthetic analysis output.
 - RabbitMQ 4 rejects Celery remote-control pidbox transient queues in this local setup, so the worker disables remote control/gossip/mingle and uses a socket healthcheck.
 - `meeting_intelligence_result` remains the source of truth. `transcript_segments` and `meeting_insights` are derived rows and can be rebuilt from source asset, provider config, and schema version.
 

@@ -1,6 +1,7 @@
 from typing import BinaryIO
 
 from minio import Minio
+from minio.error import S3Error
 
 from backend.configs.settings import Settings, get_settings
 
@@ -41,6 +42,13 @@ class ObjectStorageProvider:
         finally:
             response.close()
             response.release_conn()
+
+    def remove_object(self, *, object_key: str) -> None:
+        try:
+            self.client.remove_object(self.settings.minio_bucket, object_key)
+        except S3Error as exc:
+            if exc.code not in {"NoSuchKey", "NoSuchBucket"}:
+                raise
 
 
 def get_object_storage_provider() -> ObjectStorageProvider:

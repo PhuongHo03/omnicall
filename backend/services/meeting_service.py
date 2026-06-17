@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,12 +18,21 @@ from backend.models.enums import MeetingStatus, ProcessingJobStatus
 from backend.models.meeting_models import Meeting, MeetingAsset, ProcessingJob
 from backend.providers.queue_provider import ProcessingQueueProvider
 from backend.providers.storage_provider import ObjectStorageProvider
+from backend.repositories.auth_repository import AuditEventRepository
+from backend.repositories.file_repository import AccountFileRepository
 from backend.repositories.meeting_repository import (
     MeetingAssetRepository,
     MeetingRepository,
     ProcessingJobRepository,
 )
 from backend.utils.exceptions import ApplicationError
+
+
+@dataclass(frozen=True)
+class MeetingAssetContent:
+    data: bytes
+    file_name: str
+    content_type: str
 
 
 class MeetingService:
@@ -37,6 +47,8 @@ class MeetingService:
         self.meetings = MeetingRepository(session)
         self.assets = MeetingAssetRepository(session)
         self.jobs = ProcessingJobRepository(session)
+        self.account_files = AccountFileRepository(session)
+        self.audit = AuditEventRepository(session)
         self.storage_provider = storage_provider
         self.queue_provider = queue_provider
         self.settings = settings
@@ -68,16 +80,23 @@ class MeetingService:
         idempotency_key: str,
     ) -> MeetingAssetResponse:
         meeting = self._get_authorized_meeting(context, meeting_id)
-        if meeting.status in {MeetingStatus.QUEUED, MeetingStatus.PROCESSING, MeetingStatus.READY}:
+        existing = self.assets.get_by_idempotency_key(meeting.id, idempotency_key)
+        if existing is not None:
+            return self._asset_response(existing)
+
+        if meeting.assets:
+            raise ApplicationError(
+                409,
+                "meeting_already_has_asset",
+                "This meeting already has an uploaded file. Create a new meeting for another analysis.",
+            )
+
+        if meeting.status in {MeetingStatus.QUEUED, MeetingStatus.PROCESSING, MeetingStatus.READY, MeetingStatus.FAILED}:
             raise ApplicationError(
                 409,
                 "meeting_not_uploadable",
                 "This meeting cannot accept new uploads in its current state.",
             )
-
-        existing = self.assets.get_by_idempotency_key(meeting.id, idempotency_key)
-        if existing is not None:
-            return self._asset_response(existing)
 
         file_name = Path(upload.filename or "meeting-upload").name
         content_type = upload.content_type or "application/octet-stream"
@@ -109,7 +128,26 @@ class MeetingService:
             size_bytes=size_bytes,
             idempotency_key=idempotency_key,
         )
+        self.account_files.create(
+            workspace_id=context.workspace_id,
+            owner_user_id=context.user_id,
+            meeting_id=meeting.id,
+            asset_id=asset.id,
+            object_key=object_key,
+            file_name=file_name,
+            content_type=content_type,
+            size_bytes=size_bytes,
+        )
         self.meetings.update_status(meeting, MeetingStatus.UPLOADED)
+        self.audit.create(
+            event_type="meeting.upload",
+            outcome="success",
+            workspace_id=context.workspace_id,
+            user_id=context.user_id,
+            resource_type="meeting",
+            resource_id=meeting.id,
+            metadata={"assetId": asset.id, "sizeBytes": size_bytes},
+        )
         self.session.commit()
         self.session.refresh(asset)
         return self._asset_response(asset)
@@ -164,9 +202,22 @@ class MeetingService:
     def get_processing_status(self, context: CurrentUserContext, meeting_id: str) -> ProcessingStatusResponse:
         meeting = self._get_authorized_meeting(context, meeting_id)
         latest_job = self.jobs.get_latest_for_meeting(meeting.id)
+        latest_asset = self.assets.get_latest_for_meeting(meeting.id)
         return ProcessingStatusResponse(
             meeting=self._meeting_response(meeting),
             latest_job=self._job_response(latest_job) if latest_job else None,
+            latest_asset=self._asset_response(latest_asset) if latest_asset else None,
+        )
+
+    def get_asset_content(self, context: CurrentUserContext, meeting_id: str, asset_id: str) -> MeetingAssetContent:
+        meeting = self._get_authorized_meeting(context, meeting_id)
+        asset = self.assets.get_for_meeting(meeting.id, asset_id)
+        if asset is None:
+            raise ApplicationError(404, "asset_not_found", "Meeting asset was not found.")
+        return MeetingAssetContent(
+            data=self.storage_provider.get_object_bytes(object_key=asset.object_key),
+            file_name=asset.file_name,
+            content_type=asset.content_type,
         )
 
     def _get_authorized_meeting(self, context: CurrentUserContext, meeting_id: str) -> Meeting:

@@ -3,7 +3,7 @@ import re
 from sqlalchemy.orm import Session
 
 from backend.models.meeting_models import MeetingIntelligenceResult
-from backend.providers.embedding_provider import LocalHashEmbeddingProvider, get_embedding_provider
+from backend.providers.embedding_provider import TextEmbeddingProvider, get_embedding_provider
 from backend.providers.vector_provider import VectorProvider, VectorProviderError, get_vector_provider
 from backend.repositories.meeting_repository import MeetingIntelligenceResultRepository
 from backend.repositories.retrieval_repository import MeetingChunkRepository
@@ -32,7 +32,7 @@ class RetrievalIndexService:
     def __init__(
         self,
         session: Session,
-        embedding_provider: LocalHashEmbeddingProvider | None = None,
+        embedding_provider: TextEmbeddingProvider | None = None,
         vector_provider: VectorProvider | None = None,
     ) -> None:
         self.session = session
@@ -80,16 +80,27 @@ class RetrievalIndexService:
             }
 
 
-def build_retrieval_chunks(result_json: dict, embedding_provider: LocalHashEmbeddingProvider) -> list[dict]:
+def build_retrieval_chunks(result_json: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
     citations_by_id = {citation.get("id"): citation for citation in result_json.get("citations", [])}
+    citations_by_segment_id = {
+        segment_id: citation
+        for citation in result_json.get("citations", [])
+        for segment_id in citation.get("segmentIds", [])
+        if isinstance(segment_id, str)
+    }
     chunks: list[dict] = []
-    chunks.extend(_summary_chunks(result_json, citations_by_id, embedding_provider))
-    chunks.extend(_analysis_chunks(result_json, citations_by_id, embedding_provider))
+    chunks.extend(_summary_chunks(result_json, citations_by_id, citations_by_segment_id, embedding_provider))
+    chunks.extend(_analysis_chunks(result_json, citations_by_id, citations_by_segment_id, embedding_provider))
     chunks.extend(_transcript_fallback_chunks(result_json, embedding_provider))
     return chunks
 
 
-def _summary_chunks(result_json: dict, citations_by_id: dict, embedding_provider: LocalHashEmbeddingProvider) -> list[dict]:
+def _summary_chunks(
+    result_json: dict,
+    citations_by_id: dict,
+    citations_by_segment_id: dict,
+    embedding_provider: TextEmbeddingProvider,
+) -> list[dict]:
     summary = result_json.get("summary", {})
     chunks = []
     if summary.get("executive"):
@@ -103,37 +114,46 @@ def _summary_chunks(result_json: dict, citations_by_id: dict, embedding_provider
                 text=summary["executive"],
                 citation_ids=[],
                 citations_by_id=citations_by_id,
+                citations_by_segment_id=citations_by_segment_id,
                 embedding_provider=embedding_provider,
                 priority=STRUCTURED_SECTION_PRIORITY["summary.executive"],
             )
         )
     for section_name in ("detailed", "keyPoints"):
-        for index, item in enumerate(summary.get(section_name, []), start=1):
-            if not isinstance(item, dict):
-                continue
+        values = _section_items(summary.get(section_name, []))
+        for index, item in enumerate(values, start=1):
             text = _item_text(item)
-            if not _is_signal_text(text):
+            if not _is_signal_text(text, min_tokens=2):
                 continue
             section_type = f"summary.{section_name}"
+            reference_ids = _item_references(item)
+            citation_ids, segment_ids = _split_references(reference_ids, citations_by_id)
             chunks.append(
                 _chunk(
                     chunk_id=f"{section_type}-{index:03d}",
                     source_type="structured",
                     section_type=section_type,
-                    source_id=item.get("id") or f"{section_type}-{index:03d}",
+                    source_id=_item_id(item) or f"{section_type}-{index:03d}",
                     json_pointer=f"/summary/{section_name}/{index - 1}",
                     text=text,
-                    citation_ids=item.get("citationIds", []),
+                    citation_ids=citation_ids,
                     citations_by_id=citations_by_id,
+                    citations_by_segment_id=citations_by_segment_id,
                     embedding_provider=embedding_provider,
                     priority=STRUCTURED_SECTION_PRIORITY[section_type],
-                    title=item.get("title"),
+                    title=_item_title(item),
+                    segment_ids=segment_ids,
                 )
             )
     return chunks
 
 
-def _analysis_chunks(result_json: dict, citations_by_id: dict, embedding_provider: LocalHashEmbeddingProvider) -> list[dict]:
+def _analysis_chunks(
+    result_json: dict,
+    citations_by_id: dict,
+    citations_by_segment_id: dict,
+    embedding_provider: TextEmbeddingProvider,
+) -> list[dict]:
     analysis = result_json.get("analysis", {})
     chunks = []
     for section_name, values in analysis.items():
@@ -141,31 +161,33 @@ def _analysis_chunks(result_json: dict, citations_by_id: dict, embedding_provide
             continue
         section_type = f"analysis.{section_name}"
         priority = STRUCTURED_SECTION_PRIORITY.get(section_type, 200)
-        for index, item in enumerate(values, start=1):
-            if not isinstance(item, dict):
-                continue
+        for index, item in enumerate(_section_items(values), start=1):
             text = _item_text(item)
-            if not _is_signal_text(text):
+            if not _is_signal_text(text, min_tokens=2):
                 continue
+            reference_ids = _item_references(item)
+            citation_ids, segment_ids = _split_references(reference_ids, citations_by_id)
             chunks.append(
                 _chunk(
                     chunk_id=f"{section_type}-{index:03d}",
                     source_type="structured",
                     section_type=section_type,
-                    source_id=item.get("id") or f"{section_type}-{index:03d}",
+                    source_id=_item_id(item) or f"{section_type}-{index:03d}",
                     json_pointer=f"/analysis/{section_name}/{index - 1}",
                     text=text,
-                    citation_ids=item.get("citationIds", []),
+                    citation_ids=citation_ids,
                     citations_by_id=citations_by_id,
+                    citations_by_segment_id=citations_by_segment_id,
                     embedding_provider=embedding_provider,
                     priority=priority,
-                    title=item.get("title") or item.get("name") or item.get("owner"),
+                    title=_item_title(item),
+                    segment_ids=segment_ids,
                 )
             )
     return chunks
 
 
-def _transcript_fallback_chunks(result_json: dict, embedding_provider: LocalHashEmbeddingProvider) -> list[dict]:
+def _transcript_fallback_chunks(result_json: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
     chunks = []
     for index, segment in enumerate(result_json.get("transcript", {}).get("segments", []), start=1):
         text = segment.get("text", "")
@@ -181,6 +203,7 @@ def _transcript_fallback_chunks(result_json: dict, embedding_provider: LocalHash
             text=text,
             citation_ids=[],
             citations_by_id={},
+            citations_by_segment_id=None,
             embedding_provider=embedding_provider,
             priority=500,
             segment_ids=[segment.get("id")],
@@ -201,7 +224,8 @@ def _chunk(
     text: str,
     citation_ids: list[str],
     citations_by_id: dict,
-    embedding_provider: LocalHashEmbeddingProvider,
+    citations_by_segment_id: dict | None,
+    embedding_provider: TextEmbeddingProvider,
     priority: int,
     title: str | None = None,
     segment_ids: list[str | None] | None = None,
@@ -218,6 +242,12 @@ def _chunk(
         resolved_end = citation.get("endMs", resolved_end)
     if segment_ids:
         resolved_segment_ids.extend([segment_id for segment_id in segment_ids if segment_id])
+        if citations_by_segment_id:
+            for segment_id in segment_ids:
+                citation = citations_by_segment_id.get(segment_id)
+                if citation:
+                    resolved_start = citation.get("startMs", resolved_start)
+                    resolved_end = citation.get("endMs", resolved_end)
     embedding = embedding_provider.embed_text(text)
     return {
         "chunkId": chunk_id,
@@ -243,18 +273,68 @@ def _chunk(
 
 
 def _item_text(item: dict) -> str:
+    if isinstance(item, str):
+        return item.strip()
     if not isinstance(item, dict):
-        return str(item) if isinstance(item, str) else ""
-    for key in ("text", "summary", "task", "question", "quote", "name"):
+        return ""
+    for key in ("text", "summary", "task", "item", "decision", "note", "risk", "outcome", "question", "quote", "name", "description", "title"):
         value = item.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
 
 
-def _is_signal_text(text: str) -> bool:
+def _section_items(value: object) -> list[object]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip():
+        return [value]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _item_references(item: object) -> list[str]:
+    if not isinstance(item, dict):
+        return []
+    for key in ("citationIds", "citations", "cites", "sourceSegmentIds", "segmentIds"):
+        value = item.get(key)
+        if isinstance(value, list):
+            return [entry for entry in value if isinstance(entry, str)]
+    return []
+
+
+def _split_references(reference_ids: list[str], citations_by_id: dict) -> tuple[list[str], list[str]]:
+    citation_ids: list[str] = []
+    segment_ids: list[str] = []
+    for reference_id in reference_ids:
+        if reference_id in citations_by_id:
+            citation_ids.append(reference_id)
+        else:
+            segment_ids.append(reference_id)
+    return citation_ids, segment_ids
+
+
+def _item_id(item: object) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    value = item.get("id")
+    return value if isinstance(value, str) and value else None
+
+
+def _item_title(item: object) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    for key in ("title", "name", "owner", "type"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _is_signal_text(text: str, *, min_tokens: int = 3) -> bool:
     tokens = _tokens(text)
-    return len(tokens) >= 3
+    return len(tokens) >= min_tokens
 
 
 def _tokens(text: str) -> list[str]:

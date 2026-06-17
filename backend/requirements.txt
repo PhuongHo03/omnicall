@@ -1,10 +1,15 @@
 fastapi
 alembic
 celery
+faster-whisper==1.2.1
 minio
+prometheus-client
 psycopg[binary]
 pydantic-settings
 python-multipart
 redis
+scikit-learn==1.5.2
+sentence-transformers==5.6.0
 SQLAlchemy
 uvicorn[standard]
+git+https://github.com/wenet-e2e/wespeaker.git

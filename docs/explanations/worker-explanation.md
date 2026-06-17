@@ -9,14 +9,21 @@ backend/
 ├── configs/
 │   └── celery_app.py                  <- Celery app, broker URL, queue routing
 ├── providers/
-│   ├── analysis_provider.py           <- Deterministic processed JSON provider stub
-│   ├── embedding_provider.py          <- Deterministic local text embedding fallback
+│   ├── analysis_provider.py           <- LLM-backed processed JSON provider and result normalization
+│   ├── embedding_provider.py          <- Ollama text embedding provider
+│   ├── guardrail_provider.py          <- Ollama guardrail provider boundary
 │   ├── llm_provider.py                <- API/endpoint/Ollama LLM adapters and fallback
 │   ├── lock_provider.py               <- Redis lock provider
 │   ├── text_extraction_provider.py    <- Text transcript and notes extraction
 │   ├── transcript_types.py            <- Shared transcript segment value type
-│   ├── transcription_provider.py      <- Deterministic transcript provider stub
+│   ├── transcription_provider.py      <- Text/voice transcription routing provider
+│   ├── voice_provider.py              <- ffmpeg audio preprocessing, local VAD, ASR and diarization provider boundary
+│   ├── rerank_provider.py             <- Local model rerank command boundary
 │   └── vector_provider.py             <- Milvus REST vector index adapter
+├── model_runners/
+│   ├── asr.py                         <- faster-whisper CLI runner for local ASR
+│   ├── diarization.py                 <- WeSpeaker CLI runner for local diarization
+│   └── rerank.py                      <- SentenceTransformers cross-encoder CLI runner
 ├── repositories/
 │   ├── meeting_repository.py          <- Meeting, asset, job, result persistence
 │   └── retrieval_repository.py        <- Retrieval chunk persistence
@@ -39,7 +46,9 @@ POST /api/meetings/{meetingId}/process
 -> worker consumes task
 -> Redis lock lock:meeting-processing:{meetingId}
 -> PostgreSQL state reload
--> transcription provider
+-> text extraction or ffmpeg voice preprocessing
+-> local VAD speech-region detection for voice assets
+-> ASR and diarization provider boundary
 -> analysis provider
 -> meeting_intelligence_results JSONB upsert
 -> transcript_segments and meeting_insights rebuild
@@ -64,6 +73,8 @@ If a meeting or uploaded asset is missing, the job is marked `FAILED` and the me
 
 Already `SUCCEEDED` jobs return `skipped` without calling transcription or analysis providers again. Locked meetings return `locked` without mutating the pending job or meeting state. Failed jobs being processed again transition through `RETRYING` before `RUNNING`. Current explicit statuses used by the worker are `RUNNING`, `RETRYING`, `SUCCEEDED`, and `FAILED`.
 
+Phase 7 did not move processing work into the HTTP request path. Admin meeting-session deletion remains a backend service use case, but it deliberately cleans the worker-derived artifacts for a meeting: processed JSON, transcript segments, insights, retrieval chunks, chat history, linked account files, MinIO objects, and derived Milvus vectors. The worker still owns asynchronous processing; the admin delete use case owns explicit cleanup.
+
 ## Processed Result
 
 Successful processing writes a complete JSON document with schema:
@@ -72,19 +83,25 @@ Successful processing writes a complete JSON document with schema:
 meeting-intelligence-result.v1
 ```
 
-The current deterministic provider stubs create:
+The current local providers create:
 
 | Section | Current behavior |
 |---|---|
-| `transcript.segments` | One placeholder segment with speaker, timing, text, and confidence |
+| `transcript.segments` | Text uploads parse transcript lines directly; voice uploads use preprocessing/VAD/default local ASR and diarization command runners; missing or failed ASR now fails the job safely instead of producing placeholder text |
 | `summary` | Executive summary, detailed summary, and key points |
 | `analysis` | All planned section keys are present; missing-evidence sections are empty with reasons |
-| `citations` | At least one citation linked to the placeholder transcript segment |
-| `quality` | Warnings that real ASR, diarization, and LLM providers are not connected |
+| `citations` | Citations linked to source transcript segments or generated fallback segments |
+| `quality` | Warnings for text extraction, local ASR, diarization, provider failures, or transcript guardrails |
 
-This proves the contract needed by RAG work. With default `ANALYSIS_PROVIDER=local`, it does not represent production transcription or analysis quality yet.
+This proves the contract needed by RAG work. Analysis generation uses the configured LLM boundary, so a real endpoint/API or Ollama fallback model must be available for successful processing.
 
 For `.txt`, `.md`, `.vtt`, and `.srt` uploads, the worker uses `DocumentTextExtractionProvider` to read the uploaded object from MinIO and parse lines into transcript segments. Timestamp/speaker lines such as `00:30 Bob: Follow up next week` preserve timing and speaker labels. In this path, the persisted result records `source.transcriptionProvider=local-text-extraction`.
+
+For audio/video uploads, the worker keeps the original asset bytes in MinIO, writes a stable per-asset derived temporary audio file under `VOICE_WORK_DIR`, and normalizes supported media to 16 kHz mono WAV through `ffmpeg`. The raw temporary input is deleted after preprocessing; only derived audio is left locally for downstream model steps. Repeated worker retries reuse a valid derived WAV instead of creating duplicate normalized files. `LocalVADProvider` then detects speech windows with a configurable local energy threshold before the ASR adapter is called. `LocalASRProvider` calls `ASR_COMMAND`, which defaults to `python -m backend.model_runners.asr` and uses `faster-whisper` CPU `int8`. `LocalCommandDiarizationProvider` calls `DIARIZATION_COMMAND`, which defaults to `python -m backend.model_runners.diarization` and uses WeSpeaker speaker embedding/diarization. Compose mounts the shared `model_cache` volume at `/models`, and `model-init` downloads the default ASR, diarization, and rerank model snapshots there before the worker starts.
+
+Voice pipeline failures are safe failures. Preprocessing, ASR, or diarization errors are captured as provider metadata and safe job failure reasons instead of exposing internal stack traces to users. VAD errors can continue without speech-region hints and are recorded as warnings.
+
+After transcription and before analysis generation, the worker runs the transcript guardrail when `GUARDRAIL_TRANSCRIPT_ENABLED=true`. Guardrail metadata is persisted under `source.guardrails.transcript` and job `providerMetadata.guardrails.transcript`. Non-strict mode downgrades blocked transcript decisions to warnings so normal business meetings are not overblocked; strict mode fails closed with a safe failure state when the provider errors or returns a block decision.
 
 ## LLM Provider Boundary
 
@@ -97,17 +114,19 @@ For `.txt`, `.md`, `.vtt`, and `.srt` uploads, the worker uses `DocumentTextExtr
 | `OllamaLLMProvider` | Calls local Ollama `/api/chat` with `format: json` |
 | `FallbackLLMProvider` | Tries the primary provider and falls back to Ollama on provider errors |
 
-The worker receives LLM credentials through environment variables only. The deterministic analysis provider remains the default active processing path for local Compose, while `ANALYSIS_PROVIDER=llm` enables LLM-backed JSON analysis with deterministic fallback.
+The worker receives LLM credentials through environment variables only. The primary LLM can be an API/private endpoint, and `FallbackLLMProvider` can fall back to the Compose Ollama service.
 
-When `ANALYSIS_PROVIDER=llm`, the worker uses `LLMAnalysisProvider` to ask the configured LLM for JSON intelligence sections, preserves the authoritative transcript generated by the transcription provider, validates the final result before marking the meeting `READY`, and falls back to deterministic analysis if the LLM provider is unavailable or returns invalid JSON.
+The worker uses `LLMAnalysisProvider` to ask the configured LLM for JSON intelligence sections, preserves the authoritative transcript generated by the transcription provider, validates the final result before marking the meeting `READY`, and fails the job safely if no LLM path can produce valid JSON. When `LLM_PROVIDER=endpoint` or `api` and `LLM_FALLBACK_PROVIDER=ollama`, the API/private endpoint is tried first; persisted provider metadata records the effective provider/model that actually generated the JSON.
 
 ## Retrieval Indexing
 
 After a processed result is stored, the worker rebuilds `meeting_chunks` from the same JSON. Structured sections are chunked first and get higher retrieval priority than transcript fallback chunks. Transcript fallback chunks preserve source segment IDs and time ranges so later chat answers can cite source evidence.
 
-The current MVP embedding path uses `LocalHashEmbeddingProvider`, a deterministic local hash embedding provider configured by `EMBEDDING_DIMENSIONS`. It is useful for wiring, repeatable tests, and PostgreSQL fallback indexing, but it is not a production semantic embedding model.
+The embedding path uses `OllamaEmbeddingProvider` with the configured local `EMBEDDING_MODEL`. `ollama-init` pulls `EMBEDDING_MODEL`, `OLLAMA_MODEL`, and `GUARDRAIL_MODEL` into `ollama_data` before backend and worker start. Test-only embedding fixtures live under `backend/tests/`; production indexing no longer uses hash embeddings.
 
 When `VECTOR_PROVIDER=milvus`, the worker upserts derived chunk vectors through the Milvus REST API after PostgreSQL `meeting_chunks` are flushed. The vector payload includes stable references such as workspace ID, meeting ID, result ID, chunk ID, JSON pointer, source type, section type, and time range. Milvus remains derived infrastructure: if vector upsert fails, the meeting can still succeed and the job payload records `retrievalMetadata.vectorIndex.status=failed`.
+
+If the configured embedding dimension changes, the Milvus provider checks the existing collection schema and recreates the derived `meeting_chunks` collection when its vector dimension no longer matches `EMBEDDING_DIMENSIONS`. PostgreSQL chunk rows remain authoritative, so collection recreation does not delete product truth.
 
 ## Compose Behavior
 
@@ -131,25 +150,47 @@ docker compose --env-file .env.example ps backend worker nginx
 docker compose --env-file .env.example exec -T backend python -m unittest discover -s backend/tests -v
 ```
 
-An end-to-end gateway check created a meeting, uploaded a `.wav` asset, queued processing, waited for `READY`, and confirmed:
+The current verification split is intentional: API tests prove safe enqueue/failure behavior without real local model binaries, and service tests prove successful processing using test-only model fixtures.
 
 | Check | Result |
 |---|---|
-| Meeting status | `READY` |
-| Job status | `SUCCEEDED` |
+| API upload/process without configured ASR/LLM models | Job fails safely and remains retryable |
+| Pipeline service with test-only model fixtures | Meeting reaches `READY` and persists result/index rows |
 | Result schema | `meeting-intelligence-result.v1` |
-| Transcript endpoint | Returned persisted transcript section |
-| Insights endpoint | Returned persisted summary and analysis sections |
-| Complete result endpoint | Returned full persisted JSON |
 | LLM provider selection and fallback tests | Passed |
-| LLM analysis merge and deterministic fallback tests | Passed |
+| LLM analysis merge and provider failure tests | Passed |
 | Worker idempotency, lock, and provider-failure state tests | Passed |
 | Text transcript extraction and text-upload processing tests | Passed |
 | Derived `transcript_segments` and `meeting_insights` persistence tests | Passed |
 | Provider retry and `RETRYING` transition tests | Passed |
-| Retrieval chunk builder and deterministic embedding tests | Passed |
+| Retrieval chunk builder and test-only embedding fixture tests | Passed |
 | Milvus vector upsert smoke check | `status=upserted` |
 | Milvus vector search with PostgreSQL chunk reload smoke check | Passed |
-| Backend unittest suite after Phase 5 completion | 30 tests passed |
+| Voice provider contract, WAV metadata fallback, idempotent audio preprocessing, local energy VAD, ASR failure, local command ASR, local-only ASR selection, and diarization command tests | Passed |
+| Voice warning persistence to processed JSON and job metadata | Passed |
+| Rerank integration test | Passed |
+| Rerank command and unavailable-command tests | Passed |
+| Guardrail provider normalization, prompt-injection, output downgrade, strict/non-strict failure, and transcript warning persistence tests | Passed |
+| Backend unittest suite after model-provider standardization | 54 tests passed |
 
-*Document reflects project state at **Phase 5 - Retrieval And Chat** complete. Worker execution, Redis locking, JSONB persistence, derived transcript/insight/chunk indexes, local text embedding fallback, Milvus REST vector upsert, text transcript extraction, idempotent skip behavior, safe failure states, `RETRYING`, read APIs, LLM provider selection, configurable LLM analysis, retrieval tests, and live backend API health are implemented.*
+Phase 5.5 and 5.6 end-to-end verification on 2026-06-17 also confirmed:
+
+| Check | Result |
+|---|---|
+| `backend.model_runners.asr` over MP3 | Produced real transcript segments |
+| `backend.model_runners.diarization` over normalized WAV | Produced speaker assignments |
+| `backend.model_runners.rerank` | Returned ranked chunk IDs |
+| Voice MP3 upload and processing through gateway | Meeting reached `READY` and latest job reached `SUCCEEDED` |
+| Voice-derived processed JSON | Included ASR, diarization, ffmpeg, source voice metadata, transcript segments, and guardrail warning metadata |
+| Retrieval index rebuild | Upserted 3 chunks into Milvus after collection dimension recovery |
+| Chat over the voice-derived meeting | Returned a grounded cited answer with rerank and input/context/output guardrail metadata |
+
+Phase 7 hardening verification on 2026-06-17 also confirmed:
+
+| Check | Result |
+|---|---|
+| Full backend unittest suite, including worker/retrieval/provider tests | 71 tests passed |
+| Targeted auth/file/admin deletion tests | Passed |
+| Admin meeting deletion cleanup for worker-derived records | Passed in targeted service test and gateway smoke |
+
+*Document reflects project state after Phase 7 hardening verification on **2026-06-17**. Worker execution, Redis locking, JSONB persistence, derived transcript/insight/chunk indexes, Ollama text embeddings, Compose model bootstrap, shared `model_cache`, Milvus REST vector upsert/search, Milvus dimension recovery, text transcript extraction, idempotent ffmpeg audio preprocessing, local energy VAD, faster-whisper ASR runner, WeSpeaker diarization runner, SentenceTransformers rerank runner, voice safe failure states, rerank integration, transcript/input/context/output guardrails, idempotent skip behavior, safe failure states, `RETRYING`, admin cleanup of worker-derived artifacts, read APIs, LLM provider selection, LLM analysis normalization, retrieval tests, full backend tests, and live gateway auth/file/admin smoke are implemented.*

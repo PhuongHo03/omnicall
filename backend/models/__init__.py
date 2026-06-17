@@ -1,7 +1,8 @@
 """Database models."""
 
-from backend.models.core_models import User, Workspace, WorkspaceMember
+from backend.models.core_models import AccountSession, AuditEvent, User, Workspace, WorkspaceMember
 from backend.models.meeting_models import (
+    AccountFile,
     ChatMessage,
     ChatSession,
     Meeting,
@@ -16,6 +17,9 @@ from backend.models.meeting_models import (
 __all__ = [
     "ChatMessage",
     "ChatSession",
+    "AccountFile",
+    "AccountSession",
+    "AuditEvent",
     "Meeting",
     "MeetingAsset",
     "MeetingChunkRecord",

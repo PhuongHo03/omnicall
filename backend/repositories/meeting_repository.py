@@ -78,6 +78,13 @@ class MeetingAssetRepository:
         )
         return self.session.scalars(statement).first()
 
+    def get_for_meeting(self, meeting_id: str, asset_id: str) -> MeetingAsset | None:
+        statement = select(MeetingAsset).where(
+            MeetingAsset.meeting_id == meeting_id,
+            MeetingAsset.id == asset_id,
+        )
+        return self.session.scalars(statement).first()
+
     def create(
         self,
         *,

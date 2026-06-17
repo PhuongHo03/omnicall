@@ -52,7 +52,7 @@ class LLMProviderTestCase(unittest.TestCase):
             "LLM_ENDPOINT_COMPATIBILITY": "openai",
             "LLM_FALLBACK_PROVIDER": "ollama",
             "OLLAMA_BASE_URL": "http://ollama.internal:11434",
-            "OLLAMA_MODEL": "qwen2.5:3b",
+            "OLLAMA_MODEL": "qwen2.5:1.5b",
         }
         defaults.update(overrides)
         return Settings(_env_file=None, **defaults)
@@ -64,13 +64,13 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(provider.primary.provider_name, "openai-compatible")
         self.assertEqual(provider.primary.model_name, "private-model")
         self.assertEqual(provider.fallback.provider_name, "ollama")
-        self.assertEqual(provider.fallback.model_name, "qwen2.5:3b")
+        self.assertEqual(provider.fallback.model_name, "qwen2.5:1.5b")
 
     def test_ollama_provider_can_be_primary_without_extra_fallback_wrapper(self) -> None:
         provider = build_llm_provider(self.make_settings(LLM_PROVIDER="ollama"))
 
         self.assertEqual(provider.provider_name, "ollama")
-        self.assertEqual(provider.model_name, "qwen2.5:3b")
+        self.assertEqual(provider.model_name, "qwen2.5:1.5b")
 
     def test_openai_compatible_provider_posts_chat_completion_and_parses_json_content(self) -> None:
         captured = {}
@@ -154,6 +154,18 @@ class LLMProviderTestCase(unittest.TestCase):
             provider.generate_json(system_prompt="system", user_prompt="hello"),
             {"ok": True, "userPrompt": "hello"},
         )
+        self.assertEqual(provider.last_provider_name, "static")
+        self.assertEqual(provider.last_provider_model, "static-model")
+
+    def test_fallback_provider_records_primary_provider_when_primary_succeeds(self) -> None:
+        provider = FallbackLLMProvider(StaticProvider(), BrokenProvider())
+
+        self.assertEqual(
+            provider.generate_json(system_prompt="system", user_prompt="hello"),
+            {"ok": True, "userPrompt": "hello"},
+        )
+        self.assertEqual(provider.last_provider_name, "static")
+        self.assertEqual(provider.last_provider_model, "static-model")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import unittest
 
 from backend.models.meeting_models import Meeting, MeetingAsset
-from backend.providers.analysis_provider import LLMAnalysisProvider, LocalAnalysisProvider
+from backend.providers.analysis_provider import LLMAnalysisProvider
 from backend.providers.llm_provider import LLMProviderError
 from backend.providers.transcript_types import TranscriptSegment
 
@@ -51,6 +51,37 @@ class BrokenLLMProvider:
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
         raise LLMProviderError("provider unavailable")
+
+
+class EchoThenSuccessfulLLMProvider:
+    provider_name = "echo-then-test-llm"
+    model_name = "repair-model"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "requiredSchemaVersion": "meeting-intelligence-result.v1",
+                "transcript": {"segments": []},
+                "requiredOutputShape": {"summary": {"executive": ""}},
+            }
+        return {
+            "summary": {
+                "executive": "The meeting confirmed JSON-first RAG testing.",
+                "detailed": [],
+                "keyPoints": [{"text": "Use text transcript for the first complete test.", "citationIds": ["cite-001"]}],
+            },
+            "analysis": {
+                "decisions": [{"text": "Test with text transcript first.", "citationIds": ["cite-001"]}],
+                "actionItems": [],
+                "timeline": [],
+                "risks": [],
+            },
+            "quality": {"coverage": "partial", "warnings": [], "confidence": 0.7},
+        }
 
 
 class AnalysisProviderTestCase(unittest.TestCase):
@@ -105,8 +136,19 @@ class AnalysisProviderTestCase(unittest.TestCase):
         self.assertEqual(result["transcript"]["segments"][0]["id"], "seg-001")
         self.assertEqual(result["analysis"]["decisions"][0]["citationIds"], ["cite-001"])
 
-    def test_llm_analysis_falls_back_to_local_result_when_provider_fails(self) -> None:
-        provider = LLMAnalysisProvider(BrokenLLMProvider(), fallback_provider=LocalAnalysisProvider())
+    def test_llm_analysis_raises_when_provider_fails(self) -> None:
+        provider = LLMAnalysisProvider(BrokenLLMProvider())
+
+        with self.assertRaises(LLMProviderError):
+            provider.build_result(
+                meeting=self.make_meeting(),
+                asset=self.make_asset(),
+                transcript_segments=self.make_segments(),
+            )
+
+    def test_llm_analysis_repairs_echoed_input_response_once(self) -> None:
+        llm = EchoThenSuccessfulLLMProvider()
+        provider = LLMAnalysisProvider(llm)
 
         result = provider.build_result(
             meeting=self.make_meeting(),
@@ -114,54 +156,10 @@ class AnalysisProviderTestCase(unittest.TestCase):
             transcript_segments=self.make_segments(),
         )
 
-        self.assertEqual(provider.last_provider_name, "local-placeholder-analysis")
-        self.assertEqual(provider.last_provider_model, "deterministic-v1")
-        self.assertEqual(result["source"]["analysisProvider"], "local-placeholder-analysis")
-        self.assertEqual(result["source"]["analysisFallbackReason"], "LLM analysis failed; deterministic fallback was used.")
-        self.assertIn("LLM analysis was unavailable", result["quality"]["warnings"][-1])
-
-    def test_local_analysis_extracts_core_sections_with_source_links(self) -> None:
-        segments = [
-            TranscriptSegment(
-                id="seg-001",
-                speaker="Alice",
-                start_ms=0,
-                end_ms=5000,
-                text="We agreed to use the processed JSON as the RAG source.",
-                confidence=0.9,
-            ),
-            TranscriptSegment(
-                id="seg-002",
-                speaker="Bob",
-                start_ms=5000,
-                end_ms=12000,
-                text="Action item: Bob should index transcript-derived sections by Friday.",
-                confidence=0.9,
-            ),
-            TranscriptSegment(
-                id="seg-003",
-                speaker="Alice",
-                start_ms=12000,
-                end_ms=18000,
-                text="Risk: audio ASR quality may be low before the deadline next week.",
-                confidence=0.9,
-            ),
-        ]
-
-        result = LocalAnalysisProvider().build_result(
-            meeting=self.make_meeting(),
-            asset=self.make_asset(),
-            transcript_segments=segments,
-        )
-
-        citation_ids = {citation["id"] for citation in result["citations"]}
-        self.assertTrue(result["analysis"]["decisions"])
-        self.assertTrue(result["analysis"]["actionItems"])
-        self.assertTrue(result["analysis"]["timeline"])
-        self.assertTrue(result["analysis"]["risks"])
-        for section in ("decisions", "actionItems", "timeline", "risks"):
-            for item in result["analysis"][section]:
-                self.assertTrue(set(item["citationIds"]).issubset(citation_ids))
+        self.assertEqual(llm.calls, 2)
+        self.assertEqual(result["summary"]["executive"], "The meeting confirmed JSON-first RAG testing.")
+        self.assertEqual(result["analysis"]["decisions"][0]["citationIds"], ["cite-001"])
+        self.assertEqual(result["transcript"]["segments"][0]["id"], "seg-001")
 
 
 if __name__ == "__main__":

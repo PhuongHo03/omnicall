@@ -36,6 +36,9 @@ class VectorProvider(Protocol):
     ) -> list[VectorSearchHit]:
         ...
 
+    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
+        ...
+
 
 class NoopVectorProvider:
     enabled = False
@@ -53,6 +56,9 @@ class NoopVectorProvider:
         limit: int,
     ) -> list[VectorSearchHit]:
         return []
+
+    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
+        return {"provider": self.provider_name, "status": "skipped"}
 
 
 class MilvusVectorProvider:
@@ -120,6 +126,17 @@ class MilvusVectorProvider:
                 hits.append(VectorSearchHit(chunk_id=chunk_id, score=float(item.get("distance", 0.0))))
         return hits
 
+    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
+        self._ensure_collection()
+        self._post(
+            "v2/vectordb/entities/delete",
+            {
+                "collectionName": self.collection_name,
+                "filter": self._meeting_filter(workspace_id, meeting_id),
+            },
+        )
+        return {"provider": self.provider_name, "status": "deleted"}
+
     def _ensure_collection(self) -> None:
         if self._collection_ready:
             return
@@ -127,7 +144,11 @@ class MilvusVectorProvider:
             "v2/vectordb/collections/has",
             {"collectionName": self.collection_name},
         )
-        if not response.get("data", {}).get("has", False):
+        collection_exists = response.get("data", {}).get("has", False)
+        if collection_exists and self._collection_embedding_dimension() != self.dimensions:
+            self._post("v2/vectordb/collections/drop", {"collectionName": self.collection_name})
+            collection_exists = False
+        if not collection_exists:
             self._post(
                 "v2/vectordb/collections/create",
                 {
@@ -161,6 +182,22 @@ class MilvusVectorProvider:
             )
         self._post("v2/vectordb/collections/load", {"collectionName": self.collection_name})
         self._collection_ready = True
+
+    def _collection_embedding_dimension(self) -> int | None:
+        response = self._post(
+            "v2/vectordb/collections/describe",
+            {"collectionName": self.collection_name},
+        )
+        for field in response.get("data", {}).get("fields", []):
+            if field.get("name") != "embedding":
+                continue
+            for param in field.get("params", []):
+                if param.get("key") == "dim":
+                    try:
+                        return int(param.get("value"))
+                    except (TypeError, ValueError):
+                        return None
+        return None
 
     def _entity(self, chunk: MeetingChunkRecord) -> dict:
         return {

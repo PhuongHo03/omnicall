@@ -1,10 +1,12 @@
 import type {
+  AccountFile,
   Meeting,
   MeetingAsset,
   MeetingChatCitation,
   MeetingChatHistory,
   MeetingChatMessage,
   MeetingChatResponse,
+  MeetingIntelligenceResult,
   ProcessingJob,
   ProcessingStatus
 } from "../types/meetingTypes";
@@ -27,6 +29,19 @@ type RawAsset = {
   file_name?: unknown;
   content_type?: unknown;
   size_bytes?: unknown;
+  created_at?: unknown;
+};
+
+type RawAccountFile = {
+  id?: unknown;
+  workspace_id?: unknown;
+  owner_user_id?: unknown;
+  meeting_id?: unknown;
+  asset_id?: unknown;
+  file_name?: unknown;
+  content_type?: unknown;
+  size_bytes?: unknown;
+  linked_to_meeting?: unknown;
   created_at?: unknown;
 };
 
@@ -153,10 +168,11 @@ export function parseProcessingJob(raw: unknown): ProcessingJob {
 }
 
 export function parseProcessingStatus(raw: unknown): ProcessingStatus {
-  const status = raw as { meeting?: unknown; latest_job?: unknown };
+  const status = raw as { meeting?: unknown; latest_job?: unknown; latest_asset?: unknown };
   return {
     meeting: mapMeeting(status.meeting as RawMeeting),
-    latestJob: status.latest_job ? mapJob(status.latest_job as RawJob) : null
+    latestJob: status.latest_job ? mapJob(status.latest_job as RawJob) : null,
+    latestAsset: status.latest_asset ? parseAsset(status.latest_asset) : null
   };
 }
 
@@ -249,4 +265,38 @@ function mapCitations(raw: unknown): MeetingChatCitation[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parseMeetingIntelligenceResult(raw: unknown): MeetingIntelligenceResult {
+  if (!isRecord(raw)) {
+    throw new Error("Invalid meeting intelligence result.");
+  }
+  return raw;
+}
+
+export function parseAccountFile(raw: unknown): AccountFile {
+  const file = raw as RawAccountFile;
+  if (typeof file.size_bytes !== "number") {
+    throw new Error("Invalid file.size_bytes.");
+  }
+  return {
+    id: requireString(file.id, "file.id"),
+    workspaceId: requireString(file.workspace_id, "file.workspace_id"),
+    ownerUserId: requireString(file.owner_user_id, "file.owner_user_id"),
+    meetingId: file.meeting_id === null ? null : requireString(file.meeting_id, "file.meeting_id"),
+    assetId: file.asset_id === null ? null : requireString(file.asset_id, "file.asset_id"),
+    fileName: requireString(file.file_name, "file.file_name"),
+    contentType: requireString(file.content_type, "file.content_type"),
+    sizeBytes: file.size_bytes,
+    linkedToMeeting: Boolean(file.linked_to_meeting),
+    createdAt: requireString(file.created_at, "file.created_at")
+  };
+}
+
+export function parseAccountFileList(raw: unknown): AccountFile[] {
+  const items = (raw as { items?: unknown }).items;
+  if (!Array.isArray(items)) {
+    throw new Error("Invalid file list.");
+  }
+  return items.map(parseAccountFile);
 }

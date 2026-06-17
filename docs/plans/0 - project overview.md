@@ -30,10 +30,13 @@ Primary user flows:
 
 | Flow | User Goal | System Outcome |
 |---|---|---|
-| Upload meeting | Add an existing audio/video file, transcript, or meeting notes file | Private object is stored, metadata is saved, processing job is queued |
-| Record meeting | Capture a live meeting from the browser | Recording is uploaded as an asset and enters the same processing pipeline |
+| Account access | Register or login to Omnicall | Backend creates or validates the account and returns authenticated account context with `Admin` or `User` role |
+| Upload meeting | Add one existing audio/video file, transcript, or meeting notes file to a meeting | Private object is stored, metadata is saved, and the meeting is locked to that file for one analysis lineage |
+| Record meeting | Capture a live meeting from the browser | Recording is uploaded as the meeting asset and enters the same processing pipeline |
 | Review analysis | Understand what happened without replaying the whole meeting | Complete processed transcript result is displayed |
-| Ask meeting chat | Retrieve precise information from the processed result | Frontend chat tab asks the backend, which answers from processed intelligence first and cites transcript evidence |
+| Ask meeting chat | Retrieve precise information from the processed result | Frontend chat asks the backend below the processed JSON result, which answers from processed intelligence first and cites transcript evidence |
+| Manage uploaded files | Review files uploaded by the current account | Account-scoped file library lists owned uploads, allows playback, and allows deletion only when the file is not linked to an existing meeting session |
+| Delete meeting session | Remove an analysis session and its linked artifacts | Admin-only backend flow deletes the meeting session and cascades cleanup to linked file bytes, metadata, processed result, retrieval data, and chat history |
 | Monitor operations | See system health and processing state | Admin dashboard reads normalized backend metrics |
 
 Out of MVP unless explicitly pulled forward:
@@ -42,7 +45,6 @@ Out of MVP unless explicitly pulled forward:
 - Real-time partial transcription.
 - External task-tool sync.
 - Advanced speaker diarization correction UI.
-- Automated retention/deletion policy enforcement.
 - SSO and enterprise policy management.
 
 ## Core Domain Concepts
@@ -63,6 +65,7 @@ Durable business state belongs in PostgreSQL.
 | `meeting_chunk` | Retrieval unit derived from processed JSON sections and source ranges |
 | `chat_session` | User conversation scoped to a meeting |
 | `chat_message` | Saved user questions, assistant answers, citations, and timestamps |
+| `account_file` | Account-scoped uploaded file metadata and MinIO object reference used by the file library |
 | `audit_event` | Security and operational trace for important actions |
 
 Meeting status lifecycle:
@@ -91,7 +94,9 @@ upload/recording
 -> PostgreSQL asset + processing_job
 -> RabbitMQ task
 -> worker lock + idempotency check
--> transcription
+-> text extraction or voice preprocessing
+-> VAD + ASR + diarization when the source is voice
+-> transcript segment contract
 -> processed transcript JSON generation
 -> schema validation, quality checks, and source linking
 -> JSON-section chunking
@@ -101,7 +106,7 @@ upload/recording
 -> PostgreSQL status update
 ```
 
-The current Phase 5 backend slice persists retrieval chunks and deterministic local embeddings in PostgreSQL first, then upserts derived vectors into Milvus. PostgreSQL chunk records stay authoritative and are reloaded after vector search.
+The current backend slice persists retrieval chunks in PostgreSQL first, generates model-backed local embeddings through Ollama, then upserts derived vectors into Milvus. PostgreSQL chunk records stay authoritative and are reloaded after vector search.
 
 Chat retrieval flow:
 
@@ -113,8 +118,11 @@ question
 -> vector search in Milvus
 -> load authoritative processed JSON sections/chunks
 -> evidence guard against irrelevant local-embedding hits
+-> rerank candidate chunks when rerank provider is enabled
 -> load source evidence from transcript entries inside the JSON
+-> guardrail input/context checks when guardrails are enabled
 -> answer generation with cited context
+-> guardrail output check when guardrails are enabled
 -> save chat messages
 -> response with answer + citations
 ```
@@ -255,6 +263,7 @@ Model groups:
 | Text | LLM | Generate processed transcript JSON and answer chat questions |
 | Text | Embedding | Embed processed JSON sections for vector search |
 | Text | Rerank | Rerank retrieved chunks before answer generation |
+| Safety | Guardrail | Classify and control unsafe prompts, transcript content, retrieved context, and generated answers |
 
 LLM provider priority:
 
@@ -275,6 +284,15 @@ LLM usage rules:
 - Chat answer generation can use a cheaper/faster model first and escalate to a stronger provider for difficult or low-confidence questions.
 - Provider prompts, raw provider responses, and secrets must not be exposed to the frontend.
 
+Model placement rules:
+
+- Voice ASR and speaker embedding/diarization run locally through configured model commands or wrappers.
+- VAD is local signal processing and is not counted as one of the six model slots.
+- Text embeddings run through the local Ollama embedding model.
+- Rerank runs through a configured local reranker model command.
+- Guardrails run through local Ollama.
+- Only the LLM provider may use an external API or private endpoint.
+
 Implemented provider configuration keys:
 
 ```text
@@ -285,20 +303,67 @@ LLM_MODEL=...
 LLM_ENDPOINT_COMPATIBILITY=openai|custom-json
 LLM_TIMEOUT_SECONDS=60
 LLM_FALLBACK_PROVIDER=ollama
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=...
+OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_MODEL=qwen2.5:1.5b
+OLLAMA_BOOTSTRAP_MODELS=qwen2.5:1.5b nomic-embed-text llama-guard3:1b
+MODEL_CACHE_DIR=/models
+HF_HOME=/models/.hf-cache
 
-ASR_PROVIDER=local|api|endpoint
-SPEAKER_EMBEDDING_PROVIDER=wespeaker
-ANALYSIS_PROVIDER=local|llm
-TEXT_EMBEDDING_PROVIDER=local|api|endpoint
-EMBEDDING_DIMENSIONS=64
+VOICE_FFMPEG_PATH=ffmpeg
+VOICE_WORK_DIR=/tmp/omnicall-audio
+ASR_MODEL=whisper-small-int8
+ASR_COMPUTE_TYPE=int8
+ASR_COMMAND=...
+ASR_HF_REPO=Systran/faster-whisper-small
+ASR_HF_REVISION=main
+ASR_DOWNLOAD_COMMAND=
+ASR_TIMEOUT_SECONDS=120
+DIARIZATION_MODEL=wespeaker-voxceleb-resnet34
+DIARIZATION_COMMAND=...
+DIARIZATION_HF_REPO=Wespeaker/wespeaker-voxceleb-resnet34-LM
+DIARIZATION_HF_REVISION=main
+DIARIZATION_DOWNLOAD_COMMAND=
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_DIMENSIONS=768
+EMBEDDING_TIMEOUT_SECONDS=30
 VECTOR_PROVIDER=milvus
 MILVUS_HOST=milvus
 MILVUS_PORT=19530
 MILVUS_COLLECTION=meeting_chunks
-RERANK_PROVIDER=local|api|endpoint
+RERANK_MODEL=bge-reranker-v2-m3
+RERANK_COMMAND=...
+RERANK_HF_REPO=BAAI/bge-reranker-v2-m3
+RERANK_HF_REVISION=main
+RERANK_DOWNLOAD_COMMAND=
+RERANK_TOP_K=12
+RERANK_OUTPUT_K=6
+RERANK_TIMEOUT_SECONDS=30
+
+VAD_MIN_SPEECH_MS=300
+VAD_SILENCE_GAP_MS=500
+VAD_ENERGY_THRESHOLD=0.012
+
+GUARDRAIL_MODEL=llama-guard3:1b
+GUARDRAIL_TIMEOUT_SECONDS=20
+GUARDRAIL_MAX_RETRIES=0
+GUARDRAIL_INPUT_ENABLED=true
+GUARDRAIL_TRANSCRIPT_ENABLED=true
+GUARDRAIL_CONTEXT_ENABLED=true
+GUARDRAIL_OUTPUT_ENABLED=true
+GUARDRAIL_STRICT_MODE=false
 ```
+
+Local model defaults for the completed Phase 5.5 and 5.6 scope:
+
+| Phase | Role | Default Local Direction | Notes |
+|---|---|---|---|
+| 5.5 | Audio preprocessing and VAD | ffmpeg normalization to 16 kHz mono WAV plus local energy VAD | Implemented as voice preparation before ASR |
+| 5.5 | ASR | `faster-whisper` CPU `int8` runner over `/models/asr` | Local-only; default command is `python -m backend.model_runners.asr` |
+| 5.5 | Speaker embedding/diarization | WeSpeaker runner over `/models/diarization` | Local-only; default command is `python -m backend.model_runners.diarization` |
+| 5.5 | Text embedding | `nomic-embed-text` through local Ollama | 768-dimensional embedding; no hash embedding in production |
+| 5.5 | Rerank | `bge-reranker-v2-m3` through SentenceTransformers cross-encoder runner over `/models/rerank` | If unavailable, retrieval keeps original order and records rerank unavailable metadata |
+| 5.6 | Guardrail | `llama-guard3:1b` through local Ollama | Implemented as default request-path local guardrail |
+| 5.6 | Guardrail benchmark | `granite3-guardian:2b` through Ollama | Documented optional stronger risk/RAG judging candidate if latency is acceptable |
 
 ## MVP API Surface
 
@@ -307,9 +372,10 @@ Backend endpoints:
 | Method | Path | Status | Purpose |
 |---|---|---|---|
 | `GET` | `/api/health` | Implemented | Read backend health |
-| `POST` | `/api/auth/login` | Planned | Start authenticated session |
-| `POST` | `/api/auth/logout` | Planned | End session |
-| `GET` | `/api/me` | Planned | Read current user/session context |
+| `POST` | `/api/auth/login` | Implemented | Start authenticated session |
+| `POST` | `/api/auth/register` | Implemented | Create a local account |
+| `POST` | `/api/auth/logout` | Implemented | End session |
+| `GET` | `/api/me` | Implemented | Read current user/session context |
 | `POST` | `/api/meetings` | Implemented | Create a meeting shell |
 | `GET` | `/api/meetings` | Implemented | List meetings visible to the user |
 | `GET` | `/api/meetings/{meetingId}` | Implemented | Read meeting detail and status |
@@ -321,9 +387,16 @@ Backend endpoints:
 | `GET` | `/api/meetings/{meetingId}/intelligence-result` | Implemented | Read the complete processed transcript JSON when needed |
 | `POST` | `/api/meetings/{meetingId}/chat` | Implemented | Ask a meeting-grounded question |
 | `GET` | `/api/meetings/{meetingId}/chat/{sessionId}` | Implemented | Read chat history |
-| `GET` | `/api/admin/metrics` | Planned | Read normalized admin metrics through backend auth |
+| `GET` | `/api/admin/metrics` | Implemented | Read normalized admin metrics through backend admin auth and Redis cache |
+| `DELETE` | `/api/admin/meetings/{meetingId}` | Implemented | Admin-only meeting session deletion with cascading cleanup |
+| `GET` | `/api/files` | Implemented | List files uploaded by the current account |
+| `POST` | `/api/files` | Implemented | Upload a reusable account-scoped file |
+| `GET` | `/api/files/{fileId}/content` | Implemented | Play or download an owned uploaded file through backend authorization |
+| `DELETE` | `/api/files/{fileId}` | Implemented | Delete an owned uploaded file only when not linked to an existing meeting session |
 
 Frontend may validate input shape for UX, but backend must revalidate all uploads, permissions, and state transitions.
+
+Current meeting intake rule: one meeting accepts only one uploaded or recorded asset. After that asset exists, upload/record controls are hidden in the frontend and the backend rejects different upload attempts with `409 meeting_already_has_asset`. A failed processing job can be retried against the same asset; a different file requires creating a new meeting.
 
 ## Project Structure
 
@@ -343,6 +416,7 @@ Frontend may validate input shape for UX, but backend must revalidate all upload
 │   ├── dtos/                         <- Request/response contracts
 │   ├── migrations/                   <- Alembic migrations
 │   ├── middlewares/                  <- Request/response middleware
+│   ├── model_runners/                <- Local ASR, diarization, and rerank command runners
 │   ├── models/                       <- SQLAlchemy database models
 │   ├── providers/                    <- Storage, queue, lock, transcription, analysis, and LLM adapters
 │   ├── repositories/                 <- Database access abstractions
@@ -359,9 +433,11 @@ Frontend may validate input shape for UX, but backend must revalidate all upload
 │   │   ├── layouts/                  <- App shell
 │   │   ├── components/               <- Shared UI components
 │   │   ├── styles/                   <- Global CSS
-│   │   └── features/meetings/        <- Meeting feature layers
+│   │   └── features/                 <- Auth, admin dashboard, and meeting feature layers
 │   └── package.json                  <- Frontend dependencies and scripts
 ├── infras/                           <- Infrastructure service config
+│   ├── model-init/                   <- ASR/diarization/rerank model bootstrap
+│   ├── docker-exporter/              <- Internal Docker stats exporter for Prometheus
 │   ├── nginx/                        <- Gateway config
 │   └── prometheus/                   <- Metrics scrape config
 └── docs/
@@ -395,20 +471,37 @@ Frontend may validate input shape for UX, but backend must revalidate all upload
 | Env template | Root `.env.example` |
 | Public URL | `http://127.0.0.1:8080` locally when `APP_BIND_IP=0.0.0.0` and `NGINX_PORT=8080` |
 | Adminer | `http://127.0.0.1:8081` |
-| RedisInsight | `http://127.0.0.1:5540` |
-| RabbitMQ Management | `http://127.0.0.1:15672` |
-| MinIO Console | `http://127.0.0.1:9001` |
-| Prometheus | `http://127.0.0.1:9096` |
+| MinIO Console | `http://127.0.0.1:8082` |
+| Milvus WebUI | `http://127.0.0.1:8083/webui` |
+| RedisInsight | `http://127.0.0.1:8084` |
+| RabbitMQ Management | `http://127.0.0.1:8085` |
+| Prometheus | `http://127.0.0.1:8086` |
+| Admin dashboard | Open the Dashboard button in the frontend at `http://127.0.0.1:8080` |
 | Credentials | Development defaults are in `.env.example`; replace before any shared environment |
 
-Implemented meeting APIs currently use a development auth context:
+The primary frontend and API path now uses backend-issued bearer sessions from `/api/auth/register` and `/api/auth/login`. Meeting, file, chat, and admin calls send:
+
+```text
+Authorization: Bearer <session-token>
+```
+
+Development header auth is still available as a local fallback when no bearer token is present:
 
 ```text
 X-User-ID: <uuid>
 X-Workspace-ID: <uuid>
 ```
 
-Optional local bootstrap headers are `X-User-Email`, `X-User-Name`, and `X-Workspace-Name`. Production authentication remains planned.
+Optional local bootstrap headers are `X-User-Email`, `X-User-Name`, `X-Workspace-Name`, and `X-User-Role`. This fallback is for local development only; backend bearer-session auth is the product path.
+
+Implemented product roles:
+
+| Role | Permission |
+|---|---|
+| `Admin` | Access admin metrics, delete meeting sessions, and trigger cascading cleanup |
+| `User` | Create/upload/process/chat with own meetings and manage own unlinked uploaded files |
+
+The frontend may hide unavailable actions for UX, but backend authorization remains authoritative.
 
 ## Explanation Files
 
@@ -422,12 +515,14 @@ Optional local bootstrap headers are `X-User-Email`, `X-User-Name`, and `X-Works
 
 | Decision | Default Direction | When To Revisit |
 |---|---|---|
-| Auth | Development header context now; email/password or simple local accounts for MVP later | Before multi-tenant production use |
+| Auth | Local register/login, backend bearer sessions, `Admin`/`User` roles, and account-aware frontend UI are implemented | Revisit before SSO, invite-only admin creation, or enterprise identity |
 | Recording | Completed recording upload first | When live transcription becomes a priority |
-| ASR provider | Deterministic local placeholder now; concrete adapter during Phase 4 | Before production-quality processing |
-| LLM provider | Provider boundary and `ANALYSIS_PROVIDER=llm` path implemented: API/private endpoint first, Ollama local fallback, deterministic analysis fallback | Revisit when improving prompts, evaluations, and chat generation |
-| Embeddings | Local deterministic text embedding fallback, PostgreSQL chunk records, and Milvus REST upsert/query are implemented | When replacing the MVP embedding fallback with production embeddings and reranking |
+| ASR provider | Local faster-whisper command runner is implemented and verified through MP3 upload processing | Revisit when changing ASR model size, language defaults, or GPU acceleration |
+| LLM provider | API/private endpoint first with Ollama fallback; the same LLM boundary is used for analysis JSON and chat answers | Revisit when improving prompts, evaluations, and chat generation |
+| Embeddings and rerank | Ollama text embeddings, PostgreSQL chunk records, Milvus REST upsert/query, and local SentenceTransformers rerank are implemented | Revisit model choices after latency and quality evaluation |
+| Guardrails | Ollama guardrail provider, transcript/input/context/output checks, safe refusals, and `not_enough_evidence` downgrade are implemented | Revisit after live model latency checks and policy tuning |
 | Raw audio retention | Private object storage with explicit future retention policy | Before production or real user data |
+| File/session deletion | Direct file deletion is blocked while a meeting session references the file; admin session deletion cascades linked file cleanup | Revisit when adding shared files or reusable uploads |
 | Cross-meeting chat | Out of MVP | After single-meeting chat is reliable |
 
 ## Phase Summary
@@ -439,5 +534,7 @@ Optional local bootstrap headers are `X-User-Email`, `X-User-Name`, and `X-Works
 | 3 | Meeting upload and core records | Done |
 | 4 | Processing pipeline | Done |
 | 5 | Retrieval and chat | Done |
-| 6 | Admin and operations | Pending |
-| 7 | Hardening | Pending |
+| 5.5 | Voice processing and rerank | Done |
+| 5.6 | Local guardrails | Done |
+| 6 | Admin and operations | Done |
+| 7 | Hardening | Done |

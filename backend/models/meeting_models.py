@@ -88,6 +88,45 @@ class MeetingAsset(Base):
     meeting: Mapped[Meeting] = relationship(back_populates="assets")
 
 
+class AccountFile(Base):
+    __tablename__ = "account_files"
+    __table_args__ = (UniqueConstraint("object_key", name="uq_account_files_object_key"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    owner_user_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    meeting_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("meetings.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    asset_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("meeting_assets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    object_key: Mapped[str] = mapped_column(String(700), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(260), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    meeting: Mapped[Meeting | None] = relationship()
+    asset: Mapped[MeetingAsset | None] = relationship()
+
+
 class ProcessingJob(Base):
     __tablename__ = "processing_jobs"
     __table_args__ = (

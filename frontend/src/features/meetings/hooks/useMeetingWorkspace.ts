@@ -3,40 +3,63 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   askMeetingChat,
   createMeeting,
+  deleteAccountFile,
+  deleteMeetingSession,
+  downloadAccountFile,
+  downloadMeetingAsset,
+  getMeetingIntelligenceResult,
   getMeetingChatHistory,
   getProcessingStatus,
+  listAccountFiles,
   listMeetings,
   queueMeetingProcessing,
+  uploadAccountFile,
   uploadMeetingAsset
 } from "../api/meetingApi";
 import type {
-  DevAuthContext,
+  AccountFile,
   Meeting,
   MeetingAsset,
   MeetingChatMessage,
   MeetingDraft,
+  MeetingIntelligenceResult,
   ProcessingJob
 } from "../types/meetingTypes";
-
-const DEFAULT_CONTEXT: DevAuthContext = {
-  userId: "11111111-1111-4111-8111-111111111111",
-  workspaceId: "22222222-2222-4222-8222-222222222222",
-  userEmail: "local@omnicall.test",
-  userName: "Local Operator",
-  workspaceName: "Local Workspace"
-};
 
 function requestKey(prefix: string) {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
-export function useMeetingWorkspace() {
-  const [authContext, setAuthContext] = useState<DevAuthContext>(DEFAULT_CONTEXT);
+function isUploadableMeeting(meeting: Meeting, asset: MeetingAsset | null) {
+  return meeting.status === "DRAFT" && asset === null;
+}
+
+function isProcessableMeeting(meeting: Meeting, asset: MeetingAsset | null) {
+  if (!asset) {
+    return false;
+  }
+  return meeting.status === "UPLOADED" || meeting.status === "FAILED";
+}
+
+function isProcessingMeeting(meeting: Meeting | null) {
+  return meeting?.status === "QUEUED" || meeting?.status === "PROCESSING";
+}
+
+function isAudioAsset(asset: MeetingAsset | null) {
+  return asset?.contentType.startsWith("audio/") === true;
+}
+
+export function useMeetingWorkspace(token: string, isAdmin: boolean) {
   const [draft, setDraft] = useState<MeetingDraft>({ title: "", language: "vi" });
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [accountFiles, setAccountFiles] = useState<AccountFile[]>([]);
+  const [filePlaybackUrl, setFilePlaybackUrl] = useState<string | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [latestJob, setLatestJob] = useState<ProcessingJob | null>(null);
   const [lastAsset, setLastAsset] = useState<MeetingAsset | null>(null);
+  const [assetPlaybackUrl, setAssetPlaybackUrl] = useState<string | null>(null);
+  const [intelligenceResult, setIntelligenceResult] = useState<MeetingIntelligenceResult | null>(null);
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
@@ -66,32 +89,109 @@ export function useMeetingWorkspace() {
   }, []);
 
   const refreshMeetings = useCallback(async () => {
-    const nextMeetings = await listMeetings(authContext);
+    const nextMeetings = await listMeetings(token);
     setMeetings(nextMeetings);
     setSelectedMeetingId((current) => current ?? nextMeetings[0]?.id ?? null);
-  }, [authContext]);
+  }, [token]);
+
+  const refreshAccountFiles = useCallback(async () => {
+    setAccountFiles(await listAccountFiles(token));
+  }, [token]);
 
   useEffect(() => {
     void run(refreshMeetings);
-  }, [refreshMeetings, run]);
+    void run(refreshAccountFiles);
+  }, [refreshAccountFiles, refreshMeetings, run]);
 
   useEffect(() => {
     setChatQuestion("");
     setChatSessionId(null);
     setChatMessages([]);
+    setLatestJob(null);
+    setLastAsset(null);
+    setAssetPlaybackUrl(null);
+    setIntelligenceResult(null);
   }, [selectedMeetingId]);
+
+  useEffect(() => {
+    if (!selectedMeeting || !lastAsset || !isAudioAsset(lastAsset)) {
+      setAssetPlaybackUrl(null);
+      return;
+    }
+
+    let isActive = true;
+    let objectUrl: string | null = null;
+    void downloadMeetingAsset(token, selectedMeeting.id, lastAsset.id)
+      .then((blob) => {
+        if (!isActive) {
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setAssetPlaybackUrl(objectUrl);
+      })
+      .catch((caught) => {
+        if (isActive) {
+          setAssetPlaybackUrl(null);
+          setError(caught instanceof Error ? caught.message : "Asset playback failed.");
+        }
+      });
+
+    return () => {
+      isActive = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [lastAsset?.id, selectedMeeting?.id, token]);
+
+  const refreshSelectedMeetingState = useCallback(
+    async (meeting: Meeting) => {
+      const status = await getProcessingStatus(token, meeting.id);
+      setMeetings((current) => current.map((item) => (item.id === status.meeting.id ? status.meeting : item)));
+      setLatestJob(status.latestJob);
+      setLastAsset(status.latestAsset);
+      if (status.meeting.status === "READY") {
+        setIntelligenceResult(await getMeetingIntelligenceResult(token, meeting.id));
+      } else {
+        setIntelligenceResult(null);
+      }
+    },
+    [token]
+  );
+
+  useEffect(() => {
+    if (!selectedMeeting) {
+      return;
+    }
+    const meeting = selectedMeeting;
+    void run(async () => {
+      await refreshSelectedMeetingState(meeting);
+    });
+  }, [refreshSelectedMeetingState, run, selectedMeetingId]);
+
+  useEffect(() => {
+    if (!selectedMeeting || !isProcessingMeeting(selectedMeeting)) {
+      return;
+    }
+    const meeting = selectedMeeting;
+    const interval = window.setInterval(() => {
+      void refreshSelectedMeetingState(meeting);
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [refreshSelectedMeetingState, selectedMeeting?.id, selectedMeeting?.status]);
 
   const submitMeeting = useCallback(() => {
     void run(async () => {
-      const created = await createMeeting(authContext, draft.title, draft.language);
+      const created = await createMeeting(token, draft.title, draft.language);
       setDraft({ title: "", language: draft.language });
       setMeetings((current) => [created, ...current]);
       setSelectedMeetingId(created.id);
       setLatestJob(null);
       setLastAsset(null);
+      setIntelligenceResult(null);
       setNotice("Meeting created.");
     });
-  }, [authContext, draft, run]);
+  }, [draft, run, token]);
 
   const uploadFile = useCallback(
     (file: File) => {
@@ -99,14 +199,62 @@ export function useMeetingWorkspace() {
         setError("Select a meeting first.");
         return;
       }
+      if (!isUploadableMeeting(selectedMeeting, lastAsset)) {
+        setError("This meeting already has an uploaded file or processing output. Create a new meeting to upload another file.");
+        return;
+      }
       void run(async () => {
-        const asset = await uploadMeetingAsset(authContext, selectedMeeting.id, file, requestKey("upload"));
+        const asset = await uploadMeetingAsset(token, selectedMeeting.id, file, requestKey("upload"));
         setLastAsset(asset);
         setNotice("Upload completed.");
         await refreshMeetings();
+        await refreshAccountFiles();
       });
     },
-    [authContext, refreshMeetings, run, selectedMeeting]
+    [lastAsset, refreshAccountFiles, refreshMeetings, run, selectedMeeting, token]
+  );
+
+  const uploadLibraryFile = useCallback(
+    (file: File) => {
+      void run(async () => {
+        await uploadAccountFile(token, file);
+        await refreshAccountFiles();
+        setNotice("File stored.");
+      });
+    },
+    [refreshAccountFiles, run, token]
+  );
+
+  const playLibraryFile = useCallback(
+    (fileId: string) => {
+      void run(async () => {
+        const blob = await downloadAccountFile(token, fileId);
+        setSelectedFileId(fileId);
+        setFilePlaybackUrl((current) => {
+          if (current) {
+            URL.revokeObjectURL(current);
+          }
+          return URL.createObjectURL(blob);
+        });
+      });
+    },
+    [run, token]
+  );
+
+  const deleteLibraryFile = useCallback(
+    (fileId: string) => {
+      void run(async () => {
+        await deleteAccountFile(token, fileId);
+        if (selectedFileId === fileId && filePlaybackUrl) {
+          URL.revokeObjectURL(filePlaybackUrl);
+          setFilePlaybackUrl(null);
+          setSelectedFileId(null);
+        }
+        await refreshAccountFiles();
+        setNotice("File deleted.");
+      });
+    },
+    [filePlaybackUrl, refreshAccountFiles, run, selectedFileId, token]
   );
 
   const queueProcessing = useCallback(() => {
@@ -114,13 +262,17 @@ export function useMeetingWorkspace() {
       setError("Select a meeting first.");
       return;
     }
+    if (!isProcessableMeeting(selectedMeeting, lastAsset)) {
+      setError("Upload a meeting file before starting processing.");
+      return;
+    }
     void run(async () => {
-      const job = await queueMeetingProcessing(authContext, selectedMeeting.id, requestKey("process"));
+      const job = await queueMeetingProcessing(token, selectedMeeting.id, requestKey("process"));
       setLatestJob(job);
       setNotice(job.status === "FAILED" ? "Processing could not be queued." : "Processing queued.");
       await refreshMeetings();
     });
-  }, [authContext, refreshMeetings, run, selectedMeeting]);
+  }, [lastAsset, refreshMeetings, run, selectedMeeting, token]);
 
   const refreshStatus = useCallback(() => {
     if (!selectedMeeting) {
@@ -128,12 +280,10 @@ export function useMeetingWorkspace() {
       return;
     }
     void run(async () => {
-      const status = await getProcessingStatus(authContext, selectedMeeting.id);
-      setMeetings((current) => current.map((meeting) => (meeting.id === status.meeting.id ? status.meeting : meeting)));
-      setLatestJob(status.latestJob);
+      await refreshSelectedMeetingState(selectedMeeting);
       setNotice("Status refreshed.");
     });
-  }, [authContext, run, selectedMeeting]);
+  }, [refreshSelectedMeetingState, run, selectedMeeting]);
 
   const submitChatQuestion = useCallback(() => {
     if (!selectedMeeting) {
@@ -151,7 +301,7 @@ export function useMeetingWorkspace() {
     }
     void run(async () => {
       const response = await askMeetingChat(
-        authContext,
+        token,
         selectedMeeting.id,
         question,
         chatSessionId,
@@ -159,26 +309,47 @@ export function useMeetingWorkspace() {
       );
       setChatSessionId(response.sessionId);
       setChatQuestion("");
-      const history = await getMeetingChatHistory(authContext, selectedMeeting.id, response.sessionId);
+      const history = await getMeetingChatHistory(token, selectedMeeting.id, response.sessionId);
       setChatMessages(history.messages);
       setNotice(response.evidenceState === "not_enough_evidence" ? "No supported answer found." : "Answer generated.");
     });
-  }, [authContext, chatQuestion, chatSessionId, run, selectedMeeting]);
+  }, [chatQuestion, chatSessionId, run, selectedMeeting, token]);
 
   const refreshChatHistory = useCallback(() => {
     if (!selectedMeeting || !chatSessionId) {
       return;
     }
     void run(async () => {
-      const history = await getMeetingChatHistory(authContext, selectedMeeting.id, chatSessionId);
+      const history = await getMeetingChatHistory(token, selectedMeeting.id, chatSessionId);
       setChatMessages(history.messages);
       setNotice("Chat refreshed.");
     });
-  }, [authContext, chatSessionId, run, selectedMeeting]);
+  }, [chatSessionId, run, selectedMeeting, token]);
+
+  const deleteSelectedMeeting = useCallback(() => {
+    if (!selectedMeeting || !isAdmin) {
+      setError("Admin access is required to delete a meeting session.");
+      return;
+    }
+    void run(async () => {
+      await deleteMeetingSession(token, selectedMeeting.id);
+      setMeetings((current) => current.filter((item) => item.id !== selectedMeeting.id));
+      setSelectedMeetingId(null);
+      setLastAsset(null);
+      setLatestJob(null);
+      setIntelligenceResult(null);
+      await refreshAccountFiles();
+      setNotice("Meeting session deleted.");
+    });
+  }, [isAdmin, refreshAccountFiles, run, selectedMeeting, token]);
 
   const startRecording = useCallback(() => {
     if (!selectedMeeting) {
       setError("Select a meeting first.");
+      return;
+    }
+    if (!isUploadableMeeting(selectedMeeting, lastAsset)) {
+      setError("This meeting already has an uploaded file or processing output. Create a new meeting to record another file.");
       return;
     }
     void run(async () => {
@@ -201,7 +372,7 @@ export function useMeetingWorkspace() {
       setIsRecording(true);
       setNotice("Recording started.");
     });
-  }, [run, selectedMeeting, uploadFile]);
+  }, [lastAsset, run, selectedMeeting, uploadFile]);
 
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -212,13 +383,31 @@ export function useMeetingWorkspace() {
     }
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (filePlaybackUrl) {
+        URL.revokeObjectURL(filePlaybackUrl);
+      }
+    };
+  }, [filePlaybackUrl]);
+
+  const canUpload = selectedMeeting ? isUploadableMeeting(selectedMeeting, lastAsset) : false;
+  const canProcess = selectedMeeting ? isProcessableMeeting(selectedMeeting, lastAsset) : false;
+  const hasLockedAsset = Boolean(lastAsset);
+
   return {
-    authContext,
+    accountFiles,
+    assetPlaybackUrl,
+    canProcess,
+    canUpload,
     chatMessages,
     chatQuestion,
     chatSessionId,
     draft,
     error,
+    filePlaybackUrl,
+    hasLockedAsset,
+    intelligenceResult,
     isLoading,
     isRecording,
     lastAsset,
@@ -227,11 +416,15 @@ export function useMeetingWorkspace() {
     notice,
     selectedMeeting,
     selectedMeetingId,
+    selectedFileId,
     queueProcessing,
+    deleteLibraryFile,
+    deleteSelectedMeeting,
+    playLibraryFile,
     refreshChatHistory,
+    refreshAccountFiles: () => void run(refreshAccountFiles),
     refreshMeetings: () => void run(refreshMeetings),
     refreshStatus,
-    setAuthContext,
     setChatQuestion,
     setDraft,
     setSelectedMeetingId,
@@ -239,6 +432,7 @@ export function useMeetingWorkspace() {
     stopRecording,
     submitMeeting,
     submitChatQuestion,
-    uploadFile
+    uploadFile,
+    uploadLibraryFile
   };
 }

@@ -1,6 +1,7 @@
 from uuid import uuid4
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Header, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.configs.database import get_db_session
@@ -108,6 +109,22 @@ def get_processing_status(
     meeting_service: MeetingService = Depends(get_meeting_service),
 ) -> ProcessingStatusResponse:
     return meeting_service.get_processing_status(context, meeting_id)
+
+
+@router.get("/{meeting_id}/assets/{asset_id}/content")
+def get_meeting_asset_content(
+    meeting_id: str,
+    asset_id: str,
+    context: CurrentUserContext = Depends(get_current_context),
+    meeting_service: MeetingService = Depends(get_meeting_service),
+) -> Response:
+    asset_content = meeting_service.get_asset_content(context, meeting_id, asset_id)
+    encoded_name = quote(asset_content.file_name)
+    return Response(
+        content=asset_content.data,
+        media_type=asset_content.content_type,
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}"},
+    )
 
 
 @router.get("/{meeting_id}/transcript")

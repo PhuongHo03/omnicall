@@ -1,7 +1,9 @@
+from dataclasses import replace
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from backend.configs.settings import Settings, get_settings
 from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.meeting_dto import (
     MeetingChatCitationResponse,
@@ -12,7 +14,14 @@ from backend.dtos.meeting_dto import (
 )
 from backend.models.enums import MeetingStatus
 from backend.models.meeting_models import ChatMessage, ChatSession, MeetingChunkRecord
-from backend.providers.llm_provider import LLMProvider, LLMProviderError, get_llm_provider
+from backend.providers.guardrail_provider import GuardrailProvider, GuardrailResult, get_guardrail_provider, safe_guardrail_check
+from backend.providers.llm_provider import (
+    LLMProvider,
+    LLMProviderError,
+    get_effective_model_name,
+    get_effective_provider_name,
+    get_llm_provider,
+)
 from backend.repositories.chat_repository import ChatMessageRepository, ChatSessionRepository
 from backend.repositories.meeting_repository import MeetingRepository
 from backend.services.retrieval_search_service import RetrievedChunk, RetrievalSearchService
@@ -25,13 +34,17 @@ class MeetingChatService:
         session: Session,
         llm_provider: LLMProvider | None = None,
         retrieval_search: RetrievalSearchService | None = None,
+        guardrail_provider: GuardrailProvider | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.session = session
+        self.settings = settings or get_settings()
         self.meetings = MeetingRepository(session)
         self.chat_sessions = ChatSessionRepository(session)
         self.chat_messages = ChatMessageRepository(session)
         self.retrieval_search = retrieval_search or RetrievalSearchService(session)
         self.llm_provider = llm_provider or get_llm_provider()
+        self.guardrail_provider = guardrail_provider or get_guardrail_provider()
 
     def ask(self, context: CurrentUserContext, meeting_id: str, request: MeetingChatRequest) -> MeetingChatResponse:
         meeting = self.meetings.get_for_workspace(meeting_id, context.workspace_id)
@@ -50,19 +63,39 @@ class MeetingChatService:
             session_id=request.session_id,
             question=question,
         )
+        input_guardrail = self._check_guardrail(
+            enabled=self.settings.guardrail_input_enabled,
+            kind="chat_input",
+            text=question,
+            metadata={"meetingId": meeting.id, "language": request.language or meeting.language},
+        )
+        if input_guardrail and input_guardrail.action == "block":
+            return self._save_blocked_chat_response(
+                context=context,
+                meeting_id=meeting.id,
+                chat_session=chat_session,
+                user_content="[blocked by guardrail]",
+                guardrails={"input": input_guardrail.to_metadata()},
+                safe_message=input_guardrail.safe_message or _blocked_message(),
+            )
+
+        effective_question = input_guardrail.redacted_text if input_guardrail and input_guardrail.redacted_text else question
         self.chat_messages.create(
             workspace_id=context.workspace_id,
             meeting_id=meeting.id,
             session_id=chat_session.id,
             role="user",
-            content=question,
-            metadata={"language": request.language or meeting.language},
+            content=effective_question,
+            metadata={
+                "language": request.language or meeting.language,
+                "guardrails": _guardrail_map(input=input_guardrail),
+            },
         )
 
         retrieved = self.retrieval_search.search_meeting(
             workspace_id=context.workspace_id,
             meeting_id=meeting.id,
-            query=question,
+            query=effective_question,
         )
         citations = [_citation_response(item.record) for item in retrieved[:4]]
         if not retrieved:
@@ -73,7 +106,43 @@ class MeetingChatService:
                 "provider": "local-evidence-guard",
             }
         else:
-            answer_payload = self._generate_answer(question=question, retrieved=retrieved)
+            context_guardrail = self._check_guardrail(
+                enabled=self.settings.guardrail_context_enabled,
+                kind="retrieved_context",
+                text=_retrieved_context_text(retrieved),
+                metadata={"meetingId": meeting.id, "source": "retrieved_context"},
+            )
+            context_guardrail = _downgrade_non_strict_context_block(
+                context_guardrail,
+                strict_mode=self.settings.guardrail_strict_mode,
+            )
+            if context_guardrail and context_guardrail.action == "block":
+                citations = []
+                answer_payload = {
+                    "answer": context_guardrail.safe_message or _blocked_message(),
+                    "evidenceState": "blocked",
+                    "confidence": context_guardrail.confidence,
+                    "provider": context_guardrail.provider,
+                }
+            else:
+                answer_payload = self._generate_answer(question=effective_question, retrieved=retrieved)
+
+        output_guardrail = self._check_guardrail(
+            enabled=self.settings.guardrail_output_enabled,
+            kind="answer",
+            text=answer_payload["answer"],
+            metadata={
+                "meetingId": meeting.id,
+                "hasCitations": bool(citations),
+                "evidenceState": answer_payload["evidenceState"],
+            },
+        )
+        answer_payload, citations = _apply_output_guardrail(answer_payload, citations, output_guardrail)
+        guardrails = _guardrail_map(
+            input=input_guardrail,
+            context=locals().get("context_guardrail"),
+            output=output_guardrail,
+        )
 
         assistant = self.chat_messages.create(
             workspace_id=context.workspace_id,
@@ -87,6 +156,10 @@ class MeetingChatService:
                 "evidenceState": answer_payload["evidenceState"],
                 "confidence": answer_payload["confidence"],
                 "provider": answer_payload["provider"],
+                "model": answer_payload.get("model"),
+                "rerank": self.retrieval_search.last_rerank_metadata,
+                "guardrails": guardrails,
+                "guardrailDecisionCounts": _decision_counts(guardrails),
             },
         )
         self.session.commit()
@@ -96,6 +169,66 @@ class MeetingChatService:
             answer=assistant.content,
             evidence_state=answer_payload["evidenceState"],
             citations=citations,
+            message=_message_response(assistant),
+        )
+
+    def _check_guardrail(
+        self,
+        *,
+        enabled: bool,
+        kind: str,
+        text: str,
+        metadata: dict | None = None,
+    ) -> GuardrailResult | None:
+        if not enabled:
+            return None
+        return safe_guardrail_check(
+            self.guardrail_provider,
+            kind=kind,  # type: ignore[arg-type]
+            text=text,
+            strict_mode=self.settings.guardrail_strict_mode,
+            metadata=metadata,
+        )
+
+    def _save_blocked_chat_response(
+        self,
+        *,
+        context: CurrentUserContext,
+        meeting_id: str,
+        chat_session: ChatSession,
+        user_content: str,
+        guardrails: dict,
+        safe_message: str,
+    ) -> MeetingChatResponse:
+        self.chat_messages.create(
+            workspace_id=context.workspace_id,
+            meeting_id=meeting_id,
+            session_id=chat_session.id,
+            role="user",
+            content=user_content,
+            metadata={"guardrails": guardrails},
+        )
+        assistant = self.chat_messages.create(
+            workspace_id=context.workspace_id,
+            meeting_id=meeting_id,
+            session_id=chat_session.id,
+            role="assistant",
+            content=safe_message,
+            metadata={
+                "evidenceState": "blocked",
+                "confidence": 1.0,
+                "provider": "local-guardrail",
+                "guardrails": guardrails,
+                "guardrailDecisionCounts": _decision_counts(guardrails),
+            },
+        )
+        self.session.commit()
+        self.session.refresh(assistant)
+        return MeetingChatResponse(
+            session_id=chat_session.id,
+            answer=assistant.content,
+            evidence_state="blocked",
+            citations=[],
             message=_message_response(assistant),
         )
 
@@ -167,7 +300,8 @@ class MeetingChatService:
                 "answer": answer.strip(),
                 "evidenceState": evidence_state,
                 "confidence": float(confidence),
-                "provider": self.llm_provider.provider_name,
+                "provider": get_effective_provider_name(self.llm_provider),
+                "model": get_effective_model_name(self.llm_provider),
             }
         except LLMProviderError:
             return {
@@ -175,14 +309,22 @@ class MeetingChatService:
                 "evidenceState": "partial",
                 "confidence": 0.45,
                 "provider": "local-retrieval-summary",
+                "model": None,
             }
 
 
 def _chat_system_prompt() -> str:
     return (
-        "You answer questions using only the provided meeting intelligence context. "
+        "You are a meeting intelligence analyst for Omnicall. "
+        "Answer using only the provided meeting intelligence context; never add facts from outside the context. "
+        "Prefer structured meeting intelligence over raw transcript fragments when both are available. "
+        "Synthesize the most relevant evidence instead of copying one isolated chunk. "
+        "If the question asks for a topic, issue, reason, decision, risk, timeline, or next action, include the concrete details that make the answer useful. "
+        "For broad questions, answer with a concise overview plus key supporting points. "
+        "For narrow factual questions, answer directly and mention any important caveat from the context. "
+        "Use the user's language when possible. "
         "Return JSON with answer, evidenceState, and confidence. "
-        "Use not_enough_evidence when context does not support the answer."
+        "Use not_enough_evidence only when the provided context truly does not support the answer."
     )
 
 
@@ -209,6 +351,94 @@ def _fallback_answer(retrieved: list[RetrievedChunk]) -> str:
     if not lines:
         return "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này."
     return "Dựa trên dữ liệu cuộc họp: " + " ".join(lines)
+
+
+def _retrieved_context_text(retrieved: list[RetrievedChunk]) -> str:
+    return "\n\n".join(item.record.text for item in retrieved[:6] if item.record.text.strip())
+
+
+def _downgrade_non_strict_context_block(
+    context_guardrail: GuardrailResult | None,
+    *,
+    strict_mode: bool,
+) -> GuardrailResult | None:
+    if context_guardrail is None or context_guardrail.action != "block" or strict_mode:
+        return context_guardrail
+    if _has_prompt_injection_category(context_guardrail.categories):
+        return context_guardrail
+    return replace(
+        context_guardrail,
+        action="warn",
+        categories=list(dict.fromkeys([*context_guardrail.categories, "non_strict_context_block_downgraded"])),
+    )
+
+
+def _has_prompt_injection_category(categories: list[str]) -> bool:
+    normalized = {category.lower() for category in categories}
+    return bool(
+        normalized.intersection(
+            {
+                "prompt_injection",
+                "jailbreak",
+                "system_prompt",
+                "exfiltration",
+                "bypass",
+                "instruction_override",
+            }
+        )
+    )
+
+
+def _apply_output_guardrail(
+    answer_payload: dict,
+    citations: list[MeetingChatCitationResponse],
+    output_guardrail: GuardrailResult | None,
+) -> tuple[dict, list[MeetingChatCitationResponse]]:
+    if output_guardrail and output_guardrail.action == "redact" and output_guardrail.redacted_text:
+        answer_payload = {**answer_payload, "answer": output_guardrail.redacted_text}
+    if output_guardrail and output_guardrail.action == "block":
+        return (
+            {
+                "answer": output_guardrail.safe_message or "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này.",
+                "evidenceState": "not_enough_evidence",
+                "confidence": min(float(answer_payload.get("confidence", 0.0)), output_guardrail.confidence),
+                "provider": output_guardrail.provider,
+            },
+            [],
+        )
+    if answer_payload.get("evidenceState") in {"grounded", "partial"} and not citations:
+        return (
+            {
+                **answer_payload,
+                "answer": "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này.",
+                "evidenceState": "not_enough_evidence",
+                "confidence": 0.0,
+                "provider": "local-output-evidence-guard",
+            },
+            [],
+        )
+    return answer_payload, citations
+
+
+def _guardrail_map(**results: GuardrailResult | None) -> dict:
+    return {
+        key: result.to_metadata()
+        for key, result in results.items()
+        if result is not None
+    }
+
+
+def _decision_counts(guardrails: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for result in guardrails.values():
+        action = result.get("action") if isinstance(result, dict) else None
+        if isinstance(action, str):
+            counts[action] = counts.get(action, 0) + 1
+    return counts
+
+
+def _blocked_message() -> str:
+    return "Yêu cầu này đã bị chặn bởi guardrail vì không an toàn hoặc cố gắng vượt qua ngữ cảnh cuộc họp."
 
 
 def _citation_response(chunk: MeetingChunkRecord) -> MeetingChatCitationResponse:

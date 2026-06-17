@@ -8,8 +8,10 @@ Canonical planning now lives under `docs/plans/`.
 - `docs/plans/3 - meeting upload and core records.md` - meeting creation, upload, MinIO, PostgreSQL, and job enqueueing.
 - `docs/plans/4 - processing pipeline.md` - async transcription and insight extraction.
 - `docs/plans/5 - retrieval and chat.md` - vector retrieval and meeting-grounded chat.
-- `docs/plans/6 - admin and operations.md` - Prometheus, backend metrics endpoint, and admin dashboard.
-- `docs/plans/7 - hardening.md` - security, privacy, reliability, and final verification.
+- `docs/plans/5.5 - voice processing and rerank.md` - completed local voice ASR command path, speaker labeling, and local/Ollama rerank.
+- `docs/plans/5.6 - local guardrails.md` - completed local/Ollama guardrail workflow around transcript, RAG, and chat output.
+- `docs/plans/6 - admin and operations.md` - completed Prometheus, backend admin metrics endpoint, Redis metrics cache, and frontend admin dashboard.
+- `docs/plans/7 - hardening.md` - completed account auth, Admin/User roles, account file storage, safe meeting-session deletion, security, privacy, reliability, and final verification.
 
 Project documentation rules:
 

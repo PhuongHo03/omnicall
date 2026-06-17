@@ -5,6 +5,8 @@ from alembic import context
 from backend.configs.database import Base
 from backend.configs.settings import get_settings
 from backend.models import Meeting, MeetingAsset, ProcessingJob, User, Workspace, WorkspaceMember
+from backend.models.core_models import AccountSession, AuditEvent
+from backend.models.meeting_models import AccountFile
 
 config = context.config
 

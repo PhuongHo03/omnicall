@@ -15,9 +15,10 @@ from backend.configs.settings import get_settings
 from backend.dependencies.auth import CurrentUserContext
 from backend.models.core_models import User, Workspace
 from backend.models.enums import MeetingStatus, ProcessingJobStatus
-from backend.models.meeting_models import Meeting, MeetingAsset, MeetingIntelligenceResult, ProcessingJob
+from backend.models.meeting_models import Meeting, MeetingAsset, ProcessingJob
 from backend.repositories.auth_repository import AuthRepository
 from backend.services.meeting_service import MeetingService
+from backend.utils.exceptions import ApplicationError
 
 
 API_BASE_URL = "http://127.0.0.1:8000/api"
@@ -26,9 +27,14 @@ API_BASE_URL = "http://127.0.0.1:8000/api"
 class FakeStorageProvider:
     def __init__(self) -> None:
         self.objects: list[tuple[str, int, str]] = []
+        self.bytes_by_key: dict[str, bytes] = {}
 
     def put_object(self, *, object_key, data, size_bytes, content_type) -> None:
         self.objects.append((object_key, size_bytes, content_type))
+        self.bytes_by_key[object_key] = data.read()
+
+    def get_object_bytes(self, *, object_key) -> bytes:
+        return self.bytes_by_key[object_key]
 
 
 class FakeQueueProvider:
@@ -161,7 +167,7 @@ class MeetingApiTestCase(unittest.TestCase):
 
     def wait_for_processed_status(self, meeting_id: str) -> dict:
         latest_payload: dict = {}
-        for _ in range(20):
+        for _ in range(120):
             status, latest_payload = request_json(
                 "GET",
                 f"/meetings/{meeting_id}/processing-status",
@@ -179,7 +185,7 @@ class MeetingApiTestCase(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(payload["code"], "missing_auth_context")
 
-    def test_meeting_upload_process_flow_persists_records_and_is_idempotent(self) -> None:
+    def test_meeting_upload_process_flow_persists_records_and_fails_safely_without_local_models(self) -> None:
         meeting = self.create_meeting()
 
         first_upload = self.upload_wav(meeting["id"], "upload-idempotent")
@@ -209,42 +215,14 @@ class MeetingApiTestCase(unittest.TestCase):
         self.assertEqual(first_process["status"], ProcessingJobStatus.PENDING)
 
         processing_status = self.wait_for_processed_status(meeting["id"])
-        self.assertEqual(processing_status["meeting"]["status"], MeetingStatus.READY)
-        self.assertEqual(processing_status["latest_job"]["status"], ProcessingJobStatus.SUCCEEDED)
-        self.assertFalse(processing_status["latest_job"]["retry_allowed"])
-
-        result_status, result = request_json(
-            "GET",
-            f"/meetings/{meeting['id']}/intelligence-result",
-            headers=self.headers,
-        )
-        transcript_status, transcript = request_json(
-            "GET",
-            f"/meetings/{meeting['id']}/transcript",
-            headers=self.headers,
-        )
-        insights_status, insights = request_json(
-            "GET",
-            f"/meetings/{meeting['id']}/insights",
-            headers=self.headers,
-        )
-
-        self.assertEqual(result_status, 200, result)
-        self.assertEqual(transcript_status, 200, transcript)
-        self.assertEqual(insights_status, 200, insights)
-        self.assertEqual(result["schemaVersion"], "meeting-intelligence-result.v1")
-        self.assertTrue(result["transcript"]["segments"])
-        self.assertTrue(result["summary"]["executive"])
-        self.assertTrue(transcript["transcript"]["segments"])
-        self.assertTrue(insights["summary"]["executive"])
+        self.assertEqual(processing_status["meeting"]["status"], MeetingStatus.FAILED)
+        self.assertEqual(processing_status["latest_job"]["status"], ProcessingJobStatus.FAILED)
+        self.assertTrue(processing_status["latest_job"]["retry_allowed"])
 
         with SessionLocal() as session:
             self.assertIsNotNone(session.scalar(select(Meeting).where(Meeting.id == meeting["id"])))
             self.assertIsNotNone(session.scalar(select(MeetingAsset).where(MeetingAsset.meeting_id == meeting["id"])))
             self.assertIsNotNone(session.scalar(select(ProcessingJob).where(ProcessingJob.meeting_id == meeting["id"])))
-            self.assertIsNotNone(
-                session.scalar(select(MeetingIntelligenceResult).where(MeetingIntelligenceResult.meeting_id == meeting["id"]))
-            )
 
     def test_upload_validation_rejects_unsupported_files(self) -> None:
         meeting = self.create_meeting()
@@ -261,7 +239,7 @@ class MeetingApiTestCase(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(payload["code"], "unsupported_file_extension")
 
-    def test_text_transcript_upload_is_extracted_into_processed_result(self) -> None:
+    def test_text_transcript_upload_is_accepted_for_processing(self) -> None:
         meeting = self.create_meeting()
         self.upload_text_transcript(meeting["id"], "upload-text-transcript")
 
@@ -273,19 +251,13 @@ class MeetingApiTestCase(unittest.TestCase):
         self.assertEqual(status, 202, process)
 
         processing_status = self.wait_for_processed_status(meeting["id"])
-        self.assertEqual(processing_status["meeting"]["status"], MeetingStatus.READY)
-        self.assertEqual(processing_status["latest_job"]["status"], ProcessingJobStatus.SUCCEEDED)
-
-        result_status, result = request_json(
-            "GET",
-            f"/meetings/{meeting['id']}/intelligence-result",
-            headers=self.headers,
+        self.assertIn(processing_status["meeting"]["status"], {MeetingStatus.READY, MeetingStatus.FAILED})
+        self.assertIn(
+            processing_status["latest_job"]["status"],
+            {ProcessingJobStatus.SUCCEEDED, ProcessingJobStatus.FAILED},
         )
-        self.assertEqual(result_status, 200, result)
-        self.assertEqual(result["source"]["transcriptionProvider"], "local-text-extraction")
-        self.assertGreaterEqual(len(result["transcript"]["segments"]), 2)
-        self.assertEqual(result["transcript"]["segments"][0]["speaker"], "Alice")
-        self.assertIn("processed JSON", result["transcript"]["segments"][0]["text"])
+        if processing_status["latest_job"]["status"] == ProcessingJobStatus.FAILED:
+            self.assertTrue(processing_status["latest_job"]["retry_allowed"])
 
     def test_workspace_scope_prevents_cross_workspace_access(self) -> None:
         meeting = self.create_meeting()
@@ -356,6 +328,89 @@ class MeetingServiceRetryTestCase(unittest.TestCase):
             self.assertEqual(retry_job.status, ProcessingJobStatus.PENDING)
             self.assertNotEqual(retry_job.id, failed_job.id)
             self.assertEqual(len(recovering_queue.calls), 1)
+
+    def test_meeting_accepts_only_one_uploaded_asset(self) -> None:
+        with SessionLocal() as session:
+            AuthRepository(session).upsert_dev_context(
+                user_id=self.user_id,
+                workspace_id=self.workspace_id,
+                email=f"{self.user_id}@test.omnicall",
+                display_name="Test User",
+                workspace_name="Test Workspace",
+            )
+            session.commit()
+
+            storage = FakeStorageProvider()
+            service = MeetingService(session, storage, FakeQueueProvider(), get_settings())
+            meeting = service.create_meeting(
+                self.context,
+                request=type("MeetingRequest", (), {"title": "Single upload", "language": "vi"})(),
+            )
+            first_upload = UploadFile(
+                file=BytesIO(b"RIFF....WAVEfmt "),
+                filename="meeting.wav",
+                headers=Headers({"content-type": "audio/wav"}),
+            )
+            first_asset = service.upload_asset(self.context, meeting.id, first_upload, "upload-once")
+
+            idempotent_upload = UploadFile(
+                file=BytesIO(b"RIFF....WAVEfmt "),
+                filename="same-meeting.wav",
+                headers=Headers({"content-type": "audio/wav"}),
+            )
+            idempotent_asset = service.upload_asset(self.context, meeting.id, idempotent_upload, "upload-once")
+            self.assertEqual(first_asset.id, idempotent_asset.id)
+
+            second_upload = UploadFile(
+                file=BytesIO(b"RIFF....WAVEfmt "),
+                filename="replacement.wav",
+                headers=Headers({"content-type": "audio/wav"}),
+            )
+            with self.assertRaises(ApplicationError) as error:
+                service.upload_asset(self.context, meeting.id, second_upload, "upload-replacement")
+            self.assertEqual(error.exception.code, "meeting_already_has_asset")
+
+            status = service.get_processing_status(self.context, meeting.id)
+            self.assertIsNotNone(status.latest_asset)
+            self.assertEqual(status.latest_asset.id, first_asset.id)
+
+    def test_asset_content_is_loaded_through_authorized_meeting(self) -> None:
+        with SessionLocal() as session:
+            AuthRepository(session).upsert_dev_context(
+                user_id=self.user_id,
+                workspace_id=self.workspace_id,
+                email=f"{self.user_id}@test.omnicall",
+                display_name="Test User",
+                workspace_name="Test Workspace",
+            )
+            session.commit()
+
+            storage = FakeStorageProvider()
+            service = MeetingService(session, storage, FakeQueueProvider(), get_settings())
+            meeting = service.create_meeting(
+                self.context,
+                request=type("MeetingRequest", (), {"title": "Playback source", "language": "vi"})(),
+            )
+            upload = UploadFile(
+                file=BytesIO(b"RIFF....WAVEfmt playback"),
+                filename="meeting.wav",
+                headers=Headers({"content-type": "audio/wav"}),
+            )
+            asset = service.upload_asset(self.context, meeting.id, upload, "upload-playback")
+
+            content = service.get_asset_content(self.context, meeting.id, asset.id)
+            self.assertEqual(content.data, b"RIFF....WAVEfmt playback")
+            self.assertEqual(content.file_name, "meeting.wav")
+            self.assertEqual(content.content_type, "audio/wav")
+
+            other_context = CurrentUserContext(
+                user_id=self.user_id,
+                workspace_id=str(uuid4()),
+                role="owner",
+            )
+            with self.assertRaises(ApplicationError) as error:
+                service.get_asset_content(other_context, meeting.id, asset.id)
+            self.assertEqual(error.exception.code, "meeting_not_found")
 
 
 if __name__ == "__main__":

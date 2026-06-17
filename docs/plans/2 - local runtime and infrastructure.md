@@ -59,15 +59,15 @@
 - Added backend container build through `backend/Dockerfile`.
 - Added NGINX gateway config with `/api/` proxying to the internal backend and a temporary `/` readiness response until the frontend exists.
 - Added Prometheus config as an internal monitoring service with a placeholder for future backend metrics.
-- Added MinIO bucket initialization for meeting assets and Milvus object storage.
+- MinIO no longer uses a Compose init container; backend creates the meeting-assets bucket lazily, and Milvus connects directly to MinIO with `MINIO_BUCKET_NAME`.
 - Kept core service protocols internal through `expose`; only NGINX is public through `APP_BIND_IP`.
 - Bound admin/debug UIs to `LOCAL_BIND_IP`: Adminer, RedisInsight, RabbitMQ Management, MinIO Console, and Prometheus.
 
 ### What was changed from original plan
 
 - Worker and frontend containers were not added yet because their codebases are not implemented. They remain planned for later phases.
-- `PROMETHEUS_PORT` uses `9096` in `.env.example` to avoid the occupied host port `9090` on this machine.
-- Backend uses `host.docker.internal` for the Ollama fallback URL so the container can call a host-running Ollama service.
+- Local admin/debug UIs are grouped on ports `8081` through `8086`: Adminer, MinIO Console, Milvus WebUI, RedisInsight, RabbitMQ Management, and Prometheus.
+- Ollama now runs as a Compose service and backend/worker use `http://ollama:11434` on the internal network.
 - Milvus uses `MINIO_ACCESS_KEY_ID` and `MINIO_SECRET_ACCESS_KEY` when connecting to MinIO.
 
 ### Notes for future sessions
