@@ -81,7 +81,7 @@ class MilvusVectorProvider:
             "v2/vectordb/entities/delete",
             {
                 "collectionName": self.collection_name,
-                "filter": self._meeting_filter(first.workspace_id, first.meeting_id),
+                "filter": self._meeting_filter(first.meeting_id),
             },
         )
         entities = [self._entity(chunk) for chunk in chunks if isinstance(chunk.embedding, list)]
@@ -113,7 +113,7 @@ class MilvusVectorProvider:
                 "collectionName": self.collection_name,
                 "data": [query_vector],
                 "annsField": "embedding",
-                "filter": self._meeting_filter(workspace_id, meeting_id),
+                "filter": self._meeting_filter(meeting_id),
                 "limit": limit,
                 "outputFields": ["chunk_id"],
                 "searchParams": {"metricType": "COSINE", "params": {}},
@@ -132,7 +132,7 @@ class MilvusVectorProvider:
             "v2/vectordb/entities/delete",
             {
                 "collectionName": self.collection_name,
-                "filter": self._meeting_filter(workspace_id, meeting_id),
+                "filter": self._meeting_filter(meeting_id),
             },
         )
         return {"provider": self.provider_name, "status": "deleted"}
@@ -145,7 +145,7 @@ class MilvusVectorProvider:
             {"collectionName": self.collection_name},
         )
         collection_exists = response.get("data", {}).get("has", False)
-        if collection_exists and self._collection_embedding_dimension() != self.dimensions:
+        if collection_exists and not self._collection_matches_schema():
             self._post("v2/vectordb/collections/drop", {"collectionName": self.collection_name})
             collection_exists = False
         if not collection_exists:
@@ -159,7 +159,6 @@ class MilvusVectorProvider:
                         "fields": [
                             _varchar_field("id", max_length=300, is_primary=True),
                             {"fieldName": "embedding", "dataType": "FloatVector", "elementTypeParams": {"dim": self.dimensions}},
-                            _varchar_field("workspace_id", max_length=80),
                             _varchar_field("meeting_id", max_length=80),
                             _varchar_field("result_id", max_length=80),
                             _varchar_field("chunk_id", max_length=180),
@@ -183,27 +182,30 @@ class MilvusVectorProvider:
         self._post("v2/vectordb/collections/load", {"collectionName": self.collection_name})
         self._collection_ready = True
 
-    def _collection_embedding_dimension(self) -> int | None:
+    def _collection_matches_schema(self) -> bool:
         response = self._post(
             "v2/vectordb/collections/describe",
             {"collectionName": self.collection_name},
         )
-        for field in response.get("data", {}).get("fields", []):
+        fields = response.get("data", {}).get("fields", [])
+        names = {field.get("name") for field in fields}
+        if "workspace_id" in names or "meeting_id" not in names:
+            return False
+        for field in fields:
             if field.get("name") != "embedding":
                 continue
             for param in field.get("params", []):
                 if param.get("key") == "dim":
                     try:
-                        return int(param.get("value"))
+                        return int(param.get("value")) == self.dimensions
                     except (TypeError, ValueError):
-                        return None
-        return None
+                        return False
+        return False
 
     def _entity(self, chunk: MeetingChunkRecord) -> dict:
         return {
             "id": f"{chunk.meeting_id}:{chunk.chunk_id}",
             "embedding": chunk.embedding,
-            "workspace_id": chunk.workspace_id,
             "meeting_id": chunk.meeting_id,
             "result_id": chunk.intelligence_result_id,
             "chunk_id": chunk.chunk_id,
@@ -234,8 +236,8 @@ class MilvusVectorProvider:
         return body
 
     @staticmethod
-    def _meeting_filter(workspace_id: str, meeting_id: str) -> str:
-        return f'workspace_id == "{_safe_filter_value(workspace_id)}" and meeting_id == "{_safe_filter_value(meeting_id)}"'
+    def _meeting_filter(meeting_id: str) -> str:
+        return f'meeting_id == "{_safe_filter_value(meeting_id)}"'
 
 
 def get_vector_provider(settings: Settings | None = None) -> VectorProvider:

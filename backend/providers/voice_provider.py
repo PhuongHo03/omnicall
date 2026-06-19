@@ -230,7 +230,11 @@ class LocalASRProvider:
             capture_output=True,
             check=False,
             text=True,
-            timeout=self.settings.asr_timeout_seconds,
+            timeout=_voice_command_timeout(
+                audio=audio,
+                minimum_seconds=self.settings.asr_timeout_seconds,
+                realtime_factor=self.settings.asr_timeout_realtime_factor,
+            ),
         )
         if completed.returncode != 0:
             raise RuntimeError("Local ASR command failed.")
@@ -283,7 +287,11 @@ class LocalCommandDiarizationProvider:
             capture_output=True,
             check=False,
             text=True,
-            timeout=self.settings.asr_timeout_seconds,
+            timeout=_voice_command_timeout(
+                audio=audio,
+                minimum_seconds=self.settings.asr_timeout_seconds,
+                realtime_factor=self.settings.asr_timeout_realtime_factor,
+            ),
         )
         if completed.returncode != 0:
             raise RuntimeError("Local diarization command failed.")
@@ -294,6 +302,16 @@ class LocalCommandDiarizationProvider:
 def get_audio_preprocessor(settings: Settings | None = None) -> AudioPreprocessor:
     resolved = settings or get_settings()
     return LocalAudioPreprocessor(get_object_storage_provider(), resolved)
+
+
+def _voice_command_timeout(
+    *,
+    audio: AudioPreprocessingResult,
+    minimum_seconds: float,
+    realtime_factor: float,
+) -> float:
+    audio_seconds = max(0.0, audio.duration_ms / 1000)
+    return max(minimum_seconds, audio_seconds * max(0.0, realtime_factor))
 
 
 def get_vad_provider(settings: Settings | None = None) -> VADProvider:

@@ -23,6 +23,7 @@ from backend.providers.storage_provider import ObjectStorageProvider, get_object
 from backend.services.chat_service import MeetingChatService
 from backend.services.intelligence_service import IntelligenceService
 from backend.services.meeting_service import MeetingService
+from backend.services.operational_log_service import OperationalLogService, get_operational_log_service
 from backend.utils.exceptions import ApplicationError
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -32,16 +33,26 @@ def get_meeting_service(
     session: Session = Depends(get_db_session),
     storage_provider: ObjectStorageProvider = Depends(get_object_storage_provider),
     queue_provider: ProcessingQueueProvider = Depends(get_processing_queue_provider),
+    operational_logs: OperationalLogService = Depends(get_operational_log_service),
 ) -> MeetingService:
-    return MeetingService(session, storage_provider, queue_provider, settings=get_settings())
+    return MeetingService(
+        session,
+        storage_provider,
+        queue_provider,
+        settings=get_settings(),
+        operational_logs=operational_logs,
+    )
 
 
 def get_intelligence_service(session: Session = Depends(get_db_session)) -> IntelligenceService:
     return IntelligenceService(session)
 
 
-def get_chat_service(session: Session = Depends(get_db_session)) -> MeetingChatService:
-    return MeetingChatService(session)
+def get_chat_service(
+    session: Session = Depends(get_db_session),
+    operational_logs: OperationalLogService = Depends(get_operational_log_service),
+) -> MeetingChatService:
+    return MeetingChatService(session, operational_logs=operational_logs)
 
 
 def normalize_idempotency_key(idempotency_key: str | None, fallback: str) -> str:
@@ -127,24 +138,6 @@ def get_meeting_asset_content(
     )
 
 
-@router.get("/{meeting_id}/transcript")
-def get_meeting_transcript(
-    meeting_id: str,
-    context: CurrentUserContext = Depends(get_current_context),
-    intelligence_service: IntelligenceService = Depends(get_intelligence_service),
-) -> dict:
-    return intelligence_service.get_transcript(context, meeting_id)
-
-
-@router.get("/{meeting_id}/insights")
-def get_meeting_insights(
-    meeting_id: str,
-    context: CurrentUserContext = Depends(get_current_context),
-    intelligence_service: IntelligenceService = Depends(get_intelligence_service),
-) -> dict:
-    return intelligence_service.get_insights(context, meeting_id)
-
-
 @router.get("/{meeting_id}/intelligence-result")
 def get_meeting_intelligence_result(
     meeting_id: str,
@@ -164,11 +157,10 @@ def ask_meeting_chat(
     return chat_service.ask(context, meeting_id, request)
 
 
-@router.get("/{meeting_id}/chat/{session_id}", response_model=MeetingChatHistoryResponse)
+@router.get("/{meeting_id}/chat", response_model=MeetingChatHistoryResponse)
 def get_meeting_chat_history(
     meeting_id: str,
-    session_id: str,
     context: CurrentUserContext = Depends(get_current_context),
     chat_service: MeetingChatService = Depends(get_chat_service),
 ) -> MeetingChatHistoryResponse:
-    return chat_service.get_history(context, meeting_id, session_id)
+    return chat_service.get_history(context, meeting_id)

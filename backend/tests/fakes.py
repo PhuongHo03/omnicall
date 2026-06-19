@@ -54,3 +54,11 @@ class TestGuardrailProvider:
             provider=self.provider_name,
             model=self.model_name,
         )
+
+
+class CollectingOperationalLogService:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def emit(self, **event) -> None:
+        self.events.append(event)

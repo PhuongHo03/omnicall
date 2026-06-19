@@ -1,178 +1,233 @@
 import unittest
-from io import BytesIO
 from uuid import uuid4
 
 from starlette.datastructures import Headers, UploadFile
+from sqlalchemy import delete, select
 
 from backend.configs.database import SessionLocal
-from backend.configs.settings import get_settings
-from backend.dependencies.auth import CurrentUserContext, require_admin_context
+from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.auth_dto import AuthRegisterRequest
-from backend.dtos.file_dto import DeleteResponse
-from backend.dtos.meeting_dto import MeetingCreateRequest
-from sqlalchemy import delete
-
-from backend.models.core_models import AccountSession, AuditEvent, User, Workspace, WorkspaceMember
-from backend.models.meeting_models import AccountFile
+from backend.models.core_models import AccountSession, User
+from backend.models.enums import MeetingStatus, ProcessingJobStatus
+from backend.models.meeting_models import Meeting, MeetingAsset, ProcessingJob
 from backend.repositories.auth_repository import AuthRepository
-from backend.services.admin_meeting_service import AdminMeetingService
-from backend.services.auth_service import AuthService
+from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository, ProcessingJobRepository
+from backend.services.admin_account_service import AdminAccountService
 from backend.services.file_service import AccountFileService
-from backend.services.meeting_service import MeetingService
+from backend.services.auth_service import AuthService
 from backend.utils.exceptions import ApplicationError
+
+
+class MemoryUpload:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._position = 0
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if whence == 0:
+            self._position = offset
+        elif whence == 1:
+            self._position += offset
+        elif whence == 2:
+            self._position = len(self._data) + offset
+        return self._position
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            size = len(self._data) - self._position
+        chunk = self._data[self._position : self._position + size]
+        self._position += len(chunk)
+        return chunk
 
 
 class FakeStorageProvider:
     def __init__(self) -> None:
-        self.bytes_by_key: dict[str, bytes] = {}
+        self.objects: dict[str, bytes] = {}
         self.removed: list[str] = []
 
     def put_object(self, *, object_key, data, size_bytes, content_type) -> None:
-        self.bytes_by_key[object_key] = data.read()
+        self.objects[object_key] = data.read()
 
     def get_object_bytes(self, *, object_key) -> bytes:
-        return self.bytes_by_key[object_key]
+        return self.objects[object_key]
 
     def remove_object(self, *, object_key) -> None:
         self.removed.append(object_key)
-        self.bytes_by_key.pop(object_key, None)
+        self.objects.pop(object_key, None)
 
 
-class FakeQueueProvider:
-    def enqueue_meeting_processing(self, *, job_id: str, meeting_id: str) -> None:
+class FakeLockProvider:
+    def acquire(self, lock_key: str) -> str:
+        return f"token:{lock_key}"
+
+    def release(self, lock_key: str, token: str) -> None:
         return None
 
 
-class FakeVectorProvider:
-    enabled = True
-    provider_name = "fake-vector"
+class FakeQueueProvider:
+    def revoke_meeting_processing(self, *, job_ids: list[str]) -> dict:
+        return {"revoked": job_ids}
 
+
+class FakeCacheProvider:
     def __init__(self) -> None:
-        self.deleted: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
 
-    def upsert_chunks(self, chunks):
-        return {}
-
-    def search_chunk_ids(self, *, workspace_id, meeting_id, query_vector, limit):
-        return []
-
-    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
-        self.deleted.append((workspace_id, meeting_id))
-        return {"status": "deleted"}
-
-
-def upload_file(name: str, content_type: str, content: bytes) -> UploadFile:
-    return UploadFile(filename=name, file=BytesIO(content), headers=Headers({"content-type": content_type}))
+    def delete_key(self, key: str) -> None:
+        self.deleted.append(key)
 
 
 class Phase7AuthFilesTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        self.created_user_ids: list[str] = []
-        self.created_workspace_ids: list[str] = []
-
     def tearDown(self) -> None:
         with SessionLocal() as session:
-            for user_id in self.created_user_ids:
-                session.execute(delete(AccountSession).where(AccountSession.user_id == user_id))
-                session.execute(delete(AuditEvent).where(AuditEvent.user_id == user_id))
-                session.execute(delete(AccountFile).where(AccountFile.owner_user_id == user_id))
-                session.execute(delete(WorkspaceMember).where(WorkspaceMember.user_id == user_id))
-            for workspace_id in self.created_workspace_ids:
-                workspace = session.get(Workspace, workspace_id)
-                if workspace is not None:
-                    session.delete(workspace)
-            for user_id in self.created_user_ids:
-                user = session.get(User, user_id)
-                if user is not None:
-                    session.delete(user)
+            session.execute(delete(User).where(User.email.like("%@phase7.test")))
             session.commit()
 
-    def register(self, role: str):
+    def test_register_creates_user_role_and_account_session(self) -> None:
+        email = f"user-{uuid4().hex[:8]}@phase7.test"
         with SessionLocal() as session:
             response = AuthService(session).register(
-                AuthRegisterRequest(
-                    email=f"{role.lower()}-{uuid4()}@omnicall.test",
-                    password="change-me-123",
-                    display_name=f"{role} Test",
-                    role=role,
-                )
-            )
-            self.created_user_ids.append(response.account.user_id)
-            self.created_workspace_ids.append(response.account.workspace_id)
-            return response
-
-    def test_auth_roles_are_enforced(self) -> None:
-        admin = self.register("Admin")
-        user = self.register("User")
-
-        admin_context = CurrentUserContext(
-            user_id=admin.account.user_id,
-            workspace_id=admin.account.workspace_id,
-            role=admin.account.role,
-        )
-        user_context = CurrentUserContext(
-            user_id=user.account.user_id,
-            workspace_id=user.account.workspace_id,
-            role=user.account.role,
-        )
-
-        self.assertEqual(require_admin_context(admin_context), admin_context)
-        with self.assertRaises(ApplicationError) as raised:
-            require_admin_context(user_context)
-        self.assertEqual(raised.exception.status_code, 403)
-
-    def test_file_delete_is_blocked_when_linked_and_session_delete_cleans_file(self) -> None:
-        admin = self.register("Admin")
-        context = CurrentUserContext(
-            user_id=admin.account.user_id,
-            workspace_id=admin.account.workspace_id,
-            role=admin.account.role,
-        )
-        storage = FakeStorageProvider()
-        vector = FakeVectorProvider()
-
-        with SessionLocal() as session:
-            service = MeetingService(session, storage, FakeQueueProvider(), settings=get_settings())
-            meeting = service.create_meeting(context, MeetingCreateRequest(title="Phase 7", language="vi"))
-            asset = service.upload_asset(
-                context,
-                meeting.id,
-                upload_file("phase7.txt", "text/plain", b"phase 7 linked file"),
-                "upload-phase7",
+                AuthRegisterRequest(email=email, display_name="Phase 7 User", password="pw")
             )
 
-            file_service = AccountFileService(session, storage)
-            files = file_service.list_files(context).items
-            linked = next(item for item in files if item.asset_id == asset.id)
-            self.assertTrue(linked.linked_to_meeting)
-            with self.assertRaises(ApplicationError) as raised:
-                file_service.delete_file(context, linked.id)
-            self.assertEqual(raised.exception.status_code, 409)
+            user = AuthRepository(session).get_user(response.account.user_id)
+            sessions = list(
+                session.scalars(select(AccountSession).where(AccountSession.user_id == response.account.user_id)).all()
+            )
 
-            delete_response = AdminMeetingService(session, storage, vector).delete_meeting(context, meeting.id)
-            self.assertEqual(delete_response, DeleteResponse(id=meeting.id, deleted=True))
-            self.assertIn((context.workspace_id, meeting.id), vector.deleted)
-            self.assertFalse(file_service.list_files(context).items)
-            self.assertFalse(storage.bytes_by_key)
+        self.assertIsNotNone(user)
+        self.assertEqual(response.account.role, "User")
+        self.assertEqual(user.role, "User")
+        self.assertEqual(len(sessions), 1)
 
-    def test_unlinked_account_file_can_be_deleted_by_owner(self) -> None:
-        user = self.register("User")
-        context = CurrentUserContext(
-            user_id=user.account.user_id,
-            workspace_id=user.account.workspace_id,
-            role=user.account.role,
-        )
+    def test_file_library_uses_standalone_meeting_asset_rows(self) -> None:
+        user_id = str(uuid4())
         storage = FakeStorageProvider()
-
         with SessionLocal() as session:
+            AuthRepository(session).upsert_dev_user(
+                user_id=user_id,
+                email=f"{user_id}@phase7.test",
+                display_name="File User",
+                role="User",
+            )
+            context = CurrentUserContext(user_id=user_id, role="User")
             service = AccountFileService(session, storage)
-            account_file = service.upload_file(
-                context,
-                upload_file("library.txt", "text/plain", b"unlinked file"),
+            upload = UploadFile(
+                filename="note.txt",
+                file=MemoryUpload(b"00:00 Alice: hello"),
+                headers=Headers({"content-type": "text/plain"}),
             )
-            self.assertFalse(account_file.linked_to_meeting)
-            self.assertTrue(storage.bytes_by_key)
 
-            response = service.delete_file(context, account_file.id)
-            self.assertTrue(response.deleted)
-            self.assertFalse(storage.bytes_by_key)
+            created = service.upload_file(context, upload)
+            listed = service.list_files(context)
+            deleted = service.delete_file(context, created.id)
+
+        self.assertIsNone(created.meeting_id)
+        self.assertFalse(created.linked_to_meeting)
+        self.assertEqual(len(listed.items), 1)
+        self.assertTrue(deleted.deleted)
+        self.assertIn(f"users/{user_id}/files/", storage.removed[0])
+
+    def test_linked_meeting_asset_cannot_be_deleted_from_file_library(self) -> None:
+        user_id = str(uuid4())
+        storage = FakeStorageProvider()
+        with SessionLocal() as session:
+            AuthRepository(session).upsert_dev_user(
+                user_id=user_id,
+                email=f"{user_id}@phase7.test",
+                display_name="Linked File User",
+                role="User",
+            )
+            meeting = MeetingRepository(session).create(user_id=user_id, title="Linked", language="vi")
+            asset = MeetingAssetRepository(session).create(
+                meeting_id=meeting.id,
+                user_id=user_id,
+                object_key=f"users/{user_id}/meetings/{meeting.id}/uploads/linked.txt",
+                file_name="linked.txt",
+                content_type="text/plain",
+                size_bytes=10,
+                idempotency_key="linked",
+            )
+            session.commit()
+
+            with self.assertRaises(ApplicationError) as error:
+                AccountFileService(session, storage).delete_file(CurrentUserContext(user_id=user_id, role="User"), asset.id)
+
+        self.assertEqual(error.exception.code, "file_linked_to_meeting")
+
+    def test_admin_account_delete_removes_owned_meetings_assets_and_user(self) -> None:
+        admin_id = str(uuid4())
+        user_id = str(uuid4())
+        storage = FakeStorageProvider()
+        lock = FakeLockProvider()
+        queue = FakeQueueProvider()
+        cache = FakeCacheProvider()
+        with SessionLocal() as session:
+            auth = AuthRepository(session)
+            auth.upsert_dev_user(
+                user_id=admin_id,
+                email=f"{admin_id}@phase7.test",
+                display_name="Admin",
+                role="Admin",
+            )
+            auth.upsert_dev_user(
+                user_id=user_id,
+                email=f"{user_id}@phase7.test",
+                display_name="Deleted User",
+                role="User",
+            )
+            meeting = MeetingRepository(session).create(user_id=user_id, title="To delete", language="vi")
+            meeting.status = MeetingStatus.READY
+            asset = MeetingAssetRepository(session).create(
+                meeting_id=meeting.id,
+                user_id=user_id,
+                object_key=f"users/{user_id}/meetings/{meeting.id}/uploads/audio.mp3",
+                file_name="audio.mp3",
+                content_type="audio/mpeg",
+                size_bytes=100,
+                idempotency_key="upload",
+            )
+            ProcessingJobRepository(session).create(
+                meeting_id=meeting.id,
+                idempotency_key="process",
+                payload={"meetingId": meeting.id},
+                status=ProcessingJobStatus.SUCCEEDED,
+            )
+            standalone = MeetingAsset(
+                owner_user_id=user_id,
+                meeting_id=None,
+                object_key=f"users/{user_id}/files/note.txt",
+                file_name="note.txt",
+                content_type="text/plain",
+                size_bytes=10,
+            )
+            session.add(standalone)
+            storage.objects[asset.object_key] = b"audio"
+            storage.objects[standalone.object_key] = b"note"
+            session.commit()
+
+            response = AdminAccountService(
+                session,
+                storage,
+                lock_provider=lock,
+                queue_provider=queue,
+                cache_provider=cache,
+            ).delete_account(CurrentUserContext(user_id=admin_id, role="Admin"), user_id)
+
+            remaining_user = session.get(User, user_id)
+            remaining_meetings = list(session.scalars(select(Meeting).where(Meeting.owner_user_id == user_id)).all())
+            remaining_assets = list(session.scalars(select(MeetingAsset).where(MeetingAsset.owner_user_id == user_id)).all())
+
+        self.assertTrue(response.deleted)
+        self.assertIsNone(remaining_user)
+        self.assertEqual(remaining_meetings, [])
+        self.assertEqual(remaining_assets, [])
+        self.assertIn(f"users/{user_id}/meetings/{meeting.id}/uploads/audio.mp3", storage.removed)
+        self.assertIn(f"users/{user_id}/files/note.txt", storage.removed)
+
+
+if __name__ == "__main__":
+    unittest.main()

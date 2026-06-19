@@ -19,12 +19,12 @@ from backend.models.meeting_models import Meeting, MeetingAsset, ProcessingJob
 from backend.providers.queue_provider import ProcessingQueueProvider
 from backend.providers.storage_provider import ObjectStorageProvider
 from backend.repositories.auth_repository import AuditEventRepository
-from backend.repositories.file_repository import AccountFileRepository
 from backend.repositories.meeting_repository import (
     MeetingAssetRepository,
     MeetingRepository,
     ProcessingJobRepository,
 )
+from backend.services.operational_log_service import OperationalLogService
 from backend.utils.exceptions import ApplicationError
 
 
@@ -42,20 +42,20 @@ class MeetingService:
         storage_provider: ObjectStorageProvider,
         queue_provider: ProcessingQueueProvider,
         settings: Settings,
+        operational_logs: OperationalLogService | None = None,
     ) -> None:
         self.session = session
         self.meetings = MeetingRepository(session)
         self.assets = MeetingAssetRepository(session)
         self.jobs = ProcessingJobRepository(session)
-        self.account_files = AccountFileRepository(session)
         self.audit = AuditEventRepository(session)
         self.storage_provider = storage_provider
         self.queue_provider = queue_provider
         self.settings = settings
+        self.operational_logs = operational_logs
 
     def create_meeting(self, context: CurrentUserContext, request: MeetingCreateRequest) -> MeetingResponse:
         meeting = self.meetings.create(
-            workspace_id=context.workspace_id,
             user_id=context.user_id,
             title=request.title.strip(),
             language=request.language,
@@ -65,7 +65,7 @@ class MeetingService:
         return self._meeting_response(meeting)
 
     def list_meetings(self, context: CurrentUserContext, limit: int, offset: int) -> list[MeetingResponse]:
-        meetings = self.meetings.list_for_workspace(context.workspace_id, limit=limit, offset=offset)
+        meetings = self.meetings.list_for_owner(context.user_id, limit=limit, offset=offset)
         return [self._meeting_response(meeting) for meeting in meetings]
 
     def get_meeting(self, context: CurrentUserContext, meeting_id: str) -> MeetingResponse:
@@ -106,7 +106,7 @@ class MeetingService:
         self._validate_upload(extension=extension, content_type=content_type, size_bytes=size_bytes)
 
         object_key = (
-            f"workspaces/{context.workspace_id}/meetings/{meeting.id}"
+            f"users/{context.user_id}/meetings/{meeting.id}"
             f"/uploads/{uuid4()}{extension}"
         )
 
@@ -119,7 +119,6 @@ class MeetingService:
         )
 
         asset = self.assets.create(
-            workspace_id=context.workspace_id,
             meeting_id=meeting.id,
             user_id=context.user_id,
             object_key=object_key,
@@ -128,21 +127,10 @@ class MeetingService:
             size_bytes=size_bytes,
             idempotency_key=idempotency_key,
         )
-        self.account_files.create(
-            workspace_id=context.workspace_id,
-            owner_user_id=context.user_id,
-            meeting_id=meeting.id,
-            asset_id=asset.id,
-            object_key=object_key,
-            file_name=file_name,
-            content_type=content_type,
-            size_bytes=size_bytes,
-        )
         self.meetings.update_status(meeting, MeetingStatus.UPLOADED)
         self.audit.create(
             event_type="meeting.upload",
             outcome="success",
-            workspace_id=context.workspace_id,
             user_id=context.user_id,
             resource_type="meeting",
             resource_id=meeting.id,
@@ -150,6 +138,19 @@ class MeetingService:
         )
         self.session.commit()
         self.session.refresh(asset)
+        self._emit(
+            level="info",
+            flow="processing",
+            stage="file",
+            status="succeeded",
+            message="Meeting file uploaded.",
+            workspace_id=context.user_id,
+            meeting_id=meeting.id,
+            meeting_name=meeting.title,
+            language=meeting.language,
+            file=_asset_log_context(asset),
+            details={"source": "browser_upload"},
+        )
         return self._asset_response(asset)
 
     def queue_processing(
@@ -179,7 +180,6 @@ class MeetingService:
             )
 
         job = self.jobs.create(
-            workspace_id=context.workspace_id,
             meeting_id=meeting.id,
             idempotency_key=idempotency_key,
             payload={"meetingId": meeting.id},
@@ -190,12 +190,52 @@ class MeetingService:
 
         try:
             self.queue_provider.enqueue_meeting_processing(job_id=job.id, meeting_id=meeting.id)
+            asset = self.assets.get_latest_for_meeting(meeting.id)
+            self._emit(
+                level="info",
+                flow="processing",
+                stage="queued",
+                status="succeeded",
+                message="Meeting processing job queued.",
+                workspace_id=context.user_id,
+                meeting_id=meeting.id,
+                meeting_name=meeting.title,
+                language=meeting.language,
+                file=_asset_log_context(asset),
+                job={
+                    "id": job.id,
+                    "attempt": job.attempts,
+                    "queue": "meeting-processing",
+                    "taskName": getattr(self.queue_provider, "task_name", "omnicall.processing.process_meeting"),
+                },
+            )
         except Exception as exc:
             safe_reason = "Processing queue is unavailable. Please retry later."
             self.jobs.mark_failed(job, safe_reason, repr(exc))
             self.meetings.update_status(meeting, MeetingStatus.FAILED, safe_reason)
             self.session.commit()
             self.session.refresh(job)
+            asset = self.assets.get_latest_for_meeting(meeting.id)
+            self._emit(
+                level="error",
+                flow="processing",
+                stage="queued",
+                status="failed",
+                message="Meeting processing could not be queued.",
+                workspace_id=context.user_id,
+                meeting_id=meeting.id,
+                meeting_name=meeting.title,
+                language=meeting.language,
+                file=_asset_log_context(asset),
+                job={
+                    "id": job.id,
+                    "attempt": job.attempts,
+                    "queue": "meeting-processing",
+                    "taskName": getattr(self.queue_provider, "task_name", "omnicall.processing.process_meeting"),
+                },
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
 
         return self._job_response(job)
 
@@ -221,7 +261,7 @@ class MeetingService:
         )
 
     def _get_authorized_meeting(self, context: CurrentUserContext, meeting_id: str) -> Meeting:
-        meeting = self.meetings.get_for_workspace(meeting_id, context.workspace_id)
+        meeting = self.meetings.get_for_owner(meeting_id, context.user_id)
         if meeting is None:
             raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
         return meeting
@@ -236,6 +276,10 @@ class MeetingService:
         if size_bytes > self.settings.upload_max_bytes:
             raise ApplicationError(413, "upload_too_large", "Uploaded meeting file is too large.")
 
+    def _emit(self, **event) -> None:
+        if self.operational_logs is not None:
+            self.operational_logs.emit(**event)
+
     @staticmethod
     def _get_upload_size(upload: UploadFile) -> int:
         current_position = upload.file.tell()
@@ -248,7 +292,6 @@ class MeetingService:
     def _meeting_response(meeting: Meeting) -> MeetingResponse:
         return MeetingResponse(
             id=meeting.id,
-            workspace_id=meeting.workspace_id,
             title=meeting.title,
             language=meeting.language,
             status=meeting.status,
@@ -288,3 +331,15 @@ def get_meeting_service(
     queue_provider: ProcessingQueueProvider,
 ) -> MeetingService:
     return MeetingService(session, storage_provider, queue_provider, get_settings())
+
+
+def _asset_log_context(asset: MeetingAsset | None) -> dict:
+    if asset is None:
+        return {}
+    return {
+        "id": asset.id,
+        "name": asset.file_name,
+        "contentType": asset.content_type,
+        "sizeBytes": asset.size_bytes,
+        "objectKey": asset.object_key,
+    }

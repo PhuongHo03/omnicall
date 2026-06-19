@@ -15,6 +15,7 @@ from backend.providers.voice_provider import (
     LocalCommandDiarizationProvider,
     LocalVADProvider,
     SpeechRegion,
+    _voice_command_timeout,
     get_asr_provider,
 )
 from backend.providers.transcript_types import TranscriptSegment
@@ -131,6 +132,33 @@ class VoiceProviderTestCase(unittest.TestCase):
 
         self.assertIsInstance(provider, LocalASRProvider)
 
+    def test_voice_command_timeout_scales_with_audio_duration(self) -> None:
+        long_audio = AudioPreprocessingResult(
+            source_object_key="test/long.wav",
+            working_path="/tmp/long.wav",
+            duration_ms=566_496,
+            sample_rate_hz=16000,
+            channel_count=1,
+            warnings=[],
+        )
+
+        self.assertEqual(
+            _voice_command_timeout(
+                audio=_audio_result("/tmp/short.wav"),
+                minimum_seconds=120,
+                realtime_factor=1.0,
+            ),
+            120,
+        )
+        self.assertEqual(
+            _voice_command_timeout(
+                audio=long_audio,
+                minimum_seconds=120,
+                realtime_factor=1.0,
+            ),
+            566.496,
+        )
+
     def test_local_diarization_command_assigns_speaker_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = Path(tmp_dir) / "speech.wav"
@@ -168,9 +196,8 @@ class VoiceProviderTestCase(unittest.TestCase):
 def _asset() -> MeetingAsset:
     return MeetingAsset(
         id="44444444-4444-4444-8444-444444444444",
-        workspace_id="22222222-2222-4222-8222-222222222222",
+            owner_user_id="33333333-3333-4333-8333-333333333333",
         meeting_id="11111111-1111-4111-8111-111111111111",
-        created_by_user_id="33333333-3333-4333-8333-333333333333",
         object_key="workspaces/test/meetings/test/uploads/meeting.wav",
         file_name="meeting.wav",
         content_type="audio/wav",

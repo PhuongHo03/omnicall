@@ -1,6 +1,6 @@
 import { MessageSquare, RefreshCw, Send } from "lucide-react";
 
-import { IconButton } from "../../../components/IconButton";
+import { IconButton } from "../../../shared/components/IconButton";
 import type { Meeting, MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
 
 type MeetingChatPanelProps = {
@@ -8,7 +8,6 @@ type MeetingChatPanelProps = {
   messages: MeetingChatMessage[];
   question: string;
   selectedMeeting: Meeting | null;
-  sessionId: string | null;
   onQuestionChange: (question: string) => void;
   onRefreshHistory: () => void;
   onSubmitQuestion: () => void;
@@ -21,11 +20,9 @@ export function MeetingChatPanel({
   onRefreshHistory,
   onSubmitQuestion,
   question,
-  selectedMeeting,
-  sessionId
+  selectedMeeting
 }: MeetingChatPanelProps) {
   const canChat = Boolean(selectedMeeting) && selectedMeeting?.status === "READY" && !disabled;
-  const hasSession = Boolean(sessionId);
 
   return (
     <section className="detail-panel chat-panel">
@@ -37,7 +34,7 @@ export function MeetingChatPanel({
         <IconButton
           icon={<RefreshCw size={16} />}
           label="Refresh"
-          disabled={!canChat || !hasSession}
+          disabled={!canChat}
           onClick={onRefreshHistory}
           variant="secondary"
         />

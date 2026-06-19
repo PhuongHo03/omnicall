@@ -23,12 +23,28 @@ class Settings(BaseSettings):
     redis_processing_lock_ttl_seconds: int = Field(default=900, alias="REDIS_PROCESSING_LOCK_TTL_SECONDS")
     admin_metrics_cache_key: str = Field(default="admin:metrics:snapshot", alias="ADMIN_METRICS_CACHE_KEY")
     admin_metrics_cache_ttl_seconds: int = Field(default=10, alias="ADMIN_METRICS_CACHE_TTL_SECONDS")
+    operational_log_stream_key: str = Field(default="admin:logs:operational", alias="OPERATIONAL_LOG_STREAM_KEY")
+    operational_log_max_length: int = Field(default=1000, alias="OPERATIONAL_LOG_MAX_LENGTH")
+    operational_log_ttl_seconds: int = Field(default=86400, alias="OPERATIONAL_LOG_TTL_SECONDS")
+    operational_log_default_tail: int = Field(default=100, alias="OPERATIONAL_LOG_DEFAULT_TAIL")
     auth_session_ttl_hours: int = Field(default=168, alias="AUTH_SESSION_TTL_HOURS")
 
     rabbitmq_host: str = Field(default="rabbitmq", alias="RABBITMQ_HOST")
     rabbitmq_port: int = Field(default=5672, alias="RABBITMQ_PORT")
     rabbitmq_user: str = Field(default="omnicall", alias="RABBITMQ_USER")
     rabbitmq_password: str = Field(default="change-me", alias="RABBITMQ_PASSWORD")
+    processing_reconciliation_interval_seconds: int = Field(
+        default=60,
+        alias="PROCESSING_RECONCILIATION_INTERVAL_SECONDS",
+    )
+    processing_reconciliation_stale_seconds: int = Field(
+        default=120,
+        alias="PROCESSING_RECONCILIATION_STALE_SECONDS",
+    )
+    processing_reconciliation_batch_size: int = Field(
+        default=100,
+        alias="PROCESSING_RECONCILIATION_BATCH_SIZE",
+    )
 
     minio_host: str = Field(default="minio", alias="MINIO_HOST")
     minio_port: int = Field(default=9000, alias="MINIO_PORT")
@@ -70,6 +86,7 @@ class Settings(BaseSettings):
     asr_compute_type: str = Field(default="int8", alias="ASR_COMPUTE_TYPE")
     asr_command: str = Field(default="", alias="ASR_COMMAND")
     asr_timeout_seconds: float = Field(default=120.0, alias="ASR_TIMEOUT_SECONDS")
+    asr_timeout_realtime_factor: float = Field(default=1.0, alias="ASR_TIMEOUT_REALTIME_FACTOR")
     diarization_model: str = Field(default="wespeaker-voxceleb-resnet34", alias="DIARIZATION_MODEL")
     diarization_command: str = Field(default="", alias="DIARIZATION_COMMAND")
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
@@ -104,6 +121,8 @@ class Settings(BaseSettings):
     llm_fallback_provider: str = Field(default="ollama", alias="LLM_FALLBACK_PROVIDER")
     ollama_base_url: str = Field(default="http://ollama:11434", alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="qwen2.5:1.5b", alias="OLLAMA_MODEL")
+    ollama_llm_timeout_seconds: float = Field(default=600.0, alias="OLLAMA_LLM_TIMEOUT_SECONDS")
+    ollama_context_length: int = Field(default=8192, alias="OLLAMA_CONTEXT_LENGTH")
     prometheus_url: str = Field(default="http://prometheus:9090", alias="PROMETHEUS_URL")
 
     model_config = SettingsConfigDict(

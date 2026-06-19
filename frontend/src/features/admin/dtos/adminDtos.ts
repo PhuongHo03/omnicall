@@ -1,4 +1,12 @@
-import type { AdminMetric, AdminMetrics, AdminMetricsTarget } from "../types/adminTypes";
+import type {
+  AdminAccount,
+  AdminAccountList,
+  AdminMetric,
+  AdminMetrics,
+  AdminMetricsTarget,
+  AdminOperationalLog,
+  AdminOperationalLogList
+} from "../types/adminTypes";
 
 type RawMetric = {
   name?: unknown;
@@ -17,6 +25,15 @@ type RawTarget = {
   scrape_url?: unknown;
   last_scrape?: unknown;
   last_error?: unknown;
+};
+
+type RawAccount = {
+  user_id?: unknown;
+  email?: unknown;
+  display_name?: unknown;
+  role?: unknown;
+  created_at?: unknown;
+  can_change_role?: unknown;
 };
 
 function requireString(value: unknown, field: string): string {
@@ -116,5 +133,74 @@ export function parseAdminMetrics(raw: unknown): AdminMetrics {
     },
     targets: payload.targets.map((target) => mapTarget(target as RawTarget)),
     metrics: payload.metrics.map((metric) => mapMetric(metric as RawMetric))
+  };
+}
+
+export function parseAdminAccount(raw: unknown): AdminAccount {
+  const account = raw as RawAccount;
+  const role = requireString(account.role, "account.role");
+  return {
+    userId: requireString(account.user_id, "account.user_id"),
+    email: requireString(account.email, "account.email"),
+    displayName: requireString(account.display_name, "account.display_name"),
+    role: role === "Admin" ? "Admin" : "User",
+    createdAt: requireString(account.created_at, "account.created_at"),
+    canChangeRole: Boolean(account.can_change_role)
+  };
+}
+
+export function parseAdminAccounts(raw: unknown): AdminAccountList {
+  const payload = raw as { items?: unknown };
+  if (!Array.isArray(payload.items)) {
+    throw new Error("Invalid admin accounts payload.");
+  }
+  return {
+    items: payload.items.map(parseAdminAccount)
+  };
+}
+
+export function parseAdminOperationalLogs(raw: unknown): AdminOperationalLogList {
+  const payload = raw as {
+    items?: unknown;
+    limit?: unknown;
+    retained_limit?: unknown;
+  };
+  if (!Array.isArray(payload.items)) {
+    throw new Error("Invalid admin operational logs payload.");
+  }
+  return {
+    items: payload.items.map(parseAdminOperationalLog),
+    limit: requireNumber(payload.limit, "logs.limit"),
+    retainedLimit: requireNumber(payload.retained_limit, "logs.retained_limit")
+  };
+}
+
+function parseAdminOperationalLog(raw: unknown): AdminOperationalLog {
+  if (!isRecord(raw)) {
+    throw new Error("Invalid operational log event.");
+  }
+  const level = requireString(raw.level, "log.level");
+  const flow = requireString(raw.flow, "log.flow");
+  return {
+    id: requireString(raw.id, "log.id"),
+    timestamp: requireString(raw.timestamp, "log.timestamp"),
+    level: level === "error" ? "error" : "info",
+    flow: flow === "rag" ? "rag" : "processing",
+    stage: requireString(raw.stage, "log.stage"),
+    status: requireString(raw.status, "log.status"),
+    message: requireString(raw.message, "log.message"),
+    workspaceId: nullableString(raw.workspaceId, "log.workspaceId"),
+    meetingId: nullableString(raw.meetingId, "log.meetingId"),
+    meetingName: nullableString(raw.meetingName, "log.meetingName"),
+    language: nullableString(raw.language, "log.language"),
+    file: isRecord(raw.file) ? raw.file : {},
+    job: isRecord(raw.job) ? raw.job : {},
+    chat: isRecord(raw.chat) ? raw.chat : {},
+    provider: nullableString(raw.provider, "log.provider"),
+    model: nullableString(raw.model, "log.model"),
+    durationMs: nullableNumber(raw.durationMs, "log.durationMs"),
+    details: isRecord(raw.details) ? raw.details : {},
+    errorType: nullableString(raw.errorType, "log.errorType"),
+    errorMessage: nullableString(raw.errorMessage, "log.errorMessage")
   };
 }

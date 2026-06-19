@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy import delete
 
 from backend.configs.database import SessionLocal
-from backend.models.core_models import User, Workspace
+from backend.models.core_models import User
 from backend.models.enums import MeetingStatus, ProcessingJobStatus
 from backend.providers.analysis_provider import SCHEMA_VERSION
 from backend.providers.vector_provider import VectorProviderError, VectorSearchHit
@@ -51,20 +51,18 @@ class ReverseRerankProvider:
 class RetrievalSearchServiceTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.user_id = str(uuid4())
-        self.workspace_id = str(uuid4())
+        self.workspace_id = self.user_id
         with SessionLocal() as session:
-            AuthRepository(session).upsert_dev_context(
+            AuthRepository(session).upsert_dev_user(
                 user_id=self.user_id,
-                workspace_id=self.workspace_id,
                 email=f"{self.user_id}@test.omnicall",
                 display_name="Retrieval Search Test User",
-                workspace_name="Retrieval Search Test Workspace",
+                role="User",
             )
             session.commit()
 
     def tearDown(self) -> None:
         with SessionLocal() as session:
-            session.execute(delete(Workspace).where(Workspace.id == self.workspace_id))
             session.execute(delete(User).where(User.id == self.user_id))
             session.commit()
 
@@ -74,21 +72,18 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             job_repo = ProcessingJobRepository(session)
             result_repo = MeetingIntelligenceResultRepository(session)
             meeting = meeting_repo.create(
-                workspace_id=self.workspace_id,
                 user_id=self.user_id,
                 title="Retrieval search meeting",
                 language="vi",
             )
             meeting_repo.update_status(meeting, MeetingStatus.READY)
             job = job_repo.create(
-                workspace_id=self.workspace_id,
                 meeting_id=meeting.id,
                 idempotency_key=f"retrieval-search-{uuid4()}",
                 payload={"meetingId": meeting.id},
                 status=ProcessingJobStatus.SUCCEEDED,
             )
             result = result_repo.upsert(
-                workspace_id=self.workspace_id,
                 meeting_id=meeting.id,
                 processing_job_id=job.id,
                 schema_version=SCHEMA_VERSION,
@@ -106,7 +101,6 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             action_text = "Bob must index action items by Friday."
             risk_text = "Risk is low quality audio reducing answer confidence."
             MeetingChunkRepository(session).replace_for_result(
-                workspace_id=self.workspace_id,
                 meeting_id=meeting.id,
                 intelligence_result_id=result.id,
                 chunks=[

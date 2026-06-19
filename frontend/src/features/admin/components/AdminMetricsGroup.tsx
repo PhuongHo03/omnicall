@@ -11,17 +11,17 @@ export function AdminMetricsGroup({ category, metrics }: AdminMetricsGroupProps)
       <div className="panel-heading">
         <h2>{category}</h2>
       </div>
-      <div className="admin-metric-grid">
+      <div className={metricGridClassName(category, metrics.length)}>
         {metrics.map((metric) => (
-          <article className="admin-metric-card" key={metric.name}>
+          <article className={metricCardClassName(metric.name)} key={metric.name}>
             <div className="admin-metric-card__header">
               <strong>{metric.label}</strong>
               <span className={`metric-state metric-state--${metric.status}`}>{metric.status}</span>
             </div>
             <div className="admin-metric-card__values">
-              {metric.series.slice(0, 6).map((series, index) => (
+              {metric.series.map((series, index) => (
                 <div className="metric-row" key={`${metric.name}-${index}`}>
-                  <span>{labelForSeries(series.labels)}</span>
+                  <span>{labelForSeries(metric.name, series.labels)}</span>
                   <strong>{formatValue(series.value, metric.unit)}</strong>
                 </div>
               ))}
@@ -34,8 +34,82 @@ export function AdminMetricsGroup({ category, metrics }: AdminMetricsGroupProps)
   );
 }
 
-function labelForSeries(labels: Record<string, string>) {
-  const preferred = labels.name ?? labels.job ?? labels.status ?? labels.queue ?? labels.path ?? labels.instance;
+const rowStartMetrics = new Set([
+  "postgres_connection_states",
+  "redis_memory",
+  "rabbitmq_queue_messages",
+  "minio_capacity_usable",
+  "etcd_db_size",
+  "nginx_connections"
+]);
+
+function metricGridClassName(category: string, metricCount: number) {
+  const classes = ["admin-metric-grid"];
+  if (category !== "Infrastructure Services" && metricCount >= 3) {
+    classes.push("admin-metric-grid--wide");
+  }
+  return classes.join(" ");
+}
+
+function metricCardClassName(metricName: string) {
+  const classes = ["admin-metric-card"];
+  if (rowStartMetrics.has(metricName)) {
+    classes.push("admin-metric-card--row-start");
+  }
+  return classes.join(" ");
+}
+
+function labelForSeries(metricName: string, labels: Record<string, string>) {
+  if (metricName === "backend_request_rate") {
+    return [labels.method, labels.path, labels.status].filter(Boolean).join(" · ") || "request";
+  }
+  if (metricName === "backend_p95_latency") {
+    return [labels.method, labels.path].filter(Boolean).join(" · ") || "request";
+  }
+  if (metricName === "container_cpu" || metricName === "container_memory") {
+    return labels.compose_service ?? labels.container_name ?? "container";
+  }
+  if (metricName === "postgres_connection_states") {
+    return labels.state ?? "state";
+  }
+  if (metricName === "postgres_db_size") {
+    return labels.datname ?? "database";
+  }
+  if (metricName === "rabbitmq_queue_messages") {
+    return labels.queue ?? "all queues";
+  }
+  if (metricName === "redis_memory") {
+    return "used memory";
+  }
+  if (metricName === "redis_connected_clients") {
+    return "connected clients";
+  }
+  if (metricName === "rabbitmq_consumers") {
+    return "total consumers";
+  }
+  if (metricName === "minio_capacity_usable") {
+    return "usable capacity";
+  }
+  if (metricName === "minio_usage_used") {
+    return "used by objects";
+  }
+  if (metricName === "etcd_db_size") {
+    return "metadata DB";
+  }
+  if (metricName === "milvus_requests") {
+    return "request rate";
+  }
+  if (metricName === "milvus_collections") {
+    return "collections";
+  }
+  if (metricName === "milvus_stored_rows") {
+    return "stored rows";
+  }
+  if (metricName === "nginx_connections") {
+    return "active connections";
+  }
+
+  const preferred = labels.name ?? labels.job ?? labels.queue ?? labels.path ?? labels.status ?? labels.instance;
   if (preferred) {
     return preferred;
   }

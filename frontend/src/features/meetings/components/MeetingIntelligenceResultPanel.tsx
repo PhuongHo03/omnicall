@@ -1,3 +1,5 @@
+import { useCallback, useMemo, useState } from "react";
+
 import type { MeetingIntelligenceResult } from "../types/meetingTypes";
 
 type MeetingIntelligenceResultPanelProps = {
@@ -5,8 +7,29 @@ type MeetingIntelligenceResultPanelProps = {
 };
 
 const SECTION_ORDER = ["meeting", "source", "participants", "summary", "analysis", "transcript", "citations", "quality"];
+const DEFAULT_OPEN_SECTIONS = new Set(["summary", "analysis", "quality"]);
+const STORAGE_KEY = "omnicall:meeting-result-open-sections";
 
 export function MeetingIntelligenceResultPanel({ result }: MeetingIntelligenceResultPanelProps) {
+  const [sectionOpenState, setSectionOpenState] = useState<Record<string, boolean>>(() => readSectionOpenState());
+  const updateSectionOpenState = useCallback((sectionKey: string, isOpen: boolean) => {
+    setSectionOpenState((current) => {
+      const next = { ...current, [sectionKey]: isOpen };
+      writeSectionOpenState(next);
+      return next;
+    });
+  }, []);
+  const sectionKeys = useMemo(
+    () =>
+      result
+        ? [
+            ...SECTION_ORDER.filter((key) => key in result),
+            ...Object.keys(result).filter((key) => !SECTION_ORDER.includes(key))
+          ]
+        : [],
+    [result]
+  );
+
   if (!result) {
     return (
       <section className="result-panel result-panel--empty">
@@ -14,11 +37,6 @@ export function MeetingIntelligenceResultPanel({ result }: MeetingIntelligenceRe
       </section>
     );
   }
-
-  const sectionKeys = [
-    ...SECTION_ORDER.filter((key) => key in result),
-    ...Object.keys(result).filter((key) => !SECTION_ORDER.includes(key))
-  ];
 
   return (
     <section className="result-panel">
@@ -28,16 +46,32 @@ export function MeetingIntelligenceResultPanel({ result }: MeetingIntelligenceRe
       </div>
       <div className="json-section-list">
         {sectionKeys.map((key) => (
-          <JsonSection key={key} title={labelize(key)} value={result[key]} />
+          <JsonSection
+            key={key}
+            isOpen={sectionOpenState[key] ?? DEFAULT_OPEN_SECTIONS.has(key)}
+            title={labelize(key)}
+            value={result[key]}
+            onToggle={(isOpen) => updateSectionOpenState(key, isOpen)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function JsonSection({ title, value }: { title: string; value: unknown }) {
+function JsonSection({
+  isOpen,
+  onToggle,
+  title,
+  value
+}: {
+  isOpen: boolean;
+  onToggle: (isOpen: boolean) => void;
+  title: string;
+  value: unknown;
+}) {
   return (
-    <details className="json-section" open={title === "Summary" || title === "Analysis" || title === "Quality"}>
+    <details className="json-section" open={isOpen} onToggle={(event) => onToggle(event.currentTarget.open)}>
       <summary>{title}</summary>
       <div className="json-section__body">
         <JsonValue value={value} depth={0} />
@@ -94,6 +128,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function readSectionOpenState() {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (!stored) {
+      return {};
+    }
+    const parsed = JSON.parse(stored);
+    return isBooleanRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSectionOpenState(state: Record<string, boolean>) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // The accordion still works for the current render if browser storage is unavailable.
+  }
+}
+
+function isBooleanRecord(value: unknown): value is Record<string, boolean> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.values(value).every((entry) => typeof entry === "boolean");
 }
 
 function labelize(value: string) {

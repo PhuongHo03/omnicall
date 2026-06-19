@@ -2,7 +2,6 @@ export type AccountRole = "Admin" | "User";
 
 export type Account = {
   userId: string;
-  workspaceId: string;
   email: string;
   displayName: string;
   role: AccountRole;

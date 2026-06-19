@@ -171,18 +171,8 @@ def _build_system_prompt() -> str:
 
 
 def _build_user_prompt(meeting: Meeting, asset: MeetingAsset, transcript_segments: list[TranscriptSegment]) -> str:
-    transcript = [
-        {
-            "id": segment.id,
-            "speaker": segment.speaker,
-            "startMs": segment.start_ms,
-            "endMs": segment.end_ms,
-            "text": segment.text,
-            "confidence": segment.confidence,
-        }
-        for segment in transcript_segments
-    ]
-    payload = _prompt_payload(meeting=meeting, asset=asset, transcript=transcript)
+    transcript = _build_prompt_transcript(transcript_segments)
+    payload = _prompt_payload(meeting=meeting, asset=asset)
     return (
         "Generate the output JSON for this meeting transcript.\n"
         "Required top-level keys: participants, summary, analysis, citations, quality.\n"
@@ -193,7 +183,9 @@ def _build_user_prompt(meeting: Meeting, asset: MeetingAsset, transcript_segment
         "Each extracted item should include citationIds using transcript segment ids such as seg-001 when evidence exists.\n"
         "If a section has no evidence, return an empty array and explain it in analysis.emptySections.\n"
         "Do not return requiredSchemaVersion, requiredOutputShape, source, transcript, or meeting as top-level keys.\n"
-        f"Meeting input JSON: {json.dumps(payload, ensure_ascii=False)}"
+        f"Meeting metadata JSON: {json.dumps(payload, ensure_ascii=False)}\n"
+        "Transcript line format: segmentId|speaker|text\n"
+        f"Transcript lines:\n{transcript}"
     )
 
 
@@ -204,18 +196,8 @@ def _build_repair_prompt(
     transcript_segments: list[TranscriptSegment],
     invalid_response: dict,
 ) -> str:
-    transcript = [
-        {
-            "id": segment.id,
-            "speaker": segment.speaker,
-            "startMs": segment.start_ms,
-            "endMs": segment.end_ms,
-            "text": segment.text,
-            "confidence": segment.confidence,
-        }
-        for segment in transcript_segments
-    ]
-    payload = _prompt_payload(meeting=meeting, asset=asset, transcript=transcript)
+    transcript = _build_prompt_transcript(transcript_segments)
+    payload = _prompt_payload(meeting=meeting, asset=asset)
     invalid_keys = list(invalid_response.keys())[:12]
     return (
         "Your previous JSON was invalid for Omnicall because it did not contain real meeting intelligence. "
@@ -225,11 +207,13 @@ def _build_repair_prompt(
         "summary.executive must be a concise non-empty Vietnamese executive summary of the meeting.\n"
         "Extract decisions, actionItems, timeline, risks, dependencies, openQuestions, and keyPoints from the transcript.\n"
         "Use transcript segment IDs in citationIds when evidence exists.\n"
-        f"Meeting input JSON: {json.dumps(payload, ensure_ascii=False)}"
+        f"Meeting metadata JSON: {json.dumps(payload, ensure_ascii=False)}\n"
+        "Transcript line format: segmentId|speaker|text\n"
+        f"Transcript lines:\n{transcript}"
     )
 
 
-def _prompt_payload(*, meeting: Meeting, asset: MeetingAsset, transcript: list[dict]) -> dict:
+def _prompt_payload(*, meeting: Meeting, asset: MeetingAsset) -> dict:
     return {
         "meeting": {
             "id": meeting.id,
@@ -241,8 +225,18 @@ def _prompt_payload(*, meeting: Meeting, asset: MeetingAsset, transcript: list[d
             "fileName": asset.file_name,
             "contentType": asset.content_type,
         },
-        "transcriptSegments": transcript,
     }
+
+
+def _build_prompt_transcript(transcript_segments: list[TranscriptSegment]) -> str:
+    return "\n".join(
+        f"{segment.id}|{_sanitize_transcript_field(segment.speaker)}|{_sanitize_transcript_field(segment.text)}"
+        for segment in transcript_segments
+    )
+
+
+def _sanitize_transcript_field(value: str | None) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).replace("|", "/").strip()
 
 
 def _has_meeting_intelligence(generated: dict) -> bool:

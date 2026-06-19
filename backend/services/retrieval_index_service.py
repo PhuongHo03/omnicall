@@ -1,4 +1,5 @@
 import re
+import time
 
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,7 @@ class RetrievalIndexService:
         self.embedding_provider = embedding_provider or get_embedding_provider()
         self.vector_provider = vector_provider or get_vector_provider()
         self.last_vector_metadata: dict = {}
+        self.last_index_metadata: dict = {}
 
     def rebuild_for_latest_result(self, meeting_id: str) -> list[dict]:
         result = self.results.get_latest_for_meeting(meeting_id)
@@ -49,14 +51,26 @@ class RetrievalIndexService:
         return self.rebuild_for_result(result)
 
     def rebuild_for_result(self, result: MeetingIntelligenceResult) -> list[dict]:
+        embedding_started = time.perf_counter()
         chunk_dicts = build_retrieval_chunks(result.result_json, embedding_provider=self.embedding_provider)
+        embedding_duration_ms = _elapsed_ms(embedding_started)
         records = self.chunks.replace_for_result(
-            workspace_id=result.workspace_id,
             meeting_id=result.meeting_id,
             intelligence_result_id=result.id,
             chunks=chunk_dicts,
         )
+        vector_started = time.perf_counter()
         self.last_vector_metadata = self._upsert_vectors(records)
+        vector_duration_ms = _elapsed_ms(vector_started)
+        self.last_index_metadata = {
+            "chunkCount": len(records),
+            "embeddingProvider": self.embedding_provider.provider_name,
+            "embeddingModel": self.embedding_provider.model_name,
+            "embeddingDurationMs": embedding_duration_ms,
+            "vectorProvider": self.vector_provider.provider_name,
+            "vectorDurationMs": vector_duration_ms,
+            "vector": self.last_vector_metadata,
+        }
         return [
             {
                 "id": record.id,
@@ -339,3 +353,7 @@ def _is_signal_text(text: str, *, min_tokens: int = 3) -> bool:
 
 def _tokens(text: str) -> list[str]:
     return re.findall(r"[\wÀ-ỹ]+", text, flags=re.UNICODE)
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)

@@ -22,13 +22,6 @@ from backend.providers.prometheus_provider import (
 
 METRIC_QUERIES = [
     {
-        "name": "target_up",
-        "label": "Scrape target availability",
-        "category": "targets",
-        "unit": "state",
-        "query": "up",
-    },
-    {
         "name": "backend_request_rate",
         "label": "Backend request rate",
         "category": "backend",
@@ -40,7 +33,7 @@ METRIC_QUERIES = [
         "label": "Backend p95 latency",
         "category": "backend",
         "unit": "s",
-        "query": "histogram_quantile(0.95, sum by (le, path) (rate(omnicall_http_request_duration_seconds_bucket[5m])))",
+        "query": "histogram_quantile(0.95, sum by (le, method, path) (rate(omnicall_http_request_duration_seconds_bucket[5m])))",
     },
     {
         "name": "meetings_by_status",
@@ -68,21 +61,28 @@ METRIC_QUERIES = [
         "label": "Container CPU",
         "category": "containers",
         "unit": "cores",
-        "query": 'topk(10, omnicall_docker_container_cpu_cores{compose_project="omnicall"})',
+        "query": 'omnicall_docker_container_cpu_cores{compose_project="omnicall"}',
     },
     {
         "name": "container_memory",
         "label": "Container memory",
         "category": "containers",
         "unit": "bytes",
-        "query": 'topk(10, omnicall_docker_container_memory_working_set_bytes{compose_project="omnicall"})',
+        "query": 'omnicall_docker_container_memory_working_set_bytes{compose_project="omnicall"}',
     },
     {
-        "name": "postgres_connections",
-        "label": "PostgreSQL connections",
+        "name": "postgres_connection_states",
+        "label": "PostgreSQL connection states",
         "category": "database",
         "unit": "count",
-        "query": "sum(pg_stat_activity_count)",
+        "query": 'sum by (state) (pg_stat_activity_count{state=~"active|idle|idle in transaction"})',
+    },
+    {
+        "name": "postgres_db_size",
+        "label": "PostgreSQL database size",
+        "category": "database",
+        "unit": "bytes",
+        "query": 'sum by (datname) (pg_database_size_bytes{datname!~"template0|template1|postgres"})',
     },
     {
         "name": "redis_memory",
@@ -92,11 +92,25 @@ METRIC_QUERIES = [
         "query": "redis_memory_used_bytes",
     },
     {
+        "name": "redis_connected_clients",
+        "label": "Redis connected clients",
+        "category": "cache",
+        "unit": "count",
+        "query": "redis_connected_clients",
+    },
+    {
         "name": "rabbitmq_queue_messages",
         "label": "RabbitMQ queued messages",
         "category": "queue",
         "unit": "count",
         "query": "sum by (queue) (rabbitmq_queue_messages)",
+    },
+    {
+        "name": "rabbitmq_consumers",
+        "label": "RabbitMQ consumers",
+        "category": "queue",
+        "unit": "count",
+        "query": "sum(rabbitmq_consumers)",
     },
     {
         "name": "minio_capacity_usable",
@@ -106,11 +120,39 @@ METRIC_QUERIES = [
         "query": "minio_cluster_capacity_usable_total_bytes",
     },
     {
+        "name": "minio_usage_used",
+        "label": "MinIO used capacity",
+        "category": "storage",
+        "unit": "bytes",
+        "query": "minio_cluster_usage_total_bytes",
+    },
+    {
+        "name": "etcd_db_size",
+        "label": "etcd database size",
+        "category": "vector",
+        "unit": "bytes",
+        "query": "etcd_mvcc_db_total_size_in_bytes",
+    },
+    {
         "name": "milvus_requests",
         "label": "Milvus request rate",
         "category": "vector",
         "unit": "req/s",
         "query": "sum(rate(milvus_proxy_req_count[5m]))",
+    },
+    {
+        "name": "milvus_collections",
+        "label": "Milvus collections",
+        "category": "vector",
+        "unit": "count",
+        "query": "sum(milvus_rootcoord_collection_num)",
+    },
+    {
+        "name": "milvus_stored_rows",
+        "label": "Milvus stored rows",
+        "category": "vector",
+        "unit": "count",
+        "query": "sum(milvus_datacoord_stored_rows_num)",
     },
     {
         "name": "nginx_connections",

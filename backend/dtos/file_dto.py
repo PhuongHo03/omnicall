@@ -5,10 +5,8 @@ from pydantic import BaseModel
 
 class AccountFileResponse(BaseModel):
     id: str
-    workspace_id: str
     owner_user_id: str
     meeting_id: str | None
-    asset_id: str | None
     file_name: str
     content_type: str
     size_bytes: int

@@ -9,11 +9,12 @@ export function useAuthSession() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [account, setAccount] = useState<Account | null>(null);
   const [mode, setMode] = useState<AuthMode>("login");
-  const [email, setEmail] = useState("admin@omnicall.local");
-  const [password, setPassword] = useState("change-me-123");
-  const [displayName, setDisplayName] = useState("Omnicall Admin");
-  const [role, setRole] = useState<"Admin" | "User">("Admin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isSessionChecking, setIsSessionChecking] = useState(Boolean(token));
   const [error, setError] = useState<string | null>(null);
 
   const persistSession = useCallback((nextToken: string, nextAccount: Account) => {
@@ -25,14 +26,18 @@ export function useAuthSession() {
   const refreshAccount = useCallback(async () => {
     if (!token) {
       setAccount(null);
+      setIsSessionChecking(false);
       return;
     }
+    setIsSessionChecking(true);
     try {
       setAccount(await getCurrentAccount(token));
     } catch {
       localStorage.removeItem(TOKEN_KEY);
       setToken(null);
       setAccount(null);
+    } finally {
+      setIsSessionChecking(false);
     }
   }, [token]);
 
@@ -41,7 +46,7 @@ export function useAuthSession() {
   }, [refreshAccount]);
 
   const submit = useCallback(() => {
-    const validationError = validateAuthInput({ displayName, email, mode, password });
+    const validationError = validateAuthInput({ confirmPassword, displayName, email, mode, password });
     if (validationError) {
       setError(validationError);
       return;
@@ -52,22 +57,24 @@ export function useAuthSession() {
       try {
         const session =
           mode === "register"
-            ? await registerAccount(email, password, displayName, role)
+            ? await registerAccount(email, password, displayName)
             : await loginAccount(email, password);
         persistSession(session.token, session.account);
+        setIsSessionChecking(false);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Authentication failed.");
       } finally {
         setIsLoading(false);
       }
     })();
-  }, [displayName, email, mode, password, persistSession, role]);
+  }, [confirmPassword, displayName, email, mode, password, persistSession]);
 
   const logout = useCallback(() => {
     const currentToken = token;
     localStorage.removeItem(TOKEN_KEY);
     setToken(null);
     setAccount(null);
+    setIsSessionChecking(false);
     if (currentToken) {
       void logoutAccount(currentToken);
     }
@@ -75,20 +82,21 @@ export function useAuthSession() {
 
   return {
     account,
+    confirmPassword,
     displayName,
     email,
     error,
     isLoading,
+    isSessionChecking,
     mode,
     password,
-    role,
     token,
     logout,
+    setConfirmPassword,
     setDisplayName,
     setEmail,
     setMode,
     setPassword,
-    setRole,
     submit
   };
 }
@@ -97,21 +105,26 @@ function validateAuthInput({
   displayName,
   email,
   mode,
-  password
+  password,
+  confirmPassword
 }: {
+  confirmPassword: string;
   displayName: string;
   email: string;
   mode: AuthMode;
   password: string;
 }): string | null {
-  if (!email.trim() || !email.includes("@")) {
-    return "A valid email is required.";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+    return "Email must use the format name@example.com.";
   }
-  if (password.length < 8) {
-    return "Password must be at least 8 characters.";
+  if (!password) {
+    return "Password is required.";
   }
   if (mode === "register" && !displayName.trim()) {
     return "Name is required.";
+  }
+  if (mode === "register" && password !== confirmPassword) {
+    return "Password confirmation does not match.";
   }
   return null;
 }

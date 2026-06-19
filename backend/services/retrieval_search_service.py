@@ -1,5 +1,6 @@
 import math
 import re
+import time
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -33,6 +34,7 @@ class RetrievalSearchService:
         self.vector_provider = vector_provider or get_vector_provider()
         self.rerank_provider = rerank_provider or get_rerank_provider(self.settings)
         self.last_rerank_metadata: dict = {}
+        self.last_search_metadata: dict = {}
 
     def search_meeting(
         self,
@@ -42,9 +44,13 @@ class RetrievalSearchService:
         query: str,
         limit: int = 6,
     ) -> list[RetrievedChunk]:
+        search_started = time.perf_counter()
+        embedding_started = time.perf_counter()
         query_embedding = self.embedding_provider.embed_text(query).vector
+        embedding_duration_ms = _elapsed_ms(embedding_started)
         candidate_limit = max(limit, self.settings.rerank_top_k)
         output_limit = min(limit, self.settings.rerank_output_k)
+        retrieval_started = time.perf_counter()
         vector_hits = self._search_vector_index(
             workspace_id=workspace_id,
             meeting_id=meeting_id,
@@ -53,7 +59,9 @@ class RetrievalSearchService:
             limit=candidate_limit,
         )
         candidates = vector_hits
+        retrieval_source = self.vector_provider.provider_name
         if candidates is None:
+            retrieval_source = "postgres-fallback"
             candidates = self._search_postgres_fallback(
                 workspace_id=workspace_id,
                 meeting_id=meeting_id,
@@ -61,19 +69,44 @@ class RetrievalSearchService:
                 query_embedding=query_embedding,
                 limit=candidate_limit,
             )
+        retrieval_duration_ms = _elapsed_ms(retrieval_started)
         pinned = self._intent_pinned_chunks(
             workspace_id=workspace_id,
             meeting_id=meeting_id,
             query=query,
             limit=output_limit,
         )
+        rerank_started = time.perf_counter()
         reranked = self._rerank(query=query, candidates=candidates, output_limit=output_limit)
+        rerank_duration_ms = _elapsed_ms(rerank_started)
         if pinned:
             self.last_rerank_metadata = {
                 **self.last_rerank_metadata,
                 "intentPinnedCount": len(pinned),
             }
-        return _merge_unique_chunks(pinned, reranked, output_limit)
+        result = _merge_unique_chunks(pinned, reranked, output_limit)
+        self.last_search_metadata = {
+            "embedding": {
+                "provider": self.embedding_provider.provider_name,
+                "model": self.embedding_provider.model_name,
+                "durationMs": embedding_duration_ms,
+                "dimensions": len(query_embedding),
+            },
+            "retrieval": {
+                "provider": retrieval_source,
+                "configuredProvider": self.vector_provider.provider_name,
+                "durationMs": retrieval_duration_ms,
+                "candidateCount": len(candidates),
+                "candidateLimit": candidate_limit,
+            },
+            "rerank": {
+                **self.last_rerank_metadata,
+                "durationMs": rerank_duration_ms,
+            },
+            "resultCount": len(result),
+            "durationMs": _elapsed_ms(search_started),
+        }
+        return result
 
     def _search_vector_index(
         self,
@@ -285,6 +318,10 @@ def _has_meaningful_overlap(query_tokens: set[str], text: str) -> bool:
     if not query_tokens:
         return False
     return bool(query_tokens.intersection(_meaningful_tokens(text)))
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
 
 
 _STOPWORDS = {

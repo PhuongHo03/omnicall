@@ -12,7 +12,6 @@ class MeetingCreateRequest(BaseModel):
 
 class MeetingResponse(BaseModel):
     id: str
-    workspace_id: str
     title: str
     language: str | None
     status: MeetingStatus
@@ -53,7 +52,6 @@ class ProcessingStatusResponse(BaseModel):
 
 class MeetingChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
-    session_id: str | None = None
     language: str | None = Field(default=None, max_length=16)
 
 
@@ -71,7 +69,6 @@ class MeetingChatCitationResponse(BaseModel):
 
 class MeetingChatMessageResponse(BaseModel):
     id: str
-    session_id: str
     role: str
     content: str
     retrieved_chunk_ids: list[str]
@@ -81,7 +78,6 @@ class MeetingChatMessageResponse(BaseModel):
 
 
 class MeetingChatResponse(BaseModel):
-    session_id: str
     answer: str
     evidence_state: str
     citations: list[MeetingChatCitationResponse]
@@ -89,7 +85,6 @@ class MeetingChatResponse(BaseModel):
 
 
 class MeetingChatHistoryResponse(BaseModel):
-    session_id: str
     meeting_id: str
     title: str
     messages: list[MeetingChatMessageResponse]

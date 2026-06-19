@@ -13,7 +13,6 @@ import type {
 
 type RawMeeting = {
   id?: unknown;
-  workspace_id?: unknown;
   title?: unknown;
   language?: unknown;
   status?: unknown;
@@ -34,10 +33,8 @@ type RawAsset = {
 
 type RawAccountFile = {
   id?: unknown;
-  workspace_id?: unknown;
   owner_user_id?: unknown;
   meeting_id?: unknown;
-  asset_id?: unknown;
   file_name?: unknown;
   content_type?: unknown;
   size_bytes?: unknown;
@@ -69,7 +66,6 @@ type RawChatCitation = {
 
 type RawChatMessage = {
   id?: unknown;
-  session_id?: unknown;
   role?: unknown;
   content?: unknown;
   retrieved_chunk_ids?: unknown;
@@ -112,7 +108,6 @@ function stringList(value: unknown, field: string): string[] {
 function mapMeeting(raw: RawMeeting): Meeting {
   return {
     id: requireString(raw.id, "meeting.id"),
-    workspaceId: requireString(raw.workspace_id, "meeting.workspace_id"),
     title: requireString(raw.title, "meeting.title"),
     language: raw.language === null ? null : requireString(raw.language, "meeting.language"),
     status: requireString(raw.status, "meeting.status") as Meeting["status"],
@@ -183,24 +178,21 @@ export function buildMeetingPayload(title: string, language: string) {
   };
 }
 
-export function buildChatPayload(question: string, sessionId: string | null, language: string | null) {
+export function buildChatPayload(question: string, language: string | null) {
   return {
     question: question.trim(),
-    session_id: sessionId,
     language
   };
 }
 
 export function parseMeetingChatResponse(raw: unknown): MeetingChatResponse {
   const response = raw as {
-    session_id?: unknown;
     answer?: unknown;
     evidence_state?: unknown;
     citations?: unknown;
     message?: unknown;
   };
   return {
-    sessionId: requireString(response.session_id, "chat.session_id"),
     answer: requireString(response.answer, "chat.answer"),
     evidenceState: requireString(response.evidence_state, "chat.evidence_state") as MeetingChatResponse["evidenceState"],
     citations: mapCitations(response.citations),
@@ -210,7 +202,6 @@ export function parseMeetingChatResponse(raw: unknown): MeetingChatResponse {
 
 export function parseMeetingChatHistory(raw: unknown): MeetingChatHistory {
   const history = raw as {
-    session_id?: unknown;
     meeting_id?: unknown;
     title?: unknown;
     messages?: unknown;
@@ -219,7 +210,6 @@ export function parseMeetingChatHistory(raw: unknown): MeetingChatHistory {
     throw new Error("Invalid chat history.");
   }
   return {
-    sessionId: requireString(history.session_id, "chat_history.session_id"),
     meetingId: requireString(history.meeting_id, "chat_history.meeting_id"),
     title: requireString(history.title, "chat_history.title"),
     messages: history.messages.map((message) => mapChatMessage(message as RawChatMessage))
@@ -233,7 +223,6 @@ function mapChatMessage(raw: RawChatMessage): MeetingChatMessage {
   }
   return {
     id: requireString(raw.id, "chat_message.id"),
-    sessionId: requireString(raw.session_id, "chat_message.session_id"),
     role,
     content: requireString(raw.content, "chat_message.content"),
     retrievedChunkIds: stringList(raw.retrieved_chunk_ids, "chat_message.retrieved_chunk_ids"),
@@ -281,10 +270,8 @@ export function parseAccountFile(raw: unknown): AccountFile {
   }
   return {
     id: requireString(file.id, "file.id"),
-    workspaceId: requireString(file.workspace_id, "file.workspace_id"),
     ownerUserId: requireString(file.owner_user_id, "file.owner_user_id"),
     meetingId: file.meeting_id === null ? null : requireString(file.meeting_id, "file.meeting_id"),
-    assetId: file.asset_id === null ? null : requireString(file.asset_id, "file.asset_id"),
     fileName: requireString(file.file_name, "file.file_name"),
     contentType: requireString(file.content_type, "file.content_type"),
     sizeBytes: file.size_bytes,

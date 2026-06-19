@@ -4,7 +4,6 @@ export type ProcessingJobStatus = "PENDING" | "RUNNING" | "RETRYING" | "SUCCEEDE
 
 export type Meeting = {
   id: string;
-  workspaceId: string;
   title: string;
   language: string | null;
   status: MeetingStatus;
@@ -58,7 +57,6 @@ export type MeetingChatCitation = {
 
 export type MeetingChatMessage = {
   id: string;
-  sessionId: string;
   role: "user" | "assistant";
   content: string;
   retrievedChunkIds: string[];
@@ -68,7 +66,6 @@ export type MeetingChatMessage = {
 };
 
 export type MeetingChatResponse = {
-  sessionId: string;
   answer: string;
   evidenceState: "grounded" | "partial" | "not_enough_evidence";
   citations: MeetingChatCitation[];
@@ -76,7 +73,6 @@ export type MeetingChatResponse = {
 };
 
 export type MeetingChatHistory = {
-  sessionId: string;
   meetingId: string;
   title: string;
   messages: MeetingChatMessage[];
@@ -86,10 +82,8 @@ export type MeetingIntelligenceResult = Record<string, unknown>;
 
 export type AccountFile = {
   id: string;
-  workspaceId: string;
   ownerUserId: string;
   meetingId: string | null;
-  assetId: string | null;
   fileName: string;
   contentType: string;
   sizeBytes: number;

@@ -49,21 +49,26 @@ function isAudioAsset(asset: MeetingAsset | null) {
   return asset?.contentType.startsWith("audio/") === true;
 }
 
-export function useMeetingWorkspace(token: string, isAdmin: boolean) {
+export function useMeetingWorkspace(
+  token: string,
+  isAdmin: boolean,
+  requestedMeetingId: string | null,
+  onSelectedMeetingChange: (meetingId: string | null) => void
+) {
   const [draft, setDraft] = useState<MeetingDraft>({ title: "", language: "vi" });
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [accountFiles, setAccountFiles] = useState<AccountFile[]>([]);
   const [filePlaybackUrl, setFilePlaybackUrl] = useState<string | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
-  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(requestedMeetingId);
   const [latestJob, setLatestJob] = useState<ProcessingJob | null>(null);
   const [lastAsset, setLastAsset] = useState<MeetingAsset | null>(null);
   const [assetPlaybackUrl, setAssetPlaybackUrl] = useState<string | null>(null);
   const [intelligenceResult, setIntelligenceResult] = useState<MeetingIntelligenceResult | null>(null);
   const [chatQuestion, setChatQuestion] = useState("");
-  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasLoadedMeetings, setHasLoadedMeetings] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -88,10 +93,18 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
     }
   }, []);
 
+  const selectMeeting = useCallback(
+    (meetingId: string | null) => {
+      setSelectedMeetingId(meetingId);
+      onSelectedMeetingChange(meetingId);
+    },
+    [onSelectedMeetingChange]
+  );
+
   const refreshMeetings = useCallback(async () => {
     const nextMeetings = await listMeetings(token);
     setMeetings(nextMeetings);
-    setSelectedMeetingId((current) => current ?? nextMeetings[0]?.id ?? null);
+    setHasLoadedMeetings(true);
   }, [token]);
 
   const refreshAccountFiles = useCallback(async () => {
@@ -104,8 +117,23 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
   }, [refreshAccountFiles, refreshMeetings, run]);
 
   useEffect(() => {
+    if (!hasLoadedMeetings) {
+      return;
+    }
+    if (!requestedMeetingId) {
+      setSelectedMeetingId(null);
+      return;
+    }
+    if (meetings.some((meeting) => meeting.id === requestedMeetingId)) {
+      setSelectedMeetingId(requestedMeetingId);
+      return;
+    }
+    setSelectedMeetingId(null);
+    onSelectedMeetingChange(null);
+  }, [hasLoadedMeetings, meetings, onSelectedMeetingChange, requestedMeetingId]);
+
+  useEffect(() => {
     setChatQuestion("");
-    setChatSessionId(null);
     setChatMessages([]);
     setLatestJob(null);
     setLastAsset(null);
@@ -152,8 +180,11 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
       setLastAsset(status.latestAsset);
       if (status.meeting.status === "READY") {
         setIntelligenceResult(await getMeetingIntelligenceResult(token, meeting.id));
+        const chatHistory = await getMeetingChatHistory(token, meeting.id);
+        setChatMessages(chatHistory.messages);
       } else {
         setIntelligenceResult(null);
+        setChatMessages([]);
       }
     },
     [token]
@@ -185,13 +216,13 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
       const created = await createMeeting(token, draft.title, draft.language);
       setDraft({ title: "", language: draft.language });
       setMeetings((current) => [created, ...current]);
-      setSelectedMeetingId(created.id);
+      selectMeeting(created.id);
       setLatestJob(null);
       setLastAsset(null);
       setIntelligenceResult(null);
       setNotice("Meeting created.");
     });
-  }, [draft, run, token]);
+  }, [draft, run, selectMeeting, token]);
 
   const uploadFile = useCallback(
     (file: File) => {
@@ -304,27 +335,25 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
         token,
         selectedMeeting.id,
         question,
-        chatSessionId,
         selectedMeeting.language
       );
-      setChatSessionId(response.sessionId);
       setChatQuestion("");
-      const history = await getMeetingChatHistory(token, selectedMeeting.id, response.sessionId);
+      const history = await getMeetingChatHistory(token, selectedMeeting.id);
       setChatMessages(history.messages);
       setNotice(response.evidenceState === "not_enough_evidence" ? "No supported answer found." : "Answer generated.");
     });
-  }, [chatQuestion, chatSessionId, run, selectedMeeting, token]);
+  }, [chatQuestion, run, selectedMeeting, token]);
 
   const refreshChatHistory = useCallback(() => {
-    if (!selectedMeeting || !chatSessionId) {
+    if (!selectedMeeting) {
       return;
     }
     void run(async () => {
-      const history = await getMeetingChatHistory(token, selectedMeeting.id, chatSessionId);
+      const history = await getMeetingChatHistory(token, selectedMeeting.id);
       setChatMessages(history.messages);
       setNotice("Chat refreshed.");
     });
-  }, [chatSessionId, run, selectedMeeting, token]);
+  }, [run, selectedMeeting, token]);
 
   const deleteSelectedMeeting = useCallback(() => {
     if (!selectedMeeting || !isAdmin) {
@@ -334,14 +363,14 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
     void run(async () => {
       await deleteMeetingSession(token, selectedMeeting.id);
       setMeetings((current) => current.filter((item) => item.id !== selectedMeeting.id));
-      setSelectedMeetingId(null);
+      selectMeeting(null);
       setLastAsset(null);
       setLatestJob(null);
       setIntelligenceResult(null);
       await refreshAccountFiles();
       setNotice("Meeting session deleted.");
     });
-  }, [isAdmin, refreshAccountFiles, run, selectedMeeting, token]);
+  }, [isAdmin, refreshAccountFiles, run, selectMeeting, selectedMeeting, token]);
 
   const startRecording = useCallback(() => {
     if (!selectedMeeting) {
@@ -402,7 +431,6 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
     canUpload,
     chatMessages,
     chatQuestion,
-    chatSessionId,
     draft,
     error,
     filePlaybackUrl,
@@ -427,7 +455,7 @@ export function useMeetingWorkspace(token: string, isAdmin: boolean) {
     refreshStatus,
     setChatQuestion,
     setDraft,
-    setSelectedMeetingId,
+    setSelectedMeetingId: selectMeeting,
     startRecording,
     stopRecording,
     submitMeeting,

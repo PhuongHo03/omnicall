@@ -4,7 +4,7 @@
 
 - Frontend: React, TypeScript, Vite.
 - Backend API: Python, FastAPI.
-- Worker: Python worker process, Celery, RabbitMQ.
+- Worker: Python worker process, Celery worker/Beat, RabbitMQ.
 - Database: PostgreSQL.
 - Cache: Redis.
 - Object storage: MinIO.
@@ -31,6 +31,8 @@ Primary user flows:
 | Flow | User Goal | System Outcome |
 |---|---|---|
 | Account access | Register or login to Omnicall | Backend creates or validates the account and returns authenticated account context with `Admin` or `User` role |
+| Account administration | Promote or demote local accounts | Admin dashboard lists accounts and changes another account's role while preventing self-role changes |
+| Account deletion | Remove a local account | Admin-only backend flow deletes another account, blocks self-deletion, blocks active processing races, revokes queued jobs by ID, invalidates admin metrics cache, and cascades cleanup to target-owned sessions, meetings, and stored files |
 | Upload meeting | Add one existing audio/video file, transcript, or meeting notes file to a meeting | Private object is stored, metadata is saved, and the meeting is locked to that file for one analysis lineage |
 | Record meeting | Capture a live meeting from the browser | Recording is uploaded as the meeting asset and enters the same processing pipeline |
 | Review analysis | Understand what happened without replaying the whole meeting | Complete processed transcript result is displayed |
@@ -38,6 +40,20 @@ Primary user flows:
 | Manage uploaded files | Review files uploaded by the current account | Account-scoped file library lists owned uploads, allows playback, and allows deletion only when the file is not linked to an existing meeting session |
 | Delete meeting session | Remove an analysis session and its linked artifacts | Admin-only backend flow deletes the meeting session and cascades cleanup to linked file bytes, metadata, processed result, retrieval data, and chat history |
 | Monitor operations | See system health and processing state | Admin dashboard reads normalized backend metrics |
+| Inspect operational logs | Follow processing and RAG steps in realtime | Admin logs page tails temporary structured Redis events with provider/model and safe error details |
+
+Frontend route map:
+
+| Route | Purpose |
+|---|---|
+| `/auth` | Login and registration tabs on one account-access screen |
+| `/meetings` | Default authenticated landing page with no selected meeting |
+| `/meetings/:meetingId` | Direct URL for one selected meeting |
+| `/admin/metrics` | Default admin portal page for operations metrics |
+| `/admin/accounts` | Admin account and role management |
+| `/admin/logs` | Admin-only realtime processing and RAG operational logs |
+
+`/` redirects authenticated accounts to `/meetings`; the navbar Meetings action also returns to `/meetings`. `/admin` redirects to `/admin/metrics`. The right-side Admin Portal dropdown is rendered only for `Admin`, while route guards redirect unauthenticated users to `/auth` and non-admin users away from `/admin/*`.
 
 Out of MVP unless explicitly pulled forward:
 
@@ -53,20 +69,17 @@ Durable business state belongs in PostgreSQL.
 
 | Concept | Purpose |
 |---|---|
-| `workspace` | Collaboration and permission boundary |
 | `user` | Account identity |
-| `workspace_member` | Role and membership inside a workspace |
+| `account_session` | Backend-owned bearer login session |
+| `audit_event` | Security and operational trace for important actions |
 | `meeting` | Main aggregate for uploaded/recorded meeting content |
-| `meeting_asset` | File metadata for raw uploads, recordings, transcripts, and exports stored in MinIO |
+| `meeting_asset` | File metadata for raw uploads, recordings, transcripts, exports, and standalone account-library files stored in MinIO |
 | `processing_job` | Async job state for transcription, analysis, and embedding work |
 | `meeting_intelligence_result` | Versioned processed transcript JSON used as the main knowledge base for chat |
-| `transcript_segment` | Derived transcript segment rows rebuilt from the processed JSON |
-| `meeting_insight` | Derived normalized/indexed view of structured items inside the processed JSON |
 | `meeting_chunk` | Retrieval unit derived from processed JSON sections and source ranges |
-| `chat_session` | User conversation scoped to a meeting |
 | `chat_message` | Saved user questions, assistant answers, citations, and timestamps |
-| `account_file` | Account-scoped uploaded file metadata and MinIO object reference used by the file library |
-| `audit_event` | Security and operational trace for important actions |
+
+The current PostgreSQL local-dev schema intentionally has 9 business tables: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `processing_jobs`, `meeting_intelligence_results`, `meeting_chunks`, and `chat_messages`. `workspaces`, `workspace_members`, `account_files`, `transcript_segments`, `meeting_insights`, and `chat_sessions` were removed during the schema consolidation; their responsibilities are handled by direct account ownership, JSONB result storage, derived `meeting_chunks`, and meeting-scoped chat messages.
 
 Meeting status lifecycle:
 
@@ -82,6 +95,8 @@ PENDING -> RUNNING -> SUCCEEDED
         -> CANCELLED
 RUNNING -> FAILED -> RETRYING -> RUNNING
 ```
+
+`PENDING` jobs whose meeting remains `QUEUED` beyond the configured stale threshold are automatically republished by Celery Beat. `FAILED` jobs still require an explicit retry.
 
 ## Meeting Intelligence Pipeline
 
@@ -302,6 +317,11 @@ LLM_API_KEY=...
 LLM_MODEL=...
 LLM_ENDPOINT_COMPATIBILITY=openai|custom-json
 LLM_TIMEOUT_SECONDS=60
+OLLAMA_LLM_TIMEOUT_SECONDS=600
+OLLAMA_CONTEXT_LENGTH=8192
+PROCESSING_RECONCILIATION_INTERVAL_SECONDS=60
+PROCESSING_RECONCILIATION_STALE_SECONDS=120
+PROCESSING_RECONCILIATION_BATCH_SIZE=100
 LLM_FALLBACK_PROVIDER=ollama
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=qwen2.5:1.5b
@@ -318,6 +338,7 @@ ASR_HF_REPO=Systran/faster-whisper-small
 ASR_HF_REVISION=main
 ASR_DOWNLOAD_COMMAND=
 ASR_TIMEOUT_SECONDS=120
+ASR_TIMEOUT_REALTIME_FACTOR=1.0
 DIARIZATION_MODEL=wespeaker-voxceleb-resnet34
 DIARIZATION_COMMAND=...
 DIARIZATION_HF_REPO=Wespeaker/wespeaker-voxceleb-resnet34-LM
@@ -382,12 +403,12 @@ Backend endpoints:
 | `POST` | `/api/meetings/{meetingId}/assets` | Implemented | Upload meeting file/recording asset, transcript, or notes text |
 | `POST` | `/api/meetings/{meetingId}/process` | Implemented | Queue processing |
 | `GET` | `/api/meetings/{meetingId}/processing-status` | Implemented | Read meeting/job progress |
-| `GET` | `/api/meetings/{meetingId}/transcript` | Implemented | Read transcript segments from the processed JSON |
-| `GET` | `/api/meetings/{meetingId}/insights` | Implemented | Read structured analysis from the processed JSON |
 | `GET` | `/api/meetings/{meetingId}/intelligence-result` | Implemented | Read the complete processed transcript JSON when needed |
 | `POST` | `/api/meetings/{meetingId}/chat` | Implemented | Ask a meeting-grounded question |
-| `GET` | `/api/meetings/{meetingId}/chat/{sessionId}` | Implemented | Read chat history |
+| `GET` | `/api/meetings/{meetingId}/chat` | Implemented | Read the meeting-scoped chat history |
 | `GET` | `/api/admin/metrics` | Implemented | Read normalized admin metrics through backend admin auth and Redis cache |
+| `GET` | `/api/admin/accounts` | Implemented | List local accounts and role metadata for admin management |
+| `PATCH` | `/api/admin/accounts/{userId}/role` | Implemented | Change another account's role between `Admin` and `User` |
 | `DELETE` | `/api/admin/meetings/{meetingId}` | Implemented | Admin-only meeting session deletion with cascading cleanup |
 | `GET` | `/api/files` | Implemented | List files uploaded by the current account |
 | `POST` | `/api/files` | Implemented | Upload a reusable account-scoped file |
@@ -430,12 +451,15 @@ Current meeting intake rule: one meeting accepts only one uploaded or recorded a
 │   ├── Dockerfile                    <- Frontend container image
 │   ├── src/
 │   │   ├── routes/                   <- Thin route composition
-│   │   ├── layouts/                  <- App shell
-│   │   ├── components/               <- Shared UI components
-│   │   ├── styles/                   <- Global CSS
-│   │   └── features/                 <- Auth, admin dashboard, and meeting feature layers
+│   │   ├── shared/                   <- Shared components, layouts, styles, utilities, and assets
+│   │   └── features/                 <- Auth, admin metrics/accounts, and meeting feature layers
 │   └── package.json                  <- Frontend dependencies and scripts
 ├── infras/                           <- Infrastructure service config
+│   ├── postgres/                     <- PostgreSQL runtime and client-auth config
+│   ├── redis/                        <- Redis persistence and memory config
+│   ├── rabbitmq/                     <- RabbitMQ runtime config and enabled plugins
+│   ├── etcd/                         <- Single-node etcd persistence config
+│   ├── milvus/                       <- Milvus standalone override config
 │   ├── model-init/                   <- ASR/diarization/rerank model bootstrap
 │   ├── docker-exporter/              <- Internal Docker stats exporter for Prometheus
 │   ├── nginx/                        <- Gateway config
@@ -453,7 +477,7 @@ Current meeting intake rule: one meeting accepts only one uploaded or recorded a
 - Frontend code uses feature-based layered structure:
   - Preserve Vite/React routing under `frontend/src/routes/`.
   - Put discrete business areas under `frontend/src/features/<feature>/`.
-  - Keep root-level frontend folders only for shared code: `components`, `layouts`, `styles`, `utils`, and `assets`.
+  - Keep cross-feature shared code under `frontend/src/shared/`, with subfolders such as `components`, `layouts`, `styles`, `utils`, and `assets` only when they contain real code/assets.
   - Add feature layers such as `api`, `dtos`, `hooks`, `screens`, `states`, `types`, and `components` only when they have real responsibility.
   - Keep routes thin, screens compositional, API calls in `api`, runtime validation/mapping in `dtos`, orchestration in `hooks`, reusable state transitions in `states`, and feature-only UI in feature `components`.
 
@@ -467,7 +491,8 @@ Current meeting intake rule: one meeting accepts only one uploaded or recorded a
 | Local backend command | `uvicorn backend.main:app --reload` |
 | Local Compose command | `docker compose --env-file .env.example up -d --build` |
 | Migration command | `docker compose --env-file .env.example exec -T backend alembic upgrade head` |
-| Worker command | `celery -A backend.configs.celery_app.celery_app worker --queues=meeting-processing` |
+| Worker command | `celery -A backend.configs.celery_app.celery_app worker --queues=meeting-processing,processing-maintenance` |
+| Beat command | `celery -A backend.configs.celery_app.celery_app beat` |
 | Env template | Root `.env.example` |
 | Public URL | `http://127.0.0.1:8080` locally when `APP_BIND_IP=0.0.0.0` and `NGINX_PORT=8080` |
 | Adminer | `http://127.0.0.1:8081` |
@@ -498,8 +523,8 @@ Implemented product roles:
 
 | Role | Permission |
 |---|---|
-| `Admin` | Access admin metrics, delete meeting sessions, and trigger cascading cleanup |
-| `User` | Create/upload/process/chat with own meetings and manage own unlinked uploaded files |
+| `Admin` | Access metrics and temporary operational logs, manage accounts, delete meeting sessions, and trigger cascading cleanup |
+| `User` | Default role for newly registered accounts; create/upload/process/chat with own meetings and manage own unlinked uploaded files |
 
 The frontend may hide unavailable actions for UX, but backend authorization remains authoritative.
 
@@ -508,14 +533,14 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 - `docs/explanations/backend-explanation.md` - Current FastAPI backend structure and health flow.
 - `docs/explanations/frontend-explanation.md` - Current Vite/React frontend structure and meeting workflow.
 - `docs/explanations/infrastructure-explanation.md` - Current Docker Compose, gateway, storage, vector DB, and monitoring runtime.
-- `docs/explanations/worker-explanation.md` - Current Celery worker, Redis lock, and processing pipeline behavior.
+- `docs/explanations/worker-explanation.md` - Current Celery worker/Beat, Redis locks, reconciliation, and processing pipeline behavior.
 - `docs/explanations/documentation-explanation.md` - Project documentation rules and layout.
 
 ## Open Product Decisions
 
 | Decision | Default Direction | When To Revisit |
 |---|---|---|
-| Auth | Local register/login, backend bearer sessions, `Admin`/`User` roles, and account-aware frontend UI are implemented | Revisit before SSO, invite-only admin creation, or enterprise identity |
+| Auth | Local register/login, backend bearer sessions, default `User` registration, admin role-management UI, `Admin`/`User` roles, and account-aware frontend UI are implemented | Revisit before SSO, invite-only admin creation, or enterprise identity |
 | Recording | Completed recording upload first | When live transcription becomes a priority |
 | ASR provider | Local faster-whisper command runner is implemented and verified through MP3 upload processing | Revisit when changing ASR model size, language defaults, or GPU acceleration |
 | LLM provider | API/private endpoint first with Ollama fallback; the same LLM boundary is used for analysis JSON and chat answers | Revisit when improving prompts, evaluations, and chat generation |
@@ -523,6 +548,7 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | Guardrails | Ollama guardrail provider, transcript/input/context/output checks, safe refusals, and `not_enough_evidence` downgrade are implemented | Revisit after live model latency checks and policy tuning |
 | Raw audio retention | Private object storage with explicit future retention policy | Before production or real user data |
 | File/session deletion | Direct file deletion is blocked while a meeting session references the file; admin session deletion cascades linked file cleanup | Revisit when adding shared files or reusable uploads |
+| Operational log retention | Temporary Redis Stream capped at 1,000 events with a 24-hour sliding TTL | Revisit when centralized durable log aggregation is required |
 | Cross-meeting chat | Out of MVP | After single-meeting chat is reliable |
 
 ## Phase Summary
@@ -538,3 +564,4 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 5.6 | Local guardrails | Done |
 | 6 | Admin and operations | Done |
 | 7 | Hardening | Done |
+| 8 | Operational logs | Done |

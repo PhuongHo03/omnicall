@@ -22,15 +22,20 @@
 
 - [x] Add account registration for local users.
 - [x] Add login/logout/session or token flow owned by the backend.
-- [x] Add `GET /api/me` to return current account, role, and workspace/account context.
+- [x] Add `GET /api/me` to return current account and product role.
 - [x] Replace development header-only auth in the frontend with backend-issued auth state.
 - [x] Keep development headers available only as a clearly documented local fallback if still needed.
 - [x] Support exactly two product roles for this phase:
   - [x] `Admin` can access admin metrics.
   - [x] `Admin` can delete meeting sessions and trigger cascading cleanup.
+  - [x] `Admin` can delete other accounts and trigger cascading cleanup for their sessions, meetings, and stored files.
   - [x] `User` can create/upload/process/chat with their own meetings and view their own uploaded files.
   - [x] `User` cannot access admin metrics or delete meeting sessions.
 - [x] Enforce all role checks in backend dependencies/services, not in the frontend.
+- [x] Prevent an admin from deleting or demoting their own active account.
+- [x] Block account deletion while any target meeting is actively processing.
+- [x] Revoke queued processing jobs before deleting target meetings.
+- [x] Invalidate admin metrics cache after destructive admin deletion.
 
 ### Meeting Session Deletion
 
@@ -41,7 +46,7 @@
   - [x] meeting asset metadata.
   - [x] uploaded object bytes in MinIO.
   - [x] processed JSON result.
-  - [x] transcript segments, insights, and retrieval chunks.
+  - [x] processed JSON and retrieval chunks.
   - [x] Milvus vectors for the meeting.
   - [x] chat sessions and messages.
 - [x] Make deletion idempotent and safe to retry.
@@ -66,8 +71,12 @@
 - [x] Replace the freed sidebar context space with the account file library.
 - [x] Let users select an uploaded file from the library and play it when authorized.
 - [x] Let users delete an uploaded file only when backend says it is not linked to an active meeting session.
+- [x] Ask for confirmation before deleting an uploaded file.
 - [x] Show a clear conflict state when a file cannot be deleted because its meeting session still exists.
 - [x] Show admin-only UI affordances for metrics dashboard and meeting-session deletion.
+- [x] Ask for confirmation before deleting a meeting session.
+- [x] Add admin account management actions for role changes and account deletion.
+- [x] Ask for confirmation before deleting an account.
 - [x] Keep frontend role display as UX only; backend remains authoritative.
 
 ### Security And Privacy
@@ -88,6 +97,8 @@
 - [x] Add deletion cleanup tests for object storage where applicable.
 - [x] Add auth tests for registration, login, role enforcement, and `GET /api/me`.
 - [x] Add role tests for `Admin` vs `User` access to metrics and meeting deletion.
+- [x] Add admin account-management tests for role update, self-change protection, account deletion, and self-delete protection.
+- [x] Add account-deletion tests for processing-lock conflict, queued-job revoke, lock release, and metrics-cache invalidation.
 - [x] Add file library tests for blocked delete when linked and delete success when unlinked.
 - [x] Add cascading meeting-session deletion tests covering PostgreSQL metadata, MinIO object deletion, Milvus delete call, and chat/retrieval/result cleanup.
 
@@ -115,6 +126,7 @@
 - [x] Login as `Admin`, open metrics, delete a meeting session, and confirm linked file metadata is removed.
 - [x] Confirm file delete is blocked while its meeting session exists.
 - [x] Confirm an unlinked owned file can be deleted from the file library.
+- [x] Confirm admin account deletion removes the target account and target-owned stored files.
 
 ### Acceptance Criteria
 
@@ -123,8 +135,10 @@
 - [x] Plan and explanation docs match the source.
 - [x] Users can register, login, logout, and see their account information in the UI.
 - [x] Backend enforces `Admin`/`User` roles for metrics and meeting-session deletion.
+- [x] Backend enforces `Admin`/`User` roles for account role management and account deletion.
 - [x] Account file storage is usable from the UI and safely scoped by account.
 - [x] File deletion and meeting-session deletion follow the documented reference and cleanup rules.
+- [x] File, meeting-session, and account deletion actions ask for confirmation before the frontend sends delete requests.
 - [x] Temporary frontend context controls are replaced by account-aware UI.
 
 ---
@@ -137,17 +151,27 @@
 ### What was implemented
 
 - Added backend-owned local account registration, login, logout, bearer sessions, `GET /api/me`, and `Admin`/`User` role normalization.
+- Updated public registration so new accounts are always created as `User`; Admin role changes are handled by the admin account dashboard.
 - Kept development header auth as a local fallback when no bearer token is present.
-- Added `account_sessions`, `account_files`, and `audit_events` persistence with Alembic migration `0006_auth_files_audit`.
-- Added Alembic migration `0007_normalize_product_roles` to convert legacy `owner` rows to `Admin` and enforce `Admin`/`User` database role constraints.
+- Consolidated PostgreSQL to one local-dev baseline migration, `0001_initial_schema`.
+- Kept 9 business tables: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `processing_jobs`, `meeting_intelligence_results`, `meeting_chunks`, and `chat_messages`.
 - Added account file APIs for list, upload, authorized playback/download, and safe delete.
-- Added admin-only meeting session deletion that removes meeting records, processing jobs, assets, processed JSON, transcript/insight/chunk rows, chat history, linked account file metadata/object bytes, and derived Milvus vectors.
+- Added admin-only meeting session deletion that removes meeting records, processing jobs, assets, processed JSON, retrieval chunks, chat history, linked file metadata/object bytes, and derived Milvus vectors.
 - Replaced the temporary frontend context panel with login/register UI, account-aware shell, account file library, authenticated API calls, admin dashboard gating, and admin meeting delete controls.
-- Added audit events for auth, upload, file playback/delete, admin metrics access, and meeting session deletion.
+- Added admin account management UI/API for listing accounts and changing another account's role with self-role-change protection.
+- Added admin account deletion UI/API for deleting another account, with self-delete protection and cleanup of target-owned sessions, files, and meeting artifacts.
+- Hardened admin account deletion with Redis processing locks, best-effort Celery revoke by job ID, single account-delete transaction scope for meeting cleanup, and admin metrics cache invalidation.
+- Added shared in-app confirmation prompts before destructive file, meeting-session, and account deletion actions in the frontend, replacing browser-native confirm dialogs.
+- Added URL-backed frontend routing for `/auth`, `/meetings`, `/meetings/:meetingId`, `/admin/metrics`, and `/admin/accounts`.
+- Split the admin portal into independent metrics and account-management screens/hooks; `/admin` redirects to `/admin/metrics`.
+- Kept Login/Register as tabs on the shared `/auth` route, made `/meetings` the authenticated landing page, and replaced separate admin navbar links with one right-side Admin Portal dropdown visible only to `Admin`.
+- Moved account identity out of the Meetings content area and into a navbar account hover/focus dropdown beside logout, showing display name, email, and role.
+- Updated the account trigger to show the account display name and distinct Admin/User icons instead of a generic icon with a role label.
+- Added audit events for auth, upload, file playback/delete, admin metrics access, meeting session deletion, account role changes, and account deletion.
 
 ### What was changed from original plan
 
-- Local registration currently allows choosing `Admin` for development and local operations. Enterprise invite/approval flows remain outside this phase.
+- Local registration no longer exposes role selection and defaults to `User`. Enterprise invite/approval flows remain outside this phase.
 - Frontend stores the local bearer token in `localStorage` for developer ergonomics; backend authorization remains authoritative.
 - Direct file deletion is blocked while an existing meeting session references the file. Admin meeting deletion is the cleanup path for linked files.
 
@@ -164,3 +188,76 @@
 - [x] `docs/explanations/worker-explanation.md`
 - [x] `docs/explanations/infrastructure-explanation.md`
 - [x] `docs/plans/0 - project overview.md`
+
+### 2026-06-18 account deletion update
+
+- Added `DELETE /api/admin/accounts/{userId}` for admin-only deletion of another account.
+- Added account-deletion cleanup tests and re-ran the full backend suite: `73` tests passed.
+- Rebuilt backend/frontend images and restarted `backend`, `frontend`, and `nginx`.
+- Re-ran frontend TypeScript/Vite build after destructive-confirmation UI changes.
+- Moved cross-feature frontend components, layouts, and styles under `frontend/src/shared/`.
+
+### 2026-06-18 production-grade account deletion update
+
+- Added `task_id=job_id` for meeting-processing Celery tasks so queued jobs can be revoked by ID.
+- Enabled Celery remote control for targeted revoke while keeping worker gossip/mingle disabled.
+- Added Redis processing-lock checks to admin meeting/account deletion.
+- Added safe `409` conflicts when deletion would race an active worker.
+- Invalidated the Redis admin metrics snapshot after admin meeting/account deletion.
+- Added targeted tests for lock conflict, queued-job revoke, lock release, and metrics-cache invalidation.
+- Re-ran full backend suite: `75` tests passed.
+
+### 2026-06-18 frontend routing update
+
+- Added React Router and URL-backed auth, meetings, selected-meeting, admin metrics, and admin accounts routes.
+- Added guest, authenticated, and Admin route guards.
+- Set `/admin/metrics` as the default admin portal page through the `/admin` redirect.
+- Split admin metrics and account management into independent screens and hooks so each route loads only its own data.
+- Verified frontend build and direct gateway access for every route.
+
+### 2026-06-18 infrastructure configuration update
+
+- Added source-controlled runtime configs for PostgreSQL, Redis, RabbitMQ, etcd, and Milvus under `infras/`.
+- Mounted every service config read-only from Compose while keeping credentials and environment-specific values in `.env`.
+- Kept MinIO command/environment configured in Compose without an unnecessary standalone config directory.
+- Recreated the stateful containers without deleting named volumes.
+- Verified custom PostgreSQL config/HBA, Redis AOF and memory policy, RabbitMQ management/Prometheus plugins, existing etcd member data, and the existing Milvus `meeting_chunks` collection.
+
+### 2026-06-18 long voice processing reliability update
+
+- Confirmed a queued long MP3 job waited for the prior worker task and was then consumed correctly; the failure was model runtime timeout, not RabbitMQ/Celery queue ordering.
+- Added duration-aware ASR/diarization subprocess timeouts through `ASR_TIMEOUT_REALTIME_FACTOR`.
+- Compacted LLM analysis prompts and increased the local Ollama fallback analysis timeout to `600` seconds.
+- Reprocessed `test4` successfully to `READY` with a persisted processed JSON result.
+
+### 2026-06-19 processed JSON UI preference update
+
+- Changed the Processed JSON collapsible sections from hard-coded default-open behavior to a browser-local UI preference.
+- Closing `Summary`, `Analysis`, `Quality`, or another processed JSON section now remains respected when switching meeting sessions.
+- Re-ran the frontend TypeScript/Vite build successfully.
+
+### 2026-06-19 PostgreSQL schema consolidation update
+
+- Replaced the multi-step local migration chain with one baseline migration: `0001_initial_schema`.
+- Reset the local development PostgreSQL schema as approved and reapplied the baseline migration.
+- Reduced durable business tables to 9: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `processing_jobs`, `meeting_intelligence_results`, `meeting_chunks`, and `chat_messages`.
+- Removed the old `workspaces`, `workspace_members`, `account_files`, `transcript_segments`, `meeting_insights`, and `chat_sessions` tables.
+- Moved account file-library metadata into standalone `meeting_assets` rows with `meeting_id = NULL`.
+- Kept processed transcript and insight details authoritative in `meeting_intelligence_results.result_json`; only `meeting_chunks` remains as the derived PostgreSQL retrieval index.
+- Stored chat history directly by `chat_messages.meeting_id`; one meeting is one chat thread.
+- Re-ran backend unittest discovery: `62` tests passed.
+- Re-ran frontend TypeScript/Vite build successfully.
+- Verified ORM metadata has exactly 9 business tables and PostgreSQL has those 9 tables plus `alembic_version`.
+- Recreated backend and worker containers; both reported healthy, and gateway `/api/health` returned `200 OK`.
+
+### 2026-06-18 worker queue and local LLM recovery update
+
+- Fixed Celery 5.6 remote-control compatibility with RabbitMQ 4 by explicitly permitting its transient non-exclusive pidbox queues.
+- Replaced the worker's RabbitMQ socket-only healthcheck with a targeted Celery ping that detects a stopped consumer.
+- Added separate local fallback timeout/context settings and compacted analysis prompt metadata without removing the authoritative transcript from processed JSON.
+- Recovered the orphaned `test2` job and verified it moved from `PENDING` to `RUNNING` and finally `SUCCEEDED`; the meeting reached `READY`.
+- Added a separate Celery Beat scheduler and durable `processing-maintenance` queue with an isolated direct exchange/routing key for stale `PENDING` job reconciliation.
+- Added persistent delivery, late acknowledgment, worker-loss rejection, Redis reconciliation locking, stale-job cooldown metadata, and configurable scan interval/threshold/batch size.
+- Verified Beat automatically sent reconciliation after 60 seconds and the worker completed it from the maintenance path.
+- Added transaction rollback and authoritative row reload before worker failure-state persistence.
+- Re-ran the complete backend suite after reconciliation hardening: `82` tests passed.

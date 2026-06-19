@@ -17,6 +17,9 @@ class JsonCacheProvider:
     def set_json(self, key: str, value: dict[str, Any], ttl_seconds: int) -> None:
         raise NotImplementedError
 
+    def delete_key(self, key: str) -> None:
+        raise NotImplementedError
+
 
 class RedisJsonCacheProvider(JsonCacheProvider):
     def __init__(self, settings: Settings) -> None:
@@ -40,6 +43,12 @@ class RedisJsonCacheProvider(JsonCacheProvider):
             self.client.set(key, json.dumps(value), ex=ttl_seconds)
         except RedisError as exc:
             raise CacheProviderError("Redis cache write failed.") from exc
+
+    def delete_key(self, key: str) -> None:
+        try:
+            self.client.delete(key)
+        except RedisError as exc:
+            raise CacheProviderError("Redis cache delete failed.") from exc
 
 
 def get_json_cache_provider() -> JsonCacheProvider:

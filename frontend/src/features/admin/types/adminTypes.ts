@@ -39,10 +39,49 @@ export type AdminMetrics = {
   metrics: AdminMetric[];
 };
 
-export type AdminAuthContext = {
+export type AdminAccountRole = "Admin" | "User";
+
+export type AdminAccount = {
   userId: string;
-  workspaceId: string;
-  userEmail: string;
-  userName: string;
-  workspaceName: string;
+  email: string;
+  displayName: string;
+  role: AdminAccountRole;
+  createdAt: string;
+  canChangeRole: boolean;
+};
+
+export type AdminAccountList = {
+  items: AdminAccount[];
+};
+
+export type AdminLogLevel = "info" | "error";
+export type AdminLogFlow = "processing" | "rag";
+
+export type AdminOperationalLog = {
+  id: string;
+  timestamp: string;
+  level: AdminLogLevel;
+  flow: AdminLogFlow;
+  stage: string;
+  status: string;
+  message: string;
+  workspaceId: string | null;
+  meetingId: string | null;
+  meetingName: string | null;
+  language: string | null;
+  file: Record<string, unknown>;
+  job: Record<string, unknown>;
+  chat: Record<string, unknown>;
+  provider: string | null;
+  model: string | null;
+  durationMs: number | null;
+  details: Record<string, unknown>;
+  errorType: string | null;
+  errorMessage: string | null;
+};
+
+export type AdminOperationalLogList = {
+  items: AdminOperationalLog[];
+  limit: number;
+  retainedLimit: number;
 };

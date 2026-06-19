@@ -31,6 +31,7 @@ class LLMRequestConfig:
     timeout_seconds: float = 60.0
     max_retries: int = 1
     retry_backoff_seconds: float = 0.2
+    context_length: int | None = None
 
 
 class OpenAICompatibleLLMProvider:
@@ -117,6 +118,9 @@ class OllamaLLMProvider:
         self.last_provider_model = self.model_name
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        options: dict[str, Any] = {"temperature": 0}
+        if self.config.context_length:
+            options["num_ctx"] = self.config.context_length
         response = _post_json(
             base_url=self.config.base_url,
             path="api/chat",
@@ -128,7 +132,7 @@ class OllamaLLMProvider:
                 ],
                 "format": "json",
                 "stream": False,
-                "options": {"temperature": 0},
+                "options": options,
             },
             timeout_seconds=self.config.timeout_seconds,
             max_retries=getattr(self.config, "max_retries", 1),
@@ -149,14 +153,23 @@ class FallbackLLMProvider:
         self.model_name = f"{primary.provider_name}:{primary.model_name}|{fallback.provider_name}:{fallback.model_name}"
         self.last_provider_name = primary.provider_name
         self.last_provider_model = primary.model_name
+        self.last_fallback_used = False
+        self.last_primary_error_type: str | None = None
+        self.last_primary_error_message: str | None = None
 
     def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        self.last_fallback_used = False
+        self.last_primary_error_type = None
+        self.last_primary_error_message = None
         try:
             result = self.primary.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
             self.last_provider_name = getattr(self.primary, "last_provider_name", self.primary.provider_name)
             self.last_provider_model = getattr(self.primary, "last_provider_model", self.primary.model_name)
             return result
-        except LLMProviderError:
+        except LLMProviderError as exc:
+            self.last_fallback_used = True
+            self.last_primary_error_type = type(exc).__name__
+            self.last_primary_error_message = str(exc)
             result = self.fallback.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
             self.last_provider_name = getattr(self.fallback, "last_provider_name", self.fallback.provider_name)
             self.last_provider_model = getattr(self.fallback, "last_provider_model", self.fallback.model_name)
@@ -215,9 +228,10 @@ def _build_ollama_provider(settings: Settings) -> OllamaLLMProvider:
         LLMRequestConfig(
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
-            timeout_seconds=settings.llm_timeout_seconds,
+            timeout_seconds=settings.ollama_llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
             retry_backoff_seconds=settings.llm_retry_backoff_seconds,
+            context_length=settings.ollama_context_length,
         )
     )
 

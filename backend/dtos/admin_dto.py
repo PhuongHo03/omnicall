@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AdminMetricsCacheResponse(BaseModel):
@@ -46,3 +46,53 @@ class AdminMetricsResponse(BaseModel):
     summary: AdminMetricsSummaryResponse
     targets: list[AdminMetricsTargetResponse]
     metrics: list[AdminMetricResponse]
+
+
+class AdminAccountResponse(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    role: str
+    created_at: datetime
+    can_change_role: bool
+
+
+class AdminAccountListResponse(BaseModel):
+    items: list[AdminAccountResponse]
+
+
+class AdminAccountRoleUpdateRequest(BaseModel):
+    role: str = Field(pattern="^(Admin|User)$")
+
+
+class AdminOperationalLogEventResponse(BaseModel):
+    id: str
+    timestamp: datetime
+    level: str
+    flow: str
+    stage: str
+    status: str
+    message: str
+    workspaceId: str | None = None
+    meetingId: str | None = None
+    meetingName: str | None = None
+    language: str | None = None
+    file: dict = Field(default_factory=dict)
+    job: dict = Field(default_factory=dict)
+    chat: dict = Field(default_factory=dict)
+    provider: str | None = None
+    model: str | None = None
+    durationMs: int | None = None
+    details: dict = Field(default_factory=dict)
+    errorType: str | None = None
+    errorMessage: str | None = None
+
+
+class AdminOperationalLogListResponse(BaseModel):
+    items: list[AdminOperationalLogEventResponse]
+    limit: int
+    retained_limit: int
+
+
+class AdminOperationalLogClearResponse(BaseModel):
+    cleared: bool

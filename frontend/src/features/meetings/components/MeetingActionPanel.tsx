@@ -1,6 +1,8 @@
 import { Mic, Pause, Play, RefreshCw, RotateCcw, Trash2, Upload } from "lucide-react";
+import { useState } from "react";
 
-import { IconButton } from "../../../components/IconButton";
+import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
+import { IconButton } from "../../../shared/components/IconButton";
 import type { Meeting, MeetingAsset, ProcessingJob } from "../types/meetingTypes";
 import { StatusPill } from "./StatusPill";
 
@@ -40,6 +42,7 @@ export function MeetingActionPanel({
   showAdminActions
 }: MeetingActionPanelProps) {
   const canAct = Boolean(selectedMeeting) && !disabled;
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const isRetryAction = latestJob?.retryAllowed === true;
   const statusHint = selectedMeeting ? meetingStatusHint(selectedMeeting) : "Select or create a meeting to begin.";
   const shouldShowIntake = canAct && !hasLockedAsset;
@@ -112,7 +115,7 @@ export function MeetingActionPanel({
             icon={<Trash2 size={16} />}
             label="Delete"
             disabled={!canAct}
-            onClick={onDeleteMeeting}
+            onClick={() => setIsDeleteDialogOpen(true)}
             variant="danger"
           />
         ) : null}
@@ -122,6 +125,17 @@ export function MeetingActionPanel({
 
       <p className="safe-message">{statusHint}</p>
       {latestJob?.safeFailureReason ? <p className="safe-message">{latestJob.safeFailureReason}</p> : null}
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        title="Delete meeting session"
+        message={`Delete ${selectedMeeting?.title ?? "this meeting"}? This will delete its uploaded file, processing result, chunks, and chat history.`}
+        confirmLabel="Delete session"
+        onCancel={() => setIsDeleteDialogOpen(false)}
+        onConfirm={() => {
+          setIsDeleteDialogOpen(false);
+          onDeleteMeeting();
+        }}
+      />
     </section>
   );
 }

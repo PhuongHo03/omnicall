@@ -10,11 +10,23 @@ import { useMeetingWorkspace } from "../hooks/useMeetingWorkspace";
 
 type MeetingsScreenProps = {
   account: Account;
+  requestedMeetingId: string | null;
   token: string;
+  onSelectedMeetingChange: (meetingId: string | null) => void;
 };
 
-export function MeetingsScreen({ account, token }: MeetingsScreenProps) {
-  const workspace = useMeetingWorkspace(token, account.role === "Admin");
+export function MeetingsScreen({
+  account,
+  onSelectedMeetingChange,
+  requestedMeetingId,
+  token
+}: MeetingsScreenProps) {
+  const workspace = useMeetingWorkspace(
+    token,
+    account.role === "Admin",
+    requestedMeetingId,
+    onSelectedMeetingChange
+  );
 
   return (
     <div className="workspace-screen">
@@ -45,13 +57,6 @@ export function MeetingsScreen({ account, token }: MeetingsScreenProps) {
       </aside>
 
       <div className="workspace-main">
-        <div className="account-banner">
-          <div>
-            <strong>{account.displayName}</strong>
-            <span>{account.email}</span>
-          </div>
-          <span className="status-pill status-pill--teal">{account.role}</span>
-        </div>
         <MeetingActionPanel
           canProcess={workspace.canProcess}
           canUpload={workspace.canUpload}
@@ -79,7 +84,6 @@ export function MeetingsScreen({ account, token }: MeetingsScreenProps) {
               messages={workspace.chatMessages}
               question={workspace.chatQuestion}
               selectedMeeting={workspace.selectedMeeting}
-              sessionId={workspace.chatSessionId}
               onQuestionChange={workspace.setChatQuestion}
               onRefreshHistory={workspace.refreshChatHistory}
               onSubmitQuestion={workspace.submitChatQuestion}

@@ -35,13 +35,12 @@ function apiErrorMessage(payload: unknown): string {
 export async function registerAccount(
   email: string,
   password: string,
-  displayName: string,
-  role: string
+  displayName: string
 ): Promise<AuthSession> {
   const response = await fetch(`${API_PREFIX}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildRegisterPayload(email, password, displayName, role))
+    body: JSON.stringify(buildRegisterPayload(email, password, displayName))
   });
   return parseAuthSession(await parseJsonResponse(response));
 }

@@ -124,7 +124,6 @@ export async function askMeetingChat(
   token: string,
   meetingId: string,
   question: string,
-  sessionId: string | null,
   language: string | null
 ): Promise<MeetingChatResponse> {
   const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/chat`, {
@@ -133,17 +132,13 @@ export async function askMeetingChat(
       ...authHeaders(token),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(buildChatPayload(question, sessionId, language))
+    body: JSON.stringify(buildChatPayload(question, language))
   });
   return parseMeetingChatResponse(await parseJsonResponse(response));
 }
 
-export async function getMeetingChatHistory(
-  token: string,
-  meetingId: string,
-  sessionId: string
-): Promise<MeetingChatHistory> {
-  const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/chat/${sessionId}`, {
+export async function getMeetingChatHistory(token: string, meetingId: string): Promise<MeetingChatHistory> {
+  const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/chat`, {
     headers: authHeaders(token)
   });
   return parseMeetingChatHistory(await parseJsonResponse(response));

@@ -1,6 +1,6 @@
 import { RefreshCw } from "lucide-react";
 
-import { IconButton } from "../../../components/IconButton";
+import { IconButton } from "../../../shared/components/IconButton";
 import type { Meeting } from "../types/meetingTypes";
 import { StatusPill } from "./StatusPill";
 

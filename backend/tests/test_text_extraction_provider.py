@@ -16,9 +16,8 @@ class TextExtractionProviderTestCase(unittest.TestCase):
     def make_asset(self, *, file_name: str = "meeting.txt", content_type: str = "text/plain") -> MeetingAsset:
         return MeetingAsset(
             id="44444444-4444-4444-8444-444444444444",
-            workspace_id="22222222-2222-4222-8222-222222222222",
+            owner_user_id="33333333-3333-4333-8333-333333333333",
             meeting_id="11111111-1111-4111-8111-111111111111",
-            created_by_user_id="33333333-3333-4333-8333-333333333333",
             object_key="workspaces/test/meetings/test/uploads/meeting.txt",
             file_name=file_name,
             content_type=content_type,

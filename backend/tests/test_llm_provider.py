@@ -53,6 +53,8 @@ class LLMProviderTestCase(unittest.TestCase):
             "LLM_FALLBACK_PROVIDER": "ollama",
             "OLLAMA_BASE_URL": "http://ollama.internal:11434",
             "OLLAMA_MODEL": "qwen2.5:1.5b",
+            "OLLAMA_LLM_TIMEOUT_SECONDS": 600,
+            "OLLAMA_CONTEXT_LENGTH": 8192,
         }
         defaults.update(overrides)
         return Settings(_env_file=None, **defaults)
@@ -65,6 +67,8 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(provider.primary.model_name, "private-model")
         self.assertEqual(provider.fallback.provider_name, "ollama")
         self.assertEqual(provider.fallback.model_name, "qwen2.5:1.5b")
+        self.assertEqual(provider.fallback.config.timeout_seconds, 600)
+        self.assertEqual(provider.fallback.config.context_length, 8192)
 
     def test_ollama_provider_can_be_primary_without_extra_fallback_wrapper(self) -> None:
         provider = build_llm_provider(self.make_settings(LLM_PROVIDER="ollama"))
@@ -156,6 +160,9 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertEqual(provider.last_provider_name, "static")
         self.assertEqual(provider.last_provider_model, "static-model")
+        self.assertTrue(provider.last_fallback_used)
+        self.assertEqual(provider.last_primary_error_type, "LLMProviderError")
+        self.assertEqual(provider.last_primary_error_message, "primary failed")
 
     def test_fallback_provider_records_primary_provider_when_primary_succeeds(self) -> None:
         provider = FallbackLLMProvider(StaticProvider(), BrokenProvider())
@@ -166,6 +173,8 @@ class LLMProviderTestCase(unittest.TestCase):
         )
         self.assertEqual(provider.last_provider_name, "static")
         self.assertEqual(provider.last_provider_model, "static-model")
+        self.assertFalse(provider.last_fallback_used)
+        self.assertIsNone(provider.last_primary_error_message)
 
 
 if __name__ == "__main__":

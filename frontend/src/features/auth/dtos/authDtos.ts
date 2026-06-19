@@ -2,7 +2,6 @@ import type { Account, AuthSession } from "../types/authTypes";
 
 type RawAccount = {
   user_id?: unknown;
-  workspace_id?: unknown;
   email?: unknown;
   display_name?: unknown;
   role?: unknown;
@@ -19,7 +18,6 @@ function parseAccount(raw: RawAccount): Account {
   const role = requireString(raw.role, "account.role");
   return {
     userId: requireString(raw.user_id, "account.user_id"),
-    workspaceId: requireString(raw.workspace_id, "account.workspace_id"),
     email: requireString(raw.email, "account.email"),
     displayName: requireString(raw.display_name, "account.display_name"),
     role: role === "Admin" ? "Admin" : "User"
@@ -40,12 +38,11 @@ export function parseMe(raw: unknown): Account {
   return parseAccount(payload.account as RawAccount);
 }
 
-export function buildRegisterPayload(email: string, password: string, displayName: string, role: string) {
+export function buildRegisterPayload(email: string, password: string, displayName: string) {
   return {
     email: email.trim(),
     password,
-    display_name: displayName.trim(),
-    role
+    display_name: displayName.trim()
   };
 }
 

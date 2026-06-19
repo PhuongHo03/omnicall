@@ -3,23 +3,28 @@ import { RefreshCcw } from "lucide-react";
 import { AdminMetricsGroup } from "../components/AdminMetricsGroup";
 import { AdminSummaryCards } from "../components/AdminSummaryCards";
 import { AdminTargetsTable } from "../components/AdminTargetsTable";
-import { useAdminDashboard } from "../hooks/useAdminDashboard";
+import { useAdminMetrics } from "../hooks/useAdminMetrics";
 
-type AdminDashboardScreenProps = {
+type AdminMetricsScreenProps = {
   token: string;
 };
 
-export function AdminDashboardScreen({ token }: AdminDashboardScreenProps) {
-  const dashboard = useAdminDashboard(token);
+export function AdminMetricsScreen({ token }: AdminMetricsScreenProps) {
+  const dashboard = useAdminMetrics(token);
 
   return (
     <div className="admin-screen">
       <section className="admin-hero">
         <div>
-          <h1>Operations Dashboard</h1>
+          <h1>Operations Metrics</h1>
           <span>{dashboard.metrics ? new Date(dashboard.metrics.generatedAt).toLocaleString() : "Loading"}</span>
         </div>
-        <button className="icon-button icon-button--secondary" disabled={dashboard.isLoading} type="button" onClick={() => void dashboard.refreshMetrics()}>
+        <button
+          className="icon-button icon-button--secondary"
+          disabled={dashboard.isLoading}
+          type="button"
+          onClick={() => void dashboard.refreshMetrics()}
+        >
           <RefreshCcw size={17} />
           Refresh
         </button>

@@ -3,35 +3,35 @@ import { LogIn, UserPlus } from "lucide-react";
 import type { AuthMode } from "../types/authTypes";
 
 type AuthScreenProps = {
+  confirmPassword: string;
   displayName: string;
   email: string;
   error: string | null;
   isLoading: boolean;
   mode: AuthMode;
   password: string;
-  role: "Admin" | "User";
+  onConfirmPasswordChange: (value: string) => void;
   onDisplayNameChange: (value: string) => void;
   onEmailChange: (value: string) => void;
   onModeChange: (value: AuthMode) => void;
   onPasswordChange: (value: string) => void;
-  onRoleChange: (value: "Admin" | "User") => void;
   onSubmit: () => void;
 };
 
 export function AuthScreen({
+  confirmPassword,
   displayName,
   email,
   error,
   isLoading,
   mode,
+  onConfirmPasswordChange,
   onDisplayNameChange,
   onEmailChange,
   onModeChange,
   onPasswordChange,
-  onRoleChange,
   onSubmit,
-  password,
-  role
+  password
 }: AuthScreenProps) {
   return (
     <main className="auth-screen">
@@ -57,32 +57,29 @@ export function AuthScreen({
             onSubmit();
           }}
         >
-          <label>
-            <span>Email</span>
-            <input value={email} type="email" required disabled={isLoading} onChange={(event) => onEmailChange(event.target.value)} />
-          </label>
           {mode === "register" ? (
-            <>
-              <label>
-                <span>Name</span>
-                <input value={displayName} required disabled={isLoading} onChange={(event) => onDisplayNameChange(event.target.value)} />
-              </label>
-              <label>
-                <span>Role</span>
-                <select value={role} disabled={isLoading} onChange={(event) => onRoleChange(event.target.value as "Admin" | "User")}>
-                  <option value="Admin">Admin</option>
-                  <option value="User">User</option>
-                </select>
-              </label>
-            </>
+            <label>
+              <span>Name</span>
+              <input value={displayName} required disabled={isLoading} onChange={(event) => onDisplayNameChange(event.target.value)} />
+            </label>
           ) : null}
           <label>
-            <span>Password</span>
-            <input value={password} type="password" minLength={8} required disabled={isLoading} onChange={(event) => onPasswordChange(event.target.value)} />
+            <span>Email</span>
+            <input value={email} type="email" pattern="^[^@\s]+@[^@\s]+\.[^@\s]+$" required disabled={isLoading} onChange={(event) => onEmailChange(event.target.value)} />
           </label>
+          <label>
+            <span>Password</span>
+            <input value={password} type="password" required disabled={isLoading} onChange={(event) => onPasswordChange(event.target.value)} />
+          </label>
+          {mode === "register" ? (
+            <label>
+              <span>Confirm password</span>
+              <input value={confirmPassword} type="password" required disabled={isLoading} onChange={(event) => onConfirmPasswordChange(event.target.value)} />
+            </label>
+          ) : null}
           <button
             className="icon-button icon-button--primary"
-            disabled={isLoading || !email.trim() || !password || (mode === "register" && !displayName.trim())}
+            disabled={isLoading || !email.trim() || !password || (mode === "register" && (!displayName.trim() || !confirmPassword))}
             type="submit"
           >
             {mode === "login" ? <LogIn size={16} /> : <UserPlus size={16} />}

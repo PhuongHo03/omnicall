@@ -24,7 +24,7 @@ Use the software boundary rules already established for Omnicall:
   - Preserve framework-native routing, e.g. Vite/React routes under `frontend/src/routes/`.
   - Put business features under `frontend/src/features/<feature>/`.
   - Use feature layers only when they have real code: `api`, `dtos`, `hooks`, `screens`, `states`, `types`, and feature-local `components`.
-  - Keep root-level frontend folders limited to truly shared code such as `components`, `layouts`, `styles`, `utils`, and `assets`.
+  - Keep cross-feature shared code under `frontend/src/shared/`, with shared subfolders such as `components`, `layouts`, `styles`, `utils`, and `assets` only when they contain real code/assets.
   - Keep screens mostly compositional; API calls go in `api`, runtime validation/mapping in `dtos`, orchestration in `hooks`, reusable state transitions in `states`, and feature-only UI in feature `components`.
 - Backend owns business logic, validation, authorization, and durable state coordination.
 - Worker owns async processing and retryable side effects.

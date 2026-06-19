@@ -1,0 +1,19 @@
+name: default
+data-dir: /etcd
+
+listen-client-urls: http://0.0.0.0:2379
+advertise-client-urls: http://127.0.0.1:2379
+listen-peer-urls: http://localhost:2380
+initial-advertise-peer-urls: http://localhost:2380
+initial-cluster: default=http://localhost:2380
+initial-cluster-state: new
+
+snapshot-count: 100000
+auto-compaction-mode: periodic
+auto-compaction-retention: "1h"
+quota-backend-bytes: 4294967296
+
+logger: zap
+log-level: info
+log-outputs:
+  - stderr

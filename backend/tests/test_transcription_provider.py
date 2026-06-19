@@ -135,6 +135,24 @@ class FakeDiarizationProvider:
 
 
 class TranscriptionProviderTestCase(unittest.TestCase):
+    def test_route_metadata_reports_the_actual_text_or_voice_provider(self) -> None:
+        provider = LocalTranscriptionProvider(
+            text_extraction_provider=FakeTextExtractionProvider(),
+            audio_preprocessor=FakeAudioPreprocessor(),
+            vad_provider=FakeVADProvider(),
+            asr_provider=FakeASRProvider(),
+            diarization_provider=FakeDiarizationProvider(),
+        )
+
+        text_route = provider.route_metadata(_asset(file_name="meeting.txt", content_type="text/plain"))
+        voice_route = provider.route_metadata(_asset())
+
+        self.assertEqual(text_route["provider"], "fake-text-extraction")
+        self.assertEqual(text_route["model"], "fake-text-model")
+        self.assertEqual(voice_route["provider"], "fake-asr")
+        self.assertEqual(voice_route["model"], "fake-asr-model")
+        self.assertEqual(voice_route["diarizationProvider"], "fake-diarization")
+
     def test_voice_provider_contract_outputs_diarized_transcript_segments(self) -> None:
         provider = LocalTranscriptionProvider(
             audio_preprocessor=FakeAudioPreprocessor(),
@@ -234,8 +252,7 @@ class TranscriptionProviderTestCase(unittest.TestCase):
 def _meeting() -> Meeting:
     return Meeting(
         id="11111111-1111-4111-8111-111111111111",
-        workspace_id="22222222-2222-4222-8222-222222222222",
-        created_by_user_id="33333333-3333-4333-8333-333333333333",
+            owner_user_id="33333333-3333-4333-8333-333333333333",
         title="Voice contract test",
         language="vi",
     )
@@ -244,9 +261,8 @@ def _meeting() -> Meeting:
 def _asset(*, file_name: str = "meeting.wav", content_type: str = "audio/wav") -> MeetingAsset:
     return MeetingAsset(
         id="44444444-4444-4444-8444-444444444444",
-        workspace_id="22222222-2222-4222-8222-222222222222",
+            owner_user_id="33333333-3333-4333-8333-333333333333",
         meeting_id="11111111-1111-4111-8111-111111111111",
-        created_by_user_id="33333333-3333-4333-8333-333333333333",
         object_key=f"workspaces/test/meetings/test/uploads/{file_name}",
         file_name=file_name,
         content_type=content_type,

@@ -88,11 +88,8 @@
 
 ### API Read Models
 
-- [x] Implement `GET /api/meetings/{meetingId}/transcript`.
-- [x] Implement `GET /api/meetings/{meetingId}/insights`.
-- [x] Implement `GET /api/meetings/{meetingId}/intelligence-result` if the UI or export flow needs the complete JSON.
-- [x] Let transcript/insight APIs read from the processed JSON or from indexed views derived from it.
-- [x] Shape `GET /api/meetings/{meetingId}/insights` around the processed transcript JSON sections.
+- [x] Implement `GET /api/meetings/{meetingId}/intelligence-result` as the single processed JSON read endpoint.
+- [x] Let transcript and insight UI sections render from the complete processed JSON instead of separate view endpoints.
 - [x] Shape responses for frontend review screens without exposing provider prompts.
 
 ## Verification Plan

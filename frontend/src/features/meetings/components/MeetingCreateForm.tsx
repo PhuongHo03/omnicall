@@ -1,6 +1,6 @@
 import { Plus } from "lucide-react";
 
-import { IconButton } from "../../../components/IconButton";
+import { IconButton } from "../../../shared/components/IconButton";
 import type { MeetingDraft } from "../types/meetingTypes";
 
 type MeetingCreateFormProps = {

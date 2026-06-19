@@ -35,7 +35,7 @@ class AccountFileService:
         self.audit = AuditEventRepository(session)
 
     def list_files(self, context: CurrentUserContext) -> AccountFileListResponse:
-        items = self.files.list_for_owner(workspace_id=context.workspace_id, owner_user_id=context.user_id)
+        items = self.files.list_for_owner(owner_user_id=context.user_id)
         return AccountFileListResponse(items=[self._file_response(item) for item in items])
 
     def upload_file(self, context: CurrentUserContext, upload: UploadFile) -> AccountFileResponse:
@@ -45,7 +45,7 @@ class AccountFileService:
         size_bytes = self._get_upload_size(upload)
         self._validate_upload(extension=extension, content_type=content_type, size_bytes=size_bytes)
 
-        object_key = f"workspaces/{context.workspace_id}/users/{context.user_id}/files/{uuid4()}{extension}"
+        object_key = f"users/{context.user_id}/files/{uuid4()}{extension}"
         upload.file.seek(0)
         self.storage_provider.put_object(
             object_key=object_key,
@@ -54,7 +54,6 @@ class AccountFileService:
             content_type=content_type,
         )
         account_file = self.files.create(
-            workspace_id=context.workspace_id,
             owner_user_id=context.user_id,
             object_key=object_key,
             file_name=file_name,
@@ -64,7 +63,6 @@ class AccountFileService:
         self.audit.create(
             event_type="file.upload",
             outcome="success",
-            workspace_id=context.workspace_id,
             user_id=context.user_id,
             resource_type="account_file",
             resource_id=account_file.id,
@@ -79,7 +77,6 @@ class AccountFileService:
         self.audit.create(
             event_type="file.playback",
             outcome="success",
-            workspace_id=context.workspace_id,
             user_id=context.user_id,
             resource_type="account_file",
             resource_id=account_file.id,
@@ -97,7 +94,6 @@ class AccountFileService:
             self.audit.create(
                 event_type="file.delete",
                 outcome="blocked",
-                workspace_id=context.workspace_id,
                 user_id=context.user_id,
                 resource_type="account_file",
                 resource_id=account_file.id,
@@ -116,7 +112,6 @@ class AccountFileService:
         self.audit.create(
             event_type="file.delete",
             outcome="success",
-            workspace_id=context.workspace_id,
             user_id=context.user_id,
             resource_type="account_file",
             resource_id=response.id,
@@ -127,7 +122,6 @@ class AccountFileService:
     def _get_owned_file(self, context: CurrentUserContext, file_id: str):
         account_file = self.files.get_for_owner(
             file_id=file_id,
-            workspace_id=context.workspace_id,
             owner_user_id=context.user_id,
         )
         if account_file is None:
@@ -155,10 +149,8 @@ class AccountFileService:
     def _file_response(self, account_file) -> AccountFileResponse:
         return AccountFileResponse(
             id=account_file.id,
-            workspace_id=account_file.workspace_id,
             owner_user_id=account_file.owner_user_id,
             meeting_id=account_file.meeting_id,
-            asset_id=account_file.asset_id,
             file_name=account_file.file_name,
             content_type=account_file.content_type,
             size_bytes=account_file.size_bytes,

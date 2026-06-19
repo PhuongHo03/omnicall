@@ -29,11 +29,11 @@
 - [x] Filter low-signal filler from retrieval chunks while preserving transcript entries in the JSON.
 - [x] Generate embeddings for chunks.
 - [x] Upsert derived vectors into Milvus.
-- [x] Store stable PostgreSQL chunk references: `workspaceId`, `meetingId`, `resultId`, `chunkId`, `jsonPointer`, `sourceType`, `sectionType`, `startTime`, and `endTime`.
-- [x] Store stable Milvus vector references: `workspaceId`, `meetingId`, `resultId`, `chunkId`, `jsonPointer`, `sourceType`, `sectionType`, `startTime`, and `endTime`.
+- [x] Store stable PostgreSQL chunk references: `meetingId`, `resultId`, `chunkId`, `jsonPointer`, `sourceType`, `sectionType`, `startTime`, and `endTime`.
+- [x] Store stable Milvus vector references: `meetingId`, `resultId`, `chunkId`, `jsonPointer`, `sourceType`, `sectionType`, `startTime`, and `endTime`.
 - [x] Load authoritative chunk records from PostgreSQL after vector search.
 - [x] Load authoritative chunk records from PostgreSQL after PostgreSQL fallback retrieval.
-- [x] Enforce workspace and meeting permission before and after retrieval.
+- [x] Enforce account-owner and meeting permission before and after retrieval.
 - [x] Rank structured JSON section chunks above plain transcript chunks when both are relevant.
 - [x] Pin relevant structured sections for common Vietnamese/English overview, reason/cause, return/refund/process, action, risk, decision, and timeline questions before rerank.
 - [x] Use transcript chunks to support citations, disambiguation, and fallback answers.
@@ -56,7 +56,7 @@
 ### API
 
 - [x] Implement `POST /api/meetings/{meetingId}/chat`.
-- [x] Implement `GET /api/meetings/{meetingId}/chat/{sessionId}`.
+- [x] Implement `GET /api/meetings/{meetingId}/chat` so the UI can recover the meeting-scoped thread without managing a separate chat-session ID.
 - [x] Implement authorized uploaded asset content reads for browser playback.
 - [x] Include source citations in answer responses.
 - [x] Include result section citations in answer responses.
@@ -86,6 +86,7 @@
 - [x] Add tests for LLM provider fallback behavior when primary provider fails.
 - [x] Add tests that retrieved vector IDs are revalidated against PostgreSQL permissions.
 - [x] Add chat persistence tests for user message, assistant answer, and citations.
+- [x] Add meeting-scoped chat history reload and empty-history tests.
 - [x] Build frontend chat tab with TypeScript/Vite.
 - [x] Add regression test for local embedding vector hits without text evidence.
 
@@ -115,7 +116,7 @@
 ## Completion Report
 
 > **Completed at:** 2026-06-12
-> **Verified by:** `python3 -m compileall backend`; `docker compose --env-file .env.example config`; Alembic current at `0005_chat_history`; backend `unittest` suite; Milvus upsert/search smoke checks; frontend `npm run build`; frontend image build; gateway frontend health check; manual gateway chat smoke over processed text transcript
+> **Verified by:** `python3 -m compileall backend`; `docker compose --env-file .env.example config`; backend `unittest` suite; Milvus upsert/search smoke checks; frontend `npm run build`; frontend image build; gateway frontend health check; manual gateway chat smoke over processed text transcript; meeting-scoped chat redesign reverified on 2026-06-19. The 9-table schema consolidation was reverified on 2026-06-19 with 62 backend unittest tests, frontend production build, healthy backend/worker containers, gateway health smoke, and PostgreSQL table-count checks.
 
 ### What was implemented
 
@@ -127,12 +128,12 @@
   - Worker integration that rebuilds retrieval chunks after each successful processed result.
   - Job retrieval metadata recording chunk count and embedding provider/model.
 - The first chat backend slice is implemented:
-  - `chat_sessions` and `chat_messages` tables.
+  - meeting-scoped `chat_messages` table.
   - Milvus REST vector search with PostgreSQL authoritative record reload.
   - Intent-pinned structured retrieval for broad Vietnamese/English overview, reason/cause, return/refund/process, action, risk, decision, and timeline questions before local rerank.
   - PostgreSQL fallback retrieval ranking over authoritative `meeting_chunks`.
   - PostgreSQL authoritative scope checks for Milvus hits before chunks are used as evidence.
-  - `POST /api/meetings/{meetingId}/chat` and `GET /api/meetings/{meetingId}/chat/{sessionId}`.
+  - `POST /api/meetings/{meetingId}/chat` and `GET /api/meetings/{meetingId}/chat`, with one public chat thread per meeting.
   - Cited assistant responses with retrieved chunk IDs, processed-section pointers, transcript ranges, and evidence state.
   - LLMProvider answer generation with local retrieval-summary fallback on provider failure.
   - Chat metadata records the effective LLM provider/model that actually generated the answer, so endpoint/API-first operation is visible even when an Ollama fallback wrapper is configured.
@@ -143,7 +144,7 @@
   - `MeetingIntelligenceResultPanel` for readable processed JSON sections after a meeting is ready.
   - `MeetingChatPanel` below the processed result for question input, chat history, evidence state, and citations.
   - Chat API and DTO mapping for ask/history responses.
-  - Hook orchestration that stores only lightweight chat UI state and reloads saved messages from the backend.
+  - Hook orchestration that stores only lightweight chat UI state and reloads the meeting thread from the backend whenever a ready meeting is reopened.
   - Safe backend error display through the existing event strip.
 
 ### What was changed from original plan
@@ -158,6 +159,7 @@
 - Added a backend asset-content endpoint and frontend Blob URL playback path so ready audio meetings can replay the original uploaded file above the processed JSON without exposing MinIO directly.
 - Fixed the `test7` chat regression where broad Vietnamese questions retrieved only noisy transcript snippets. The indexer now keeps string-shaped summary/analysis items, and retrieval pins relevant structured sections before rerank; `test7` was re-indexed and verified with a grounded gateway chat response.
 - Fixed the `test8` chat regression where Vietnamese reason/return-process questions such as "Tại sao khách lại muốn đổi trả áo?" and "Khách có thể đổi trả hàng như nào?" retrieved weak entity/transcript snippets. Retrieval now pins detailed summary, requirements, constraints, blockers, follow-ups, and key points for these intents, and the chat prompt asks the LLM to synthesize structured meeting intelligence as a meeting analyst instead of answering from one isolated chunk.
+- Simplified the public chat contract to one meeting-scoped thread. The frontend and API no longer expose or accept `chatSessionId`; the database schema now stores chat directly in `chat_messages.meeting_id`.
 
 ### Notes for future sessions
 

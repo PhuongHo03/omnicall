@@ -18,8 +18,8 @@ class TranscriptionProviderError(RuntimeError):
 
 
 class LocalTranscriptionProvider:
-    provider_name = "local-transcription"
-    provider_model = "model-required"
+    provider_name = "local-transcription-router"
+    provider_model = "routing-v1"
     last_provider_name = provider_name
     last_provider_model = provider_model
 
@@ -37,6 +37,31 @@ class LocalTranscriptionProvider:
         self.asr_provider = asr_provider
         self.diarization_provider = diarization_provider
         self.last_voice_metadata: dict = {}
+
+    def route_metadata(self, asset: MeetingAsset) -> dict:
+        if self.text_extraction_provider is not None and self.text_extraction_provider.can_extract(asset):
+            return {
+                "sourceKind": "text",
+                "provider": self.text_extraction_provider.provider_name,
+                "model": self.text_extraction_provider.provider_model,
+            }
+        if self.asr_provider is not None:
+            return {
+                "sourceKind": "voice",
+                "provider": self.asr_provider.provider_name,
+                "model": self.asr_provider.provider_model,
+                "audioPreprocessor": getattr(self.audio_preprocessor, "provider_name", None),
+                "audioPreprocessorModel": getattr(self.audio_preprocessor, "provider_model", None),
+                "vadProvider": getattr(self.vad_provider, "provider_name", None),
+                "vadModel": getattr(self.vad_provider, "provider_model", None),
+                "diarizationProvider": getattr(self.diarization_provider, "provider_name", None),
+                "diarizationModel": getattr(self.diarization_provider, "provider_model", None),
+            }
+        return {
+            "sourceKind": "unknown",
+            "provider": self.provider_name,
+            "model": self.provider_model,
+        }
 
     def transcribe(self, meeting: Meeting, asset: MeetingAsset) -> list[TranscriptSegment]:
         self.last_voice_metadata = {}
@@ -98,7 +123,9 @@ class LocalTranscriptionProvider:
                     f"ASR error type: {type(exc).__name__}.",
                 ],
             )
-            raise TranscriptionProviderError("ASR failed.") from exc
+            raise TranscriptionProviderError(
+                f"ASR failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if not segments:
             warnings.append("ASR did not return transcript segments.")
             self.last_voice_metadata = _voice_metadata(
@@ -126,7 +153,9 @@ class LocalTranscriptionProvider:
                     speech_regions=speech_regions,
                     warnings=warnings,
                 )
-                raise TranscriptionProviderError("Speaker diarization failed.") from exc
+                raise TranscriptionProviderError(
+                    f"Speaker diarization failed: {type(exc).__name__}: {exc}"
+                ) from exc
         self.last_provider_name = self.asr_provider.provider_name
         self.last_provider_model = self.asr_provider.provider_model
         self.last_voice_metadata = _voice_metadata(

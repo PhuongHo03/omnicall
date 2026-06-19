@@ -59,6 +59,10 @@ services:
       PROMETHEUS_URL: "${PROMETHEUS_URL:-http://prometheus:9090}"
       ADMIN_METRICS_CACHE_KEY: "${ADMIN_METRICS_CACHE_KEY:-admin:metrics:snapshot}"
       ADMIN_METRICS_CACHE_TTL_SECONDS: "${ADMIN_METRICS_CACHE_TTL_SECONDS:-10}"
+      OPERATIONAL_LOG_STREAM_KEY: "${OPERATIONAL_LOG_STREAM_KEY:-admin:logs:operational}"
+      OPERATIONAL_LOG_MAX_LENGTH: "${OPERATIONAL_LOG_MAX_LENGTH:-1000}"
+      OPERATIONAL_LOG_TTL_SECONDS: "${OPERATIONAL_LOG_TTL_SECONDS:-86400}"
+      OPERATIONAL_LOG_DEFAULT_TAIL: "${OPERATIONAL_LOG_DEFAULT_TAIL:-100}"
       AUTH_SESSION_TTL_HOURS: "${AUTH_SESSION_TTL_HOURS:-168}"
       MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
       HF_HOME: "${HF_HOME:-/models/.hf-cache}"
@@ -71,6 +75,7 @@ services:
       ASR_COMPUTE_TYPE: "${ASR_COMPUTE_TYPE:-int8}"
       ASR_COMMAND: "${ASR_COMMAND:-}"
       ASR_TIMEOUT_SECONDS: "${ASR_TIMEOUT_SECONDS:-120}"
+      ASR_TIMEOUT_REALTIME_FACTOR: "${ASR_TIMEOUT_REALTIME_FACTOR:-1.0}"
       DIARIZATION_MODEL: "${DIARIZATION_MODEL:-wespeaker-voxceleb-resnet34}"
       DIARIZATION_COMMAND: "${DIARIZATION_COMMAND:-}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-nomic-embed-text}"
@@ -100,6 +105,8 @@ services:
       LLM_FALLBACK_PROVIDER: "${LLM_FALLBACK_PROVIDER:-ollama}"
       OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://ollama:11434}"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+      OLLAMA_LLM_TIMEOUT_SECONDS: "${OLLAMA_LLM_TIMEOUT_SECONDS:-600}"
+      OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-8192}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TZ: "${TZ:-Asia/Ho_Chi_Minh}"
     expose:
@@ -135,7 +142,7 @@ services:
         "backend.configs.celery_app.celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=meeting-processing",
+        "--queues=meeting-processing,processing-maintenance",
         "--concurrency=1",
         "--hostname=worker@%h",
         "--without-gossip",
@@ -155,10 +162,17 @@ services:
       REDIS_PORT: "${REDIS_PORT:-6379}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
       REDIS_PROCESSING_LOCK_TTL_SECONDS: "${REDIS_PROCESSING_LOCK_TTL_SECONDS:-900}"
+      OPERATIONAL_LOG_STREAM_KEY: "${OPERATIONAL_LOG_STREAM_KEY:-admin:logs:operational}"
+      OPERATIONAL_LOG_MAX_LENGTH: "${OPERATIONAL_LOG_MAX_LENGTH:-1000}"
+      OPERATIONAL_LOG_TTL_SECONDS: "${OPERATIONAL_LOG_TTL_SECONDS:-86400}"
+      OPERATIONAL_LOG_DEFAULT_TAIL: "${OPERATIONAL_LOG_DEFAULT_TAIL:-100}"
       RABBITMQ_HOST: "${RABBITMQ_HOST:-rabbitmq}"
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+      PROCESSING_RECONCILIATION_INTERVAL_SECONDS: "${PROCESSING_RECONCILIATION_INTERVAL_SECONDS:-60}"
+      PROCESSING_RECONCILIATION_STALE_SECONDS: "${PROCESSING_RECONCILIATION_STALE_SECONDS:-120}"
+      PROCESSING_RECONCILIATION_BATCH_SIZE: "${PROCESSING_RECONCILIATION_BATCH_SIZE:-100}"
       MINIO_HOST: "${MINIO_HOST:-minio}"
       MINIO_PORT: "${MINIO_PORT:-9000}"
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
@@ -209,6 +223,8 @@ services:
       LLM_FALLBACK_PROVIDER: "${LLM_FALLBACK_PROVIDER:-ollama}"
       OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://ollama:11434}"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+      OLLAMA_LLM_TIMEOUT_SECONDS: "${OLLAMA_LLM_TIMEOUT_SECONDS:-600}"
+      OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-8192}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TZ: "${TZ:-Asia/Ho_Chi_Minh}"
     depends_on:
@@ -232,12 +248,51 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import socket; socket.create_connection(('rabbitmq', 5672), 5).close()\""
+          "celery -A backend.configs.celery_app.celery_app inspect ping --destination worker@$$HOSTNAME --timeout=5 | grep -q pong"
         ]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command:
+      [
+        "celery",
+        "-A",
+        "backend.configs.celery_app.celery_app",
+        "beat",
+        "--loglevel=INFO",
+        "--pidfile=/tmp/celerybeat.pid",
+        "--schedule=/tmp/celerybeat-schedule"
+      ]
+    environment:
+      RABBITMQ_HOST: "${RABBITMQ_HOST:-rabbitmq}"
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
+      PROCESSING_RECONCILIATION_INTERVAL_SECONDS: "${PROCESSING_RECONCILIATION_INTERVAL_SECONDS:-60}"
+      PROCESSING_RECONCILIATION_STALE_SECONDS: "${PROCESSING_RECONCILIATION_STALE_SECONDS:-120}"
+      PROCESSING_RECONCILIATION_BATCH_SIZE: "${PROCESSING_RECONCILIATION_BATCH_SIZE:-100}"
+      TZ: "${TZ:-Asia/Ho_Chi_Minh}"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import os; pid=int(open('/tmp/celerybeat.pid').read().strip()); os.kill(pid, 0)\""
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
 
   ollama:
     image: ollama/ollama:latest
@@ -317,6 +372,7 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB is required}"
       POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER is required}"
@@ -326,6 +382,8 @@ services:
       - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infras/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./infras/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     networks:
       - internal
     healthcheck:
@@ -347,13 +405,20 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    command:
+      [
+        "redis-server",
+        "/etc/redis/redis.conf",
+        "--requirepass",
+        "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+      ]
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
     expose:
       - "6379"
     volumes:
       - redis_data:/data
+      - ./infras/redis/redis.conf:/etc/redis/redis.conf:ro
     networks:
       - internal
     healthcheck:
@@ -377,7 +442,6 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management-alpine
-    command: ["sh", "-c", "rabbitmq-plugins enable --offline rabbitmq_prometheus && rabbitmq-server"]
     environment:
       RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:?RABBITMQ_USER is required}"
       RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}"
@@ -388,6 +452,8 @@ services:
       - "${LOCAL_BIND_IP:?LOCAL_BIND_IP is required}:${RABBITMQ_MANAGEMENT_PORT:?RABBITMQ_MANAGEMENT_PORT is required}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./infras/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./infras/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     networks:
       - public
       - internal
@@ -421,15 +487,13 @@ services:
 
   etcd:
     image: quay.io/coreos/etcd:v3.5.18
-    command:
-      - etcd
-      - --advertise-client-urls=http://127.0.0.1:2379
-      - --listen-client-urls=http://0.0.0.0:2379
-      - --data-dir=/etcd
+    command: ["etcd", "--config-file", "/etc/etcd/etcd.conf.yml"]
     expose:
       - "2379"
+      - "2380"
     volumes:
       - etcd_data:/etcd
+      - ./infras/etcd/etcd.conf.yml:/etc/etcd/etcd.conf.yml:ro
     networks:
       - internal
     healthcheck:
@@ -460,6 +524,7 @@ services:
       - "${LOCAL_BIND_IP:?LOCAL_BIND_IP is required}:${MILVUS_WEBUI_PORT:?MILVUS_WEBUI_PORT is required}:9091"
     volumes:
       - milvus_data:/var/lib/milvus
+      - ./infras/milvus/user.yaml:/milvus/configs/user.yaml:ro
     networks:
       - internal
     healthcheck:

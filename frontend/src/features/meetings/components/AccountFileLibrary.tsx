@@ -1,6 +1,8 @@
 import { FileAudio, Play, RefreshCw, Trash2, Upload } from "lucide-react";
+import { useState } from "react";
 
-import { IconButton } from "../../../components/IconButton";
+import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
+import { IconButton } from "../../../shared/components/IconButton";
 import type { AccountFile } from "../types/meetingTypes";
 
 type AccountFileLibraryProps = {
@@ -25,6 +27,8 @@ export function AccountFileLibrary({
   selectedFileId
 }: AccountFileLibraryProps) {
   const selectedFile = files.find((file) => file.id === selectedFileId) ?? null;
+  const [fileIdToDelete, setFileIdToDelete] = useState<string | null>(null);
+  const fileToDelete = files.find((file) => file.id === fileIdToDelete) ?? null;
 
   return (
     <section className="file-library-panel">
@@ -68,7 +72,7 @@ export function AccountFileLibrary({
                 <button
                   type="button"
                   disabled={disabled || file.linkedToMeeting}
-                  onClick={() => onDelete(file.id)}
+                  onClick={() => setFileIdToDelete(file.id)}
                   title={file.linkedToMeeting ? "Delete the meeting session first" : "Delete file"}
                 >
                   <Trash2 size={14} />
@@ -91,6 +95,20 @@ export function AccountFileLibrary({
           )}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        isOpen={Boolean(fileToDelete)}
+        title="Delete file"
+        message={fileToDelete ? `Delete ${fileToDelete.fileName}? This cannot be undone.` : ""}
+        confirmLabel="Delete file"
+        onCancel={() => setFileIdToDelete(null)}
+        onConfirm={() => {
+          if (fileToDelete) {
+            onDelete(fileToDelete.id);
+          }
+          setFileIdToDelete(null);
+        }}
+      />
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import unittest
 
 from backend.models.meeting_models import Meeting, MeetingAsset
-from backend.providers.analysis_provider import LLMAnalysisProvider
+from backend.providers.analysis_provider import LLMAnalysisProvider, _build_user_prompt
 from backend.providers.llm_provider import LLMProviderError
 from backend.providers.transcript_types import TranscriptSegment
 
@@ -88,8 +88,7 @@ class AnalysisProviderTestCase(unittest.TestCase):
     def make_meeting(self) -> Meeting:
         return Meeting(
             id="11111111-1111-4111-8111-111111111111",
-            workspace_id="22222222-2222-4222-8222-222222222222",
-            created_by_user_id="33333333-3333-4333-8333-333333333333",
+            owner_user_id="33333333-3333-4333-8333-333333333333",
             title="Analysis provider test",
             language="vi",
         )
@@ -97,9 +96,8 @@ class AnalysisProviderTestCase(unittest.TestCase):
     def make_asset(self) -> MeetingAsset:
         return MeetingAsset(
             id="44444444-4444-4444-8444-444444444444",
-            workspace_id="22222222-2222-4222-8222-222222222222",
+            owner_user_id="33333333-3333-4333-8333-333333333333",
             meeting_id="11111111-1111-4111-8111-111111111111",
-            created_by_user_id="33333333-3333-4333-8333-333333333333",
             object_key="workspaces/test/meetings/test/uploads/test.wav",
             file_name="test.wav",
             content_type="audio/wav",
@@ -160,6 +158,15 @@ class AnalysisProviderTestCase(unittest.TestCase):
         self.assertEqual(result["summary"]["executive"], "The meeting confirmed JSON-first RAG testing.")
         self.assertEqual(result["analysis"]["decisions"][0]["citationIds"], ["cite-001"])
         self.assertEqual(result["transcript"]["segments"][0]["id"], "seg-001")
+
+    def test_analysis_prompt_keeps_evidence_text_without_transcript_metadata(self) -> None:
+        prompt = _build_user_prompt(self.make_meeting(), self.make_asset(), self.make_segments())
+
+        self.assertIn("Transcript line format: segmentId|speaker|text", prompt)
+        self.assertIn("seg-001|Speaker 1|We should use", prompt)
+        self.assertIn("processed JSON as the RAG source", prompt)
+        self.assertNotIn('"startMs"', prompt)
+        self.assertNotIn('"confidence"', prompt)
 
 
 if __name__ == "__main__":

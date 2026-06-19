@@ -1,0 +1,25 @@
+etcd:
+  endpoints: etcd:2379
+  rootPath: by-dev
+  metaSubPath: meta
+  kvSubPath: kv
+  requestTimeout: 10000
+  use:
+    embed: false
+
+minio:
+  port: 9000
+  useSSL: false
+
+proxy:
+  healthCheckTimeout: 3000
+
+log:
+  level: info
+  format: text
+  stdout: true
+  file:
+    rootPath:
+    maxSize: 300
+    maxAge: 10
+    maxBackups: 20

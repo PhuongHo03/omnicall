@@ -98,6 +98,12 @@
 - Prometheus is still localhost-bound as an admin UI on `${PROMETHEUS_PORT}`, but the browser-facing dashboard does not call it directly.
 - The Docker stats exporter is internal-only and reports running containers with `com.docker.compose.project=omnicall`.
 
+### 2026-06-18 admin metrics expansion update
+
+- Expanded `Infrastructure Services` dashboard coverage with PostgreSQL connection states and database size, Redis connected clients, RabbitMQ consumers, MinIO used capacity, etcd database size, Milvus collections, and Milvus stored rows.
+- Kept infrastructure metrics grouped under one frontend section while pinning related cards together by row and using semantic row labels for singleton service metrics.
+- Rebuilt backend/frontend and refreshed the Redis admin metrics cache after query changes.
+
 ### Related docs updated
 
 - [x] `docs/explanations/backend-explanation.md`

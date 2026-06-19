@@ -11,7 +11,6 @@ class MeetingChunkRepository:
     def replace_for_result(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         intelligence_result_id: str,
         chunks: list[dict],
@@ -20,7 +19,6 @@ class MeetingChunkRepository:
         records: list[MeetingChunkRecord] = []
         for chunk in chunks:
             record = MeetingChunkRecord(
-                workspace_id=workspace_id,
                 meeting_id=meeting_id,
                 intelligence_result_id=intelligence_result_id,
                 chunk_id=chunk["chunkId"],
@@ -48,11 +46,7 @@ class MeetingChunkRepository:
         return list(self.session.scalars(statement).all())
 
     def list_for_workspace_meeting(self, *, workspace_id: str, meeting_id: str) -> list[MeetingChunkRecord]:
-        statement = select(MeetingChunkRecord).where(
-            MeetingChunkRecord.workspace_id == workspace_id,
-            MeetingChunkRecord.meeting_id == meeting_id,
-        )
-        return list(self.session.scalars(statement).all())
+        return self.list_for_meeting(meeting_id)
 
     def list_by_chunk_ids_for_workspace_meeting(
         self,
@@ -64,7 +58,6 @@ class MeetingChunkRepository:
         if not chunk_ids:
             return []
         statement = select(MeetingChunkRecord).where(
-            MeetingChunkRecord.workspace_id == workspace_id,
             MeetingChunkRecord.meeting_id == meeting_id,
             MeetingChunkRecord.chunk_id.in_(chunk_ids),
         )

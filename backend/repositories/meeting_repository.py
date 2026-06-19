@@ -1,25 +1,19 @@
-from sqlalchemy import delete, desc, select
+from datetime import datetime
+
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.models.enums import MeetingStatus, ProcessingJobStatus
-from backend.models.meeting_models import (
-    Meeting,
-    MeetingAsset,
-    MeetingInsightRecord,
-    MeetingIntelligenceResult,
-    ProcessingJob,
-    TranscriptSegmentRecord,
-)
+from backend.models.meeting_models import Meeting, MeetingAsset, MeetingIntelligenceResult, ProcessingJob
 
 
 class MeetingRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def create(self, *, workspace_id: str, user_id: str, title: str, language: str | None) -> Meeting:
+    def create(self, *, user_id: str, title: str, language: str | None) -> Meeting:
         meeting = Meeting(
-            workspace_id=workspace_id,
-            created_by_user_id=user_id,
+            owner_user_id=user_id,
             title=title,
             language=language,
             status=MeetingStatus.DRAFT,
@@ -28,21 +22,29 @@ class MeetingRepository:
         self.session.flush()
         return meeting
 
-    def list_for_workspace(self, workspace_id: str, limit: int = 50, offset: int = 0) -> list[Meeting]:
+    def list_for_owner(self, user_id: str, limit: int = 50, offset: int = 0) -> list[Meeting]:
         statement = (
             select(Meeting)
-            .where(Meeting.workspace_id == workspace_id)
+            .where(Meeting.owner_user_id == user_id)
             .order_by(desc(Meeting.created_at))
             .limit(limit)
             .offset(offset)
         )
         return list(self.session.scalars(statement).all())
 
-    def get_for_workspace(self, meeting_id: str, workspace_id: str) -> Meeting | None:
+    def get(self, meeting_id: str) -> Meeting | None:
         statement = (
             select(Meeting)
             .options(selectinload(Meeting.assets), selectinload(Meeting.processing_jobs))
-            .where(Meeting.id == meeting_id, Meeting.workspace_id == workspace_id)
+            .where(Meeting.id == meeting_id)
+        )
+        return self.session.scalars(statement).first()
+
+    def get_for_owner(self, meeting_id: str, user_id: str) -> Meeting | None:
+        statement = (
+            select(Meeting)
+            .options(selectinload(Meeting.assets), selectinload(Meeting.processing_jobs))
+            .where(Meeting.id == meeting_id, Meeting.owner_user_id == user_id)
         )
         return self.session.scalars(statement).first()
 
@@ -88,7 +90,6 @@ class MeetingAssetRepository:
     def create(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         user_id: str,
         object_key: str,
@@ -98,9 +99,8 @@ class MeetingAssetRepository:
         idempotency_key: str,
     ) -> MeetingAsset:
         asset = MeetingAsset(
-            workspace_id=workspace_id,
+            owner_user_id=user_id,
             meeting_id=meeting_id,
-            created_by_user_id=user_id,
             object_key=object_key,
             file_name=file_name,
             content_type=content_type,
@@ -135,17 +135,30 @@ class ProcessingJobRepository:
         )
         return self.session.scalars(statement).first()
 
+    def list_stale_pending(self, *, updated_before: datetime, limit: int) -> list[ProcessingJob]:
+        statement = (
+            select(ProcessingJob)
+            .join(Meeting, Meeting.id == ProcessingJob.meeting_id)
+            .where(
+                ProcessingJob.status == ProcessingJobStatus.PENDING,
+                ProcessingJob.updated_at <= updated_before,
+                Meeting.status == MeetingStatus.QUEUED,
+            )
+            .order_by(ProcessingJob.updated_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        return list(self.session.scalars(statement).all())
+
     def create(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         idempotency_key: str,
         payload: dict,
         status: ProcessingJobStatus = ProcessingJobStatus.PENDING,
     ) -> ProcessingJob:
         job = ProcessingJob(
-            workspace_id=workspace_id,
             meeting_id=meeting_id,
             idempotency_key=idempotency_key,
             payload=payload,
@@ -203,7 +216,6 @@ class MeetingIntelligenceResultRepository:
     def upsert(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         processing_job_id: str,
         schema_version: str,
@@ -221,7 +233,6 @@ class MeetingIntelligenceResultRepository:
             return existing
 
         result = MeetingIntelligenceResult(
-            workspace_id=workspace_id,
             meeting_id=meeting_id,
             processing_job_id=processing_job_id,
             schema_version=schema_version,
@@ -232,68 +243,3 @@ class MeetingIntelligenceResultRepository:
         self.session.add(result)
         self.session.flush()
         return result
-
-
-class TranscriptSegmentRepository:
-    def __init__(self, session: Session) -> None:
-        self.session = session
-
-    def replace_for_result(
-        self,
-        *,
-        workspace_id: str,
-        meeting_id: str,
-        intelligence_result_id: str,
-        segments: list[dict],
-    ) -> list[TranscriptSegmentRecord]:
-        self.session.execute(delete(TranscriptSegmentRecord).where(TranscriptSegmentRecord.meeting_id == meeting_id))
-        records: list[TranscriptSegmentRecord] = []
-        for segment in segments:
-            record = TranscriptSegmentRecord(
-                workspace_id=workspace_id,
-                meeting_id=meeting_id,
-                intelligence_result_id=intelligence_result_id,
-                segment_id=segment["id"],
-                speaker=segment.get("speaker"),
-                start_ms=int(segment.get("startMs") or 0),
-                end_ms=int(segment.get("endMs") or 0),
-                text=segment.get("text") or "",
-                confidence=segment.get("confidence"),
-            )
-            self.session.add(record)
-            records.append(record)
-        self.session.flush()
-        return records
-
-
-class MeetingInsightRepository:
-    def __init__(self, session: Session) -> None:
-        self.session = session
-
-    def replace_for_result(
-        self,
-        *,
-        workspace_id: str,
-        meeting_id: str,
-        intelligence_result_id: str,
-        insights: list[dict],
-    ) -> list[MeetingInsightRecord]:
-        self.session.execute(delete(MeetingInsightRecord).where(MeetingInsightRecord.meeting_id == meeting_id))
-        records: list[MeetingInsightRecord] = []
-        for insight in insights:
-            record = MeetingInsightRecord(
-                workspace_id=workspace_id,
-                meeting_id=meeting_id,
-                intelligence_result_id=intelligence_result_id,
-                section=insight["section"],
-                item_id=insight["itemId"],
-                title=insight.get("title"),
-                text=insight["text"],
-                citation_ids=insight.get("citationIds", []),
-                segment_ids=insight.get("segmentIds", []),
-                payload=insight.get("payload", {}),
-            )
-            self.session.add(record)
-            records.append(record)
-        self.session.flush()
-        return records
