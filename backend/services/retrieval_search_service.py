@@ -211,7 +211,7 @@ class RetrievalSearchService:
         chunks = [
             chunk
             for chunk in self.chunks.list_for_workspace_meeting(workspace_id=workspace_id, meeting_id=meeting_id)
-            if chunk.source_type == "structured" and chunk.section_type in order
+            if chunk.source_type in {"structured", "metadata"} and chunk.section_type in order
         ]
         chunks.sort(key=lambda chunk: (order[chunk.section_type], _priority(chunk), chunk.created_at))
         return [RetrievedChunk(record=chunk, score=1.0) for chunk in chunks[:limit]]
@@ -243,6 +243,46 @@ def _merge_unique_chunks(left: list[RetrievedChunk], right: list[RetrievedChunk]
 def _intent_section_types(query: str) -> list[str]:
     tokens = set(_meaningful_tokens(query))
     normalized = " ".join(_tokens(query))
+
+    if tokens.intersection({"participant", "participants", "attendee", "attendees", "speaker", "speakers", "people", "person", "role", "roles"}):
+        return ["participants.overview", "participants.participant", "analysis.entities", "transcript.segment"]
+    if _contains_any(normalized, ["tham gia", "nguoi tham gia", "người tham gia", "bao nhieu nguoi", "bao nhiêu người", "co bao nhieu nguoi", "có bao nhiêu người", "ai tham gia", "vai tro", "vai trò", "nguoi noi", "người nói"]):
+        return ["participants.overview", "participants.participant", "analysis.entities", "transcript.segment"]
+
+    if tokens.intersection({"quality", "confidence", "warning", "warnings", "coverage", "audio", "asr", "diarization", "transcription"}):
+        return ["quality.overview", "quality.warning", "transcript.coverage", "source.voiceMetadata", "source.guardrails"]
+    if _contains_any(normalized, ["chat luong", "chất lượng", "canh bao", "cảnh báo", "do tin cay", "độ tin cậy", "do phu", "độ phủ", "am thanh", "âm thanh", "nhan dang", "nhận dạng", "tach nguoi noi", "tách người nói"]):
+        return ["quality.overview", "quality.warning", "transcript.coverage", "source.voiceMetadata", "source.guardrails"]
+
+    if tokens.intersection({"provider", "model", "source", "asset", "file", "generated"}):
+        return ["source.processing", "source.voiceMetadata", "source.guardrails", "meeting.metadata"]
+    if _contains_any(normalized, ["mo hinh", "mô hình", "provider", "nguon", "nguồn", "tep", "tệp", "file nao", "file nào", "xu ly bang", "xử lý bằng", "phan tich bang", "phân tích bằng", "tao luc nao", "tạo lúc nào"]):
+        return ["source.processing", "source.voiceMetadata", "source.guardrails", "meeting.metadata"]
+
+    if tokens.intersection({"title", "language", "duration", "started", "metadata"}):
+        return ["meeting.metadata", "transcript.coverage", "source.processing"]
+    if _contains_any(normalized, ["ten cuoc hop", "tên cuộc họp", "ngon ngu", "ngôn ngữ", "thoi luong", "thời lượng", "keo dai", "kéo dài", "bat dau", "bắt đầu"]):
+        return ["meeting.metadata", "transcript.coverage", "source.processing"]
+
+    if tokens.intersection({"empty", "missing", "unsupported", "unknown", "evidence"}):
+        return ["analysis.emptySections", "quality.warning", "quality.overview", "transcript.coverage"]
+    if _contains_any(normalized, ["khong co bang chung", "không có bằng chứng", "thieu bang chung", "thiếu bằng chứng", "khong xac dinh", "không xác định", "phan nao thieu", "phần nào thiếu", "muc nao thieu", "mục nào thiếu"]):
+        return ["analysis.emptySections", "quality.warning", "quality.overview", "transcript.coverage"]
+
+    if tokens.intersection({"metric", "metrics", "kpi", "number", "numbers", "target", "estimate", "threshold"}):
+        return ["analysis.metrics", "summary.keyPoints", "analysis.importantNotes"]
+    if _contains_any(normalized, ["so lieu", "số liệu", "chi so", "chỉ số", "kpi", "muc tieu", "mục tiêu", "uoc tinh", "ước tính", "nguong", "ngưỡng"]):
+        return ["analysis.metrics", "summary.keyPoints", "analysis.importantNotes"]
+
+    if tokens.intersection({"entity", "entities", "person", "company", "customer", "product", "project", "system"}):
+        return ["analysis.entities", "participants.participant", "summary.keyPoints"]
+    if _contains_any(normalized, ["thuc the", "thực thể", "khach hang", "khách hàng", "san pham", "sản phẩm", "du an", "dự án", "he thong", "hệ thống"]):
+        return ["analysis.entities", "participants.participant", "summary.keyPoints"]
+
+    if tokens.intersection({"glossary", "term", "terms", "acronym", "definition", "meaning"}):
+        return ["analysis.glossary", "analysis.entities", "summary.keyPoints"]
+    if _contains_any(normalized, ["thuat ngu", "thuật ngữ", "viet tat", "viết tắt", "dinh nghia", "định nghĩa", "nghia la gi", "nghĩa là gì"]):
+        return ["analysis.glossary", "analysis.entities", "summary.keyPoints"]
 
     if tokens.intersection({"summary", "summarize", "overview", "topic", "topics", "main", "point", "points"}):
         return ["summary.executive", "summary.detailed", "summary.keyPoints", "analysis.topics"]

@@ -116,7 +116,7 @@
 ## Completion Report
 
 > **Completed at:** 2026-06-12
-> **Verified by:** `python3 -m compileall backend`; `docker compose --env-file .env.example config`; backend `unittest` suite; Milvus upsert/search smoke checks; frontend `npm run build`; frontend image build; gateway frontend health check; manual gateway chat smoke over processed text transcript; meeting-scoped chat redesign reverified on 2026-06-19. The 9-table schema consolidation was reverified on 2026-06-19 with 62 backend unittest tests, frontend production build, healthy backend/worker containers, gateway health smoke, and PostgreSQL table-count checks.
+> **Verified by:** `python3 -m compileall backend`; `docker compose config`; backend `unittest` suite; Milvus upsert/search smoke checks; frontend `npm run build`; frontend image build; gateway frontend health check; manual gateway chat smoke over processed text transcript; meeting-scoped chat redesign reverified on 2026-06-19. The 9-table schema consolidation was reverified on 2026-06-19 with 62 backend unittest tests, frontend production build, healthy backend/worker containers, gateway health smoke, and PostgreSQL table-count checks.
 
 ### What was implemented
 

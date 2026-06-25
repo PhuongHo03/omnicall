@@ -15,7 +15,6 @@ type MeetingActionPanelProps = {
   lastAsset: MeetingAsset | null;
   latestJob: ProcessingJob | null;
   selectedMeeting: Meeting | null;
-  showAdminActions: boolean;
   onDeleteMeeting: () => void;
   onFileUpload: (file: File) => void;
   onProcess: () => void;
@@ -38,14 +37,13 @@ export function MeetingActionPanel({
   onRefreshStatus,
   onStartRecording,
   onStopRecording,
-  selectedMeeting,
-  showAdminActions
+  selectedMeeting
 }: MeetingActionPanelProps) {
   const canAct = Boolean(selectedMeeting) && !disabled;
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const isRetryAction = latestJob?.retryAllowed === true;
   const statusHint = selectedMeeting ? meetingStatusHint(selectedMeeting) : "Select or create a meeting to begin.";
-  const shouldShowIntake = canAct && !hasLockedAsset;
+  const shouldShowIntake = canAct && canUpload && !hasLockedAsset;
 
   return (
     <section className="action-panel">
@@ -110,15 +108,13 @@ export function MeetingActionPanel({
           onClick={onRefreshStatus}
           variant="secondary"
         />
-        {showAdminActions ? (
-          <IconButton
-            icon={<Trash2 size={16} />}
-            label="Delete"
-            disabled={!canAct}
-            onClick={() => setIsDeleteDialogOpen(true)}
-            variant="danger"
-          />
-        ) : null}
+        <IconButton
+          icon={<Trash2 size={16} />}
+          label="Delete"
+          disabled={!canAct}
+          onClick={() => setIsDeleteDialogOpen(true)}
+          variant="danger"
+        />
       </div>
 
       <ProcessingProgress meeting={selectedMeeting} asset={lastAsset} latestJob={latestJob} />

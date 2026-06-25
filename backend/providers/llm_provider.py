@@ -184,6 +184,13 @@ def get_effective_model_name(provider: LLMProvider) -> str:
     return getattr(provider, "last_provider_model", provider.model_name)
 
 
+def get_configured_primary_model_name(provider: LLMProvider) -> str:
+    primary = getattr(provider, "primary", None)
+    if primary is not None:
+        return getattr(primary, "model_name", provider.model_name)
+    return provider.model_name
+
+
 def build_llm_provider(settings: Settings) -> LLMProvider:
     primary = _build_primary_provider(settings)
     fallback_name = settings.llm_fallback_provider.strip().lower()

@@ -34,6 +34,18 @@ class FakeChatLLMProvider:
         }
 
 
+class FakeParticipantLLMProvider:
+    provider_name = "fake-chat-llm"
+    model_name = "fake-chat-model"
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
+        return {
+            "answer": "Cuộc gọi có 2 người tham gia: Alice và Bob.",
+            "evidenceState": "grounded",
+            "confidence": 0.93,
+        }
+
+
 class BrokenVectorProvider:
     enabled = True
     provider_name = "broken-vector"
@@ -96,6 +108,29 @@ class ChatServiceTestCase(unittest.TestCase):
         self.assertEqual([message.role for message in history.messages], ["user", "assistant"])
         self.assertEqual(history.messages[1].retrieved_chunk_ids, ["analysis.actionItems-001"])
 
+    def test_chat_answers_participant_count_from_participant_chunks(self) -> None:
+        meeting_id = self._create_ready_meeting_with_chunk()
+        with SessionLocal() as session:
+            service = MeetingChatService(
+                session,
+                llm_provider=FakeParticipantLLMProvider(),
+                guardrail_provider=TestGuardrailProvider(),
+            )
+            service.retrieval_search.vector_provider = BrokenVectorProvider()
+            service.retrieval_search.embedding_provider = TestEmbeddingProvider(dimensions=8)
+            service.retrieval_search.rerank_provider = IdentityRerankProvider()
+
+            response = service.ask(
+                self.context,
+                meeting_id,
+                MeetingChatRequest(question="Cuộc gọi này có bao nhiêu người tham gia?"),
+            )
+
+        self.assertEqual(response.evidence_state, "grounded")
+        self.assertEqual(response.citations[0].chunk_id, "participants-overview")
+        self.assertEqual(response.citations[0].section_type, "participants.overview")
+        self.assertIn("participant Count: 2", response.citations[0].text)
+
     def test_chat_message_repository_has_no_chat_session_layer(self) -> None:
         meeting_id = self._create_ready_meeting_with_chunk()
         with SessionLocal() as session:
@@ -136,11 +171,54 @@ class ChatServiceTestCase(unittest.TestCase):
                 result_json={"schemaVersion": SCHEMA_VERSION},
             )
             text = "Bob must index action items and risks by Friday."
-            embedding = TestEmbeddingProvider(dimensions=8).embed_text(text)
+            embedding_provider = TestEmbeddingProvider(dimensions=8)
+            embedding = embedding_provider.embed_text(text)
+            participant_overview_text = "Participants overview. participant Count: 2. participants: Alice, Bob"
+            participant_text = "name: Alice. role: Product owner. details: Alice led the meeting."
             MeetingChunkRepository(session).replace_for_result(
                 meeting_id=meeting.id,
                 intelligence_result_id=result.id,
                 chunks=[
+                    {
+                        "chunkId": "participants-overview",
+                        "sourceType": "structured",
+                        "sectionType": "participants.overview",
+                        "sourceId": "participants-overview",
+                        "jsonPointer": "/participants",
+                        "text": participant_overview_text,
+                        "citationIds": [],
+                        "segmentIds": [],
+                        "startMs": None,
+                        "endMs": None,
+                        "tokenCount": 8,
+                        "embedding": embedding_provider.embed_text(participant_overview_text).vector,
+                        "visibility": "owner",
+                        "metadata": {
+                            "priority": 32,
+                            "embeddingProvider": embedding.provider_name,
+                            "embeddingModel": embedding.model_name,
+                        },
+                    },
+                    {
+                        "chunkId": "participants.participant-001",
+                        "sourceType": "structured",
+                        "sectionType": "participants.participant",
+                        "sourceId": "Alice",
+                        "jsonPointer": "/participants/0",
+                        "text": participant_text,
+                        "citationIds": ["cite-001"],
+                        "segmentIds": ["seg-001"],
+                        "startMs": 1000,
+                        "endMs": 5000,
+                        "tokenCount": 9,
+                        "embedding": embedding_provider.embed_text(participant_text).vector,
+                        "visibility": "owner",
+                        "metadata": {
+                            "priority": 34,
+                            "embeddingProvider": embedding.provider_name,
+                            "embeddingModel": embedding.model_name,
+                        },
+                    },
                     {
                         "chunkId": "analysis.actionItems-001",
                         "sourceType": "structured",

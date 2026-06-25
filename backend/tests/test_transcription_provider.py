@@ -233,10 +233,13 @@ class TranscriptionProviderTestCase(unittest.TestCase):
                 audio_preprocessor=ExistingAudioPreprocessor(str(audio_path)),
                 vad_provider=FakeVADProvider(),
                 asr_provider=LocalASRProvider(
-                    Settings(ASR_COMMAND=f"{sys.executable} {script_path} --audio {{audio_path}}")
+                    Settings(),
+                    command_template=f"{sys.executable} {script_path} --audio {{audio_path}}",
                 ),
                 diarization_provider=LocalCommandDiarizationProvider(
-                    Settings(DIARIZATION_COMMAND=f"{sys.executable} {diarization_script}", DIARIZATION_MODEL="fake-wespeaker")
+                    Settings(),
+                    command_template=f"{sys.executable} {diarization_script}",
+                    model_name="fake-wespeaker",
                 ),
             )
 

@@ -111,7 +111,7 @@ This proves the contract needed by RAG work. Analysis generation uses the config
 
 For `.txt`, `.md`, `.vtt`, and `.srt` uploads, the worker uses `DocumentTextExtractionProvider` to read the uploaded object from MinIO and parse lines into transcript segments. Timestamp/speaker lines such as `00:30 Bob: Follow up next week` preserve timing and speaker labels. In this path, the persisted result records `source.transcriptionProvider=local-text-extraction`.
 
-For audio/video uploads, the worker keeps the original asset bytes in MinIO, writes a stable per-asset derived temporary audio file under `VOICE_WORK_DIR`, and normalizes supported media to 16 kHz mono WAV through `ffmpeg`. The raw temporary input is deleted after preprocessing; only derived audio is left locally for downstream model steps. Repeated worker retries reuse a valid derived WAV instead of creating duplicate normalized files. `LocalVADProvider` then detects speech windows with a configurable local energy threshold before the ASR adapter is called. `LocalASRProvider` calls `ASR_COMMAND`, which defaults to `python -m backend.model_runners.asr` and uses `faster-whisper` CPU `int8`. ASR and diarization subprocess timeouts use `max(ASR_TIMEOUT_SECONDS, audioDurationSeconds * ASR_TIMEOUT_REALTIME_FACTOR)`, so longer voice files are not killed at the minimum timeout. `LocalCommandDiarizationProvider` calls `DIARIZATION_COMMAND`, which defaults to `python -m backend.model_runners.diarization` and uses WeSpeaker speaker embedding/diarization. Compose mounts the shared `model_cache` volume at `/models`, and `model-init` downloads the default ASR, diarization, and rerank model snapshots there before the worker starts. Processing logs resolve the transcription route before the start event, so audio/video sessions show the ASR provider/model instead of the transcription router placeholder.
+For audio/video uploads, the worker keeps the original asset bytes in MinIO, writes a stable per-asset derived temporary audio file under `/tmp/omnicall-audio`, and normalizes supported media to 16 kHz mono WAV through `ffmpeg`. The raw temporary input is deleted after preprocessing; only derived audio is left locally for downstream model steps. Repeated worker retries reuse a valid derived WAV instead of creating duplicate normalized files. `LocalVADProvider` then detects speech windows with a configurable local energy threshold before the ASR adapter is called. `LocalASRProvider` calls the repository-owned `backend.model_runners.asr` runner and uses `faster-whisper` CPU `int8`. ASR and diarization subprocess timeouts use `max(ASR_TIMEOUT_SECONDS, audioDurationSeconds * ASR_TIMEOUT_REALTIME_FACTOR)`, so longer voice files are not killed at the minimum timeout. `LocalCommandDiarizationProvider` calls the repository-owned `backend.model_runners.diarization` runner and uses WeSpeaker speaker embedding/diarization. Compose mounts the shared `model_cache` volume at `/models`, and `model-init` downloads the fixed ASR, diarization, and rerank model snapshots there before the worker starts. Processing logs resolve the transcription route before the start event, so audio/video sessions show the ASR provider/model instead of the transcription router placeholder.
 
 Voice pipeline failures are safe failures. Preprocessing, ASR, or diarization errors are captured as provider metadata and safe job failure reasons instead of exposing internal stack traces to users. VAD errors can continue without speech-region hints and are recorded as warnings.
 
@@ -134,7 +134,7 @@ The worker uses `LLMAnalysisProvider` to ask the configured LLM for JSON intelli
 
 ## Retrieval Indexing
 
-After a processed result is stored, the worker rebuilds `meeting_chunks` from the same JSON. Structured sections are chunked first and get higher retrieval priority than transcript fallback chunks. Transcript fallback chunks preserve source segment IDs and time ranges so later chat answers can cite source evidence.
+After a processed result is stored, the worker rebuilds `meeting_chunks` from the same JSON. The chunk builder covers the processed JSON broadly: meeting metadata, source/provider/model/voice/guardrail metadata, participants, summary, analysis sections, empty-section explanations, transcript coverage, quality warnings, citation overview, and transcript fallback segments. Structured and metadata sections get higher retrieval priority than transcript fallback chunks. Transcript fallback chunks preserve speaker, confidence, source segment IDs, and time ranges so later chat answers can cite source evidence.
 
 The embedding path uses `OllamaEmbeddingProvider` with the configured local `EMBEDDING_MODEL`. `ollama-init` pulls `EMBEDDING_MODEL`, `OLLAMA_MODEL`, and `GUARDRAIL_MODEL` into `ollama_data` before backend and worker start. Test-only embedding fixtures live under `backend/tests/`; production indexing no longer uses hash embeddings.
 
@@ -158,10 +158,10 @@ Phase 4 worker slice verification used:
 
 ```bash
 python3 -m compileall backend
-docker compose --env-file .env.example config
-docker compose --env-file .env.example exec -T backend alembic current
-docker compose --env-file .env.example ps backend worker beat nginx
-docker compose --env-file .env.example exec -T backend python -m unittest discover -s backend/tests -v
+docker compose config
+docker compose exec -T backend alembic current
+docker compose ps backend worker beat nginx
+docker compose exec -T backend python -m unittest discover -s backend/tests -v
 ```
 
 The current verification split is intentional: API tests prove safe enqueue/failure behavior without real local model binaries, and service tests prove successful processing using test-only model fixtures.
@@ -216,4 +216,4 @@ Phase 8 operational-log verification on 2026-06-19 also confirmed:
 | Worker event stages | Receive/lock, transcription, voice models, analysis, persistence, embedding, vector upsert, result/failure |
 | Runtime worker health after image recreation | Healthy |
 
-*Document reflects project state after Phase 8 operational-log verification on **2026-06-19**. Worker processing now emits temporary, bounded, sanitized Redis Stream events for all major model and persistence stages, including primary LLM failure and fallback visibility; existing worker delivery, retry, reconciliation, persistence, retrieval, and cleanup behavior remains verified.*
+*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-25**. Worker model runners and specialized model paths are repository-owned contracts; `.env` retains only operator-facing timeouts, thresholds, retrieval limits, and Ollama choices. Existing delivery, retry, reconciliation, logging, persistence, retrieval, and cleanup behavior remains verified.*

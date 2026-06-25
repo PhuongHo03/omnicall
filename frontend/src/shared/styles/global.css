@@ -1903,13 +1903,27 @@ textarea:focus {
   background: var(--color-surface-raised);
 }
 
-.json-section summary {
+.json-section__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
   min-height: 42px;
+  border: 0;
   padding: 12px;
   color: #1f2d25;
+  background: transparent;
   font-size: 14px;
   font-weight: 900;
+  text-align: left;
   cursor: pointer;
+}
+
+.json-section__toggle span:last-child {
+  color: var(--color-muted);
+  font-size: 12px;
+  text-transform: uppercase;
 }
 
 .json-section__body {
@@ -1990,6 +2004,34 @@ textarea:focus {
   justify-self: start;
 }
 
+.chat-message--streaming {
+  border-color: #b9d3c5;
+  background: #fbfdfb;
+}
+
+.chat-message--streaming p::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  vertical-align: -0.15em;
+  animation: chat-caret-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes chat-caret-pulse {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 .chat-message__meta {
   display: flex;
   align-items: center;
@@ -2038,6 +2080,13 @@ textarea:focus {
 .citation-list {
   display: grid;
   gap: 8px;
+}
+
+.citation-list__heading {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .citation-card {

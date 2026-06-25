@@ -100,10 +100,23 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             blocker_text = "The first order number was not accepted by the database."
             action_text = "Bob must index action items by Friday."
             risk_text = "Risk is low quality audio reducing answer confidence."
+            participant_overview_text = "Participants overview. participant Count: 2. participants: Alice, Bob"
+            participant_text = "name: Alice. role: Product owner. details: Alice led the meeting."
+            meeting_text = "Meeting metadata. title: Retrieval search meeting. language: vi. duration Seconds: 120"
+            quality_text = "Quality overview. coverage: partial. confidence: 0.74"
+            quality_warning_text = "Quality warning: low volume audio may reduce transcript confidence"
+            source_text = "Processing source. analysis Provider: llm-analysis. analysis Model: test-analysis-model. llm Provider: test-llm"
+            empty_text = "Empty analysis section. section: timeline. reason: No timeline evidence."
+            metric_text = "metric: conversion rate target. value: 75 percent."
+            glossary_text = "term: RAG. definition: retrieval augmented generation."
             MeetingChunkRepository(session).replace_for_result(
                 meeting_id=meeting.id,
                 intelligence_result_id=result.id,
                 chunks=[
+                    _chunk("meeting-metadata", "meeting.metadata", meeting_text, provider, source_type="metadata", priority=5),
+                    _chunk("source-processing", "source.processing", source_text, provider, source_type="metadata", priority=35),
+                    _chunk("participants-overview", "participants.overview", participant_overview_text, provider, priority=32),
+                    _chunk("participants.participant-001", "participants.participant", participant_text, provider, priority=34),
                     _chunk("summary-executive", "summary.executive", summary_text, provider),
                     _chunk("summary.detailed-001", "summary.detailed", detailed_text, provider),
                     _chunk("summary.keyPoints-001", "summary.keyPoints", key_point_text, provider),
@@ -112,6 +125,11 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
                     _chunk("analysis.blockers-001", "analysis.blockers", blocker_text, provider),
                     _chunk("analysis.actionItems-001", "analysis.actionItems", action_text, provider),
                     _chunk("analysis.risks-001", "analysis.risks", risk_text, provider),
+                    _chunk("analysis.metrics-001", "analysis.metrics", metric_text, provider, priority=160),
+                    _chunk("analysis.glossary-001", "analysis.glossary", glossary_text, provider, priority=170),
+                    _chunk("analysis.emptySections-001", "analysis.emptySections", empty_text, provider, priority=180),
+                    _chunk("quality-overview", "quality.overview", quality_text, provider, source_type="metadata", priority=190),
+                    _chunk("quality.warning-001", "quality.warning", quality_warning_text, provider, source_type="metadata", priority=191),
                 ],
             )
             session.commit()
@@ -135,7 +153,7 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             results = service.search_meeting(
                 workspace_id=self.workspace_id,
                 meeting_id=meeting_id,
-                query="What affects confidence?",
+                query="vector lookup smoke",
             )
 
         self.assertEqual([result.record.chunk_id for result in results], ["analysis.risks-001"])
@@ -178,6 +196,81 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         self.assertEqual(results[1].record.chunk_id, "summary.detailed-001")
         self.assertEqual(results[2].record.chunk_id, "summary.keyPoints-001")
         self.assertEqual(service.last_rerank_metadata["intentPinnedCount"], 3)
+
+    def test_vietnamese_participant_count_question_pins_participant_chunks(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Cuộc gọi này có bao nhiêu người tham gia?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "participants-overview")
+        self.assertEqual(results[1].record.chunk_id, "participants.participant-001")
+        self.assertEqual(service.last_rerank_metadata["intentPinnedCount"], 2)
+
+    def test_quality_question_pins_quality_chunks(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Chất lượng transcript có cảnh báo gì không?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "quality-overview")
+        self.assertEqual(results[1].record.chunk_id, "quality.warning-001")
+
+    def test_source_model_question_pins_source_chunks(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Cuộc họp này dùng model nào để phân tích?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "source-processing")
+
+    def test_empty_sections_question_pins_empty_section_chunks(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                workspace_id=self.workspace_id,
+                meeting_id=meeting_id,
+                query="Phần nào thiếu bằng chứng?",
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "analysis.emptySections-001")
 
     def test_vietnamese_reason_question_pins_detailed_reason_chunks(self) -> None:
         meeting_id = self.create_meeting_chunks()
@@ -248,11 +341,19 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         self.assertEqual(service.last_rerank_metadata["provider"], "reverse-rerank")
 
 
-def _chunk(chunk_id: str, section_type: str, text: str, provider: TestEmbeddingProvider) -> dict:
+def _chunk(
+    chunk_id: str,
+    section_type: str,
+    text: str,
+    provider: TestEmbeddingProvider,
+    *,
+    source_type: str = "structured",
+    priority: int = 50,
+) -> dict:
     embedding = provider.embed_text(text)
     return {
         "chunkId": chunk_id,
-        "sourceType": "structured",
+        "sourceType": source_type,
         "sectionType": section_type,
         "sourceId": chunk_id,
         "jsonPointer": f"/analysis/{section_type.split('.')[-1]}/0",
@@ -265,7 +366,7 @@ def _chunk(chunk_id: str, section_type: str, text: str, provider: TestEmbeddingP
         "embedding": embedding.vector,
         "visibility": "workspace",
         "metadata": {
-            "priority": 50,
+            "priority": priority,
             "embeddingProvider": embedding.provider_name,
             "embeddingModel": embedding.model_name,
         },

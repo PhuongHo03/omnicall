@@ -51,7 +51,7 @@
 ## Completion Report
 
 > **Completed at:** 2026-06-12
-> **Verified by:** `docker compose --env-file .env.example config`, `docker compose --env-file .env.example ps -a`, and HTTP checks through gateway/admin ports
+> **Verified by:** `docker compose config`, `docker compose ps -a`, and HTTP checks through gateway/admin ports
 
 ### What was implemented
 

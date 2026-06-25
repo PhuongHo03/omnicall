@@ -84,6 +84,32 @@ class EchoThenSuccessfulLLMProvider:
         }
 
 
+class WrappedFallbackLLMProvider:
+    provider_name = "fallback"
+    model_name = "test-llm:primary-model|ollama:fallback-model"
+
+    def __init__(self) -> None:
+        self.primary = type("Primary", (), {"model_name": "primary-model"})()
+        self.last_provider_name = "test-llm"
+        self.last_provider_model = "primary-model"
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
+        return {
+            "summary": {
+                "executive": "Primary model generated the meeting intelligence.",
+                "detailed": [],
+                "keyPoints": [{"text": "Use the primary model in started logs.", "citationIds": ["cite-001"]}],
+            },
+            "analysis": {
+                "decisions": [{"text": "Use the primary model in started logs.", "citationIds": ["cite-001"]}],
+                "actionItems": [],
+                "timeline": [],
+                "risks": [],
+            },
+            "quality": {"coverage": "partial", "warnings": [], "confidence": 0.7},
+        }
+
+
 class AnalysisProviderTestCase(unittest.TestCase):
     def make_meeting(self) -> Meeting:
         return Meeting(
@@ -133,6 +159,20 @@ class AnalysisProviderTestCase(unittest.TestCase):
         self.assertEqual(result["summary"]["executive"], "Team agreed to ship the processing pipeline.")
         self.assertEqual(result["transcript"]["segments"][0]["id"], "seg-001")
         self.assertEqual(result["analysis"]["decisions"][0]["citationIds"], ["cite-001"])
+
+    def test_llm_analysis_configured_model_uses_primary_model_for_start_logs(self) -> None:
+        provider = LLMAnalysisProvider(WrappedFallbackLLMProvider())
+
+        self.assertEqual(provider.provider_model, "primary-model")
+
+        result = provider.build_result(
+            meeting=self.make_meeting(),
+            asset=self.make_asset(),
+            transcript_segments=self.make_segments(),
+        )
+
+        self.assertEqual(provider.last_provider_model, "primary-model")
+        self.assertEqual(result["source"]["analysisModel"], "primary-model")
 
     def test_llm_analysis_raises_when_provider_fails(self) -> None:
         provider = LLMAnalysisProvider(BrokenLLMProvider())

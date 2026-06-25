@@ -7,7 +7,7 @@ type MeetingIntelligenceResultPanelProps = {
 };
 
 const SECTION_ORDER = ["meeting", "source", "participants", "summary", "analysis", "transcript", "citations", "quality"];
-const DEFAULT_OPEN_SECTIONS = new Set(["summary", "analysis", "quality"]);
+const DEFAULT_OPEN_SECTIONS = new Set<string>();
 const STORAGE_KEY = "omnicall:meeting-result-open-sections";
 
 export function MeetingIntelligenceResultPanel({ result }: MeetingIntelligenceResultPanelProps) {
@@ -71,12 +71,22 @@ function JsonSection({
   value: unknown;
 }) {
   return (
-    <details className="json-section" open={isOpen} onToggle={(event) => onToggle(event.currentTarget.open)}>
-      <summary>{title}</summary>
-      <div className="json-section__body">
-        <JsonValue value={value} depth={0} />
-      </div>
-    </details>
+    <section className="json-section">
+      <button
+        aria-expanded={isOpen}
+        className="json-section__toggle"
+        type="button"
+        onClick={() => onToggle(!isOpen)}
+      >
+        <span>{title}</span>
+        <span aria-hidden="true">{isOpen ? "Hide" : "Show"}</span>
+      </button>
+      {isOpen ? (
+        <div className="json-section__body">
+          <JsonValue value={value} depth={0} />
+        </div>
+      ) : null}
+    </section>
   );
 }
 

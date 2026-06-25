@@ -59,8 +59,8 @@ flowchart LR
 Run the local stack:
 
 ```bash
-docker compose --env-file .env.example up -d --build
-docker compose --env-file .env.example exec -T backend alembic upgrade head
+docker compose up -d --build
+docker compose exec -T backend alembic upgrade head
 ```
 
 Then call the backend through the gateway:
@@ -182,5 +182,5 @@ Useful local URLs:
 - Backend `unittest` coverage verifies auth, workspace scoping, upload validation, idempotency, persistence, status responses, queue failure visibility, and retry job creation.
 - Current meeting APIs use development auth headers. Production authentication is planned.
 - Worker execution, processed JSON indexing, RAG chat, rerank metadata, and local guardrail checks are implemented.
-- Voice uploads require configured local `ASR_COMMAND` and `DIARIZATION_COMMAND`; without them, processing fails safely instead of creating placeholder transcripts.
-- Production command wrappers still need to be configured through `ASR_COMMAND`, `DIARIZATION_COMMAND`, and `RERANK_COMMAND` to use files from `MODEL_CACHE_DIR`.
+- Voice uploads use repository-owned ASR and diarization runners with fixed CPU-friendly model/runtime contracts.
+- `model-init` downloads the required ASR, diarization, and rerank snapshots into the fixed `/models` volume before backend and worker startup.

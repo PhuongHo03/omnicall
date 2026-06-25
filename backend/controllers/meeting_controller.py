@@ -18,9 +18,14 @@ from backend.dtos.meeting_dto import (
     ProcessingJobResponse,
     ProcessingStatusResponse,
 )
+from backend.dtos.file_dto import DeleteResponse
+from backend.providers.cache_provider import JsonCacheProvider, get_json_cache_provider
+from backend.providers.lock_provider import RedisLockProvider, get_redis_lock_provider
 from backend.providers.queue_provider import ProcessingQueueProvider, get_processing_queue_provider
 from backend.providers.storage_provider import ObjectStorageProvider, get_object_storage_provider
+from backend.providers.vector_provider import VectorProvider, get_vector_provider
 from backend.services.chat_service import MeetingChatService
+from backend.services.admin_meeting_service import AdminMeetingService
 from backend.services.intelligence_service import IntelligenceService
 from backend.services.meeting_service import MeetingService
 from backend.services.operational_log_service import OperationalLogService, get_operational_log_service
@@ -53,6 +58,24 @@ def get_chat_service(
     operational_logs: OperationalLogService = Depends(get_operational_log_service),
 ) -> MeetingChatService:
     return MeetingChatService(session, operational_logs=operational_logs)
+
+
+def get_meeting_deletion_service(
+    session: Session = Depends(get_db_session),
+    storage_provider: ObjectStorageProvider = Depends(get_object_storage_provider),
+    vector_provider: VectorProvider = Depends(get_vector_provider),
+    lock_provider: RedisLockProvider = Depends(get_redis_lock_provider),
+    queue_provider: ProcessingQueueProvider = Depends(get_processing_queue_provider),
+    cache_provider: JsonCacheProvider = Depends(get_json_cache_provider),
+) -> AdminMeetingService:
+    return AdminMeetingService(
+        session,
+        storage_provider,
+        vector_provider=vector_provider,
+        lock_provider=lock_provider,
+        queue_provider=queue_provider,
+        cache_provider=cache_provider,
+    )
 
 
 def normalize_idempotency_key(idempotency_key: str | None, fallback: str) -> str:
@@ -88,6 +111,15 @@ def get_meeting(
     meeting_service: MeetingService = Depends(get_meeting_service),
 ) -> MeetingResponse:
     return meeting_service.get_meeting(context, meeting_id)
+
+
+@router.delete("/{meeting_id}", response_model=DeleteResponse)
+def delete_meeting(
+    meeting_id: str,
+    context: CurrentUserContext = Depends(get_current_context),
+    deletion_service: AdminMeetingService = Depends(get_meeting_deletion_service),
+) -> DeleteResponse:
+    return deletion_service.delete_meeting(context, meeting_id, require_owner=True)
 
 
 @router.post("/{meeting_id}/assets", response_model=MeetingAssetResponse, status_code=status.HTTP_201_CREATED)

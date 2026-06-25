@@ -533,8 +533,10 @@ def _chat_system_prompt() -> str:
         "You are a meeting intelligence analyst for Omnicall. "
         "Answer using only the provided meeting intelligence context; never add facts from outside the context. "
         "Prefer structured meeting intelligence over raw transcript fragments when both are available. "
+        "Treat meeting metadata, participant records, source/model metadata, transcript coverage, quality warnings, and empty-section notes as valid evidence when they directly answer the question. "
         "Synthesize the most relevant evidence instead of copying one isolated chunk. "
-        "If the question asks for a topic, issue, reason, decision, risk, timeline, or next action, include the concrete details that make the answer useful. "
+        "If the question asks for a count or list, answer directly from the relevant structured chunks and include names, roles, or caveats when available. "
+        "If the question asks for a topic, issue, reason, decision, risk, timeline, quality warning, source/model, or next action, include the concrete details that make the answer useful. "
         "For broad questions, answer with a concise overview plus key supporting points. "
         "For narrow factual questions, answer directly and mention any important caveat from the context. "
         "Use the user's language when possible. "
@@ -554,6 +556,8 @@ def _chat_user_prompt(*, question: str, retrieved: list[RetrievedChunk]) -> str:
                     f"sourceType={chunk.source_type}",
                     f"sectionType={chunk.section_type}",
                     f"jsonPointer={chunk.json_pointer}",
+                    f"title={(chunk.metadata_json or {}).get('title') or ''}",
+                    f"score={round(item.score, 6)}",
                     f"text={chunk.text}",
                 ]
             )

@@ -64,25 +64,14 @@ services:
       OPERATIONAL_LOG_TTL_SECONDS: "${OPERATIONAL_LOG_TTL_SECONDS:-86400}"
       OPERATIONAL_LOG_DEFAULT_TAIL: "${OPERATIONAL_LOG_DEFAULT_TAIL:-100}"
       AUTH_SESSION_TTL_HOURS: "${AUTH_SESSION_TTL_HOURS:-168}"
-      MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
-      HF_HOME: "${HF_HOME:-/models/.hf-cache}"
-      VOICE_FFMPEG_PATH: "${VOICE_FFMPEG_PATH:-ffmpeg}"
-      VOICE_WORK_DIR: "${VOICE_WORK_DIR:-/tmp/omnicall-audio}"
       VAD_MIN_SPEECH_MS: "${VAD_MIN_SPEECH_MS:-300}"
       VAD_SILENCE_GAP_MS: "${VAD_SILENCE_GAP_MS:-500}"
       VAD_ENERGY_THRESHOLD: "${VAD_ENERGY_THRESHOLD:-0.012}"
-      ASR_MODEL: "${ASR_MODEL:-whisper-small-int8}"
-      ASR_COMPUTE_TYPE: "${ASR_COMPUTE_TYPE:-int8}"
-      ASR_COMMAND: "${ASR_COMMAND:-}"
       ASR_TIMEOUT_SECONDS: "${ASR_TIMEOUT_SECONDS:-120}"
       ASR_TIMEOUT_REALTIME_FACTOR: "${ASR_TIMEOUT_REALTIME_FACTOR:-1.0}"
-      DIARIZATION_MODEL: "${DIARIZATION_MODEL:-wespeaker-voxceleb-resnet34}"
-      DIARIZATION_COMMAND: "${DIARIZATION_COMMAND:-}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-nomic-embed-text}"
       EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-768}"
       EMBEDDING_TIMEOUT_SECONDS: "${EMBEDDING_TIMEOUT_SECONDS:-30}"
-      RERANK_MODEL: "${RERANK_MODEL:-bge-reranker-v2-m3}"
-      RERANK_COMMAND: "${RERANK_COMMAND:-}"
       RERANK_TOP_K: "${RERANK_TOP_K:-12}"
       RERANK_OUTPUT_K: "${RERANK_OUTPUT_K:-6}"
       RERANK_TIMEOUT_SECONDS: "${RERANK_TIMEOUT_SECONDS:-30}"
@@ -117,7 +106,7 @@ services:
       model-init:
         condition: service_completed_successfully
     volumes:
-      - model_cache:${MODEL_CACHE_DIR:-/models}
+      - model_cache:/models
     networks:
       - internal
     healthcheck:
@@ -183,24 +172,14 @@ services:
       MILVUS_PORT: "${MILVUS_PORT:-19530}"
       MILVUS_COLLECTION: "${MILVUS_COLLECTION:-meeting_chunks}"
       VECTOR_PROVIDER: "${VECTOR_PROVIDER:-milvus}"
-      MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
-      HF_HOME: "${HF_HOME:-/models/.hf-cache}"
-      VOICE_FFMPEG_PATH: "${VOICE_FFMPEG_PATH:-ffmpeg}"
-      VOICE_WORK_DIR: "${VOICE_WORK_DIR:-/tmp/omnicall-audio}"
       VAD_MIN_SPEECH_MS: "${VAD_MIN_SPEECH_MS:-300}"
       VAD_SILENCE_GAP_MS: "${VAD_SILENCE_GAP_MS:-500}"
       VAD_ENERGY_THRESHOLD: "${VAD_ENERGY_THRESHOLD:-0.012}"
-      ASR_MODEL: "${ASR_MODEL:-whisper-small-int8}"
-      ASR_COMPUTE_TYPE: "${ASR_COMPUTE_TYPE:-int8}"
-      ASR_COMMAND: "${ASR_COMMAND:-}"
       ASR_TIMEOUT_SECONDS: "${ASR_TIMEOUT_SECONDS:-120}"
-      DIARIZATION_MODEL: "${DIARIZATION_MODEL:-wespeaker-voxceleb-resnet34}"
-      DIARIZATION_COMMAND: "${DIARIZATION_COMMAND:-}"
+      ASR_TIMEOUT_REALTIME_FACTOR: "${ASR_TIMEOUT_REALTIME_FACTOR:-1.0}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-nomic-embed-text}"
       EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-768}"
       EMBEDDING_TIMEOUT_SECONDS: "${EMBEDDING_TIMEOUT_SECONDS:-30}"
-      RERANK_MODEL: "${RERANK_MODEL:-bge-reranker-v2-m3}"
-      RERANK_COMMAND: "${RERANK_COMMAND:-}"
       RERANK_TOP_K: "${RERANK_TOP_K:-12}"
       RERANK_OUTPUT_K: "${RERANK_OUTPUT_K:-6}"
       RERANK_TIMEOUT_SECONDS: "${RERANK_TIMEOUT_SECONDS:-30}"
@@ -241,7 +220,7 @@ services:
       model-init:
         condition: service_completed_successfully
     volumes:
-      - model_cache:${MODEL_CACHE_DIR:-/models}
+      - model_cache:/models
     networks:
       - internal
     healthcheck:
@@ -319,11 +298,13 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: "${OLLAMA_BASE_URL:-http://ollama:11434}"
-      OLLAMA_BOOTSTRAP_MODELS: "${OLLAMA_BOOTSTRAP_MODELS-qwen2.5:1.5b nomic-embed-text llama-guard3:1b}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-nomic-embed-text}"
+      GUARDRAIL_MODEL: "${GUARDRAIL_MODEL:-llama-guard3:1b}"
     entrypoint: ["/bin/sh", "-c"]
     command: >
       "set -eu;
-      for model in $${OLLAMA_BOOTSTRAP_MODELS}; do
+      for model in "$${OLLAMA_MODEL}" "$${EMBEDDING_MODEL}" "$${GUARDRAIL_MODEL}"; do
         echo \"Pulling Ollama model: $${model}\";
         ollama pull \"$${model}\";
       done"
@@ -335,20 +316,8 @@ services:
     build:
       context: .
       dockerfile: infras/model-init/Dockerfile
-    environment:
-      MODEL_CACHE_DIR: "${MODEL_CACHE_DIR:-/models}"
-      HF_HOME: "${HF_HOME:-/models/.hf-cache}"
-      ASR_HF_REPO: "${ASR_HF_REPO-Systran/faster-whisper-small}"
-      ASR_HF_REVISION: "${ASR_HF_REVISION-main}"
-      ASR_DOWNLOAD_COMMAND: "${ASR_DOWNLOAD_COMMAND-}"
-      DIARIZATION_HF_REPO: "${DIARIZATION_HF_REPO-Wespeaker/wespeaker-voxceleb-resnet34-LM}"
-      DIARIZATION_HF_REVISION: "${DIARIZATION_HF_REVISION-main}"
-      DIARIZATION_DOWNLOAD_COMMAND: "${DIARIZATION_DOWNLOAD_COMMAND-}"
-      RERANK_HF_REPO: "${RERANK_HF_REPO-BAAI/bge-reranker-v2-m3}"
-      RERANK_HF_REVISION: "${RERANK_HF_REVISION-main}"
-      RERANK_DOWNLOAD_COMMAND: "${RERANK_DOWNLOAD_COMMAND-}"
     volumes:
-      - model_cache:${MODEL_CACHE_DIR:-/models}
+      - model_cache:/models
     networks:
       - internal
     restart: "no"

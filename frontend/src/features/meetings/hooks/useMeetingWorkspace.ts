@@ -25,9 +25,10 @@ import type {
   MeetingIntelligenceResult,
   ProcessingJob
 } from "../types/meetingTypes";
+import { createClientId } from "../../../shared/utils/id";
 
 function requestKey(prefix: string) {
-  return `${prefix}:${crypto.randomUUID()}`;
+  return `${prefix}:${createClientId()}`;
 }
 
 function isUploadableMeeting(meeting: Meeting, asset: MeetingAsset | null) {
@@ -49,9 +50,91 @@ function isAudioAsset(asset: MeetingAsset | null) {
   return asset?.contentType.startsWith("audio/") === true;
 }
 
+const CHAT_RECOVERY_ATTEMPTS = 10;
+const CHAT_RECOVERY_DELAY_MS = 3000;
+const CHAT_STREAM_MAX_STEPS = 160;
+const CHAT_STREAM_STEP_MS = 35;
+const CHAT_THINKING_TEXT = "Đang tra cứu...";
+
+function normalizeChatContent(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function isMessageAfter(message: MeetingChatMessage, minCreatedAtMs: number | null) {
+  if (minCreatedAtMs === null) {
+    return true;
+  }
+  const createdAtMs = Date.parse(message.createdAt);
+  return Number.isNaN(createdAtMs) ? true : createdAtMs >= minCreatedAtMs;
+}
+
+function findQuestionMessageIndex(messages: MeetingChatMessage[], question: string, minCreatedAtMs: number | null = null) {
+  const normalizedQuestion = normalizeChatContent(question);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      message.role === "user" &&
+      isMessageAfter(message, minCreatedAtMs) &&
+      normalizeChatContent(message.content) === normalizedQuestion
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findAssistantAnswerAfterQuestion(
+  messages: MeetingChatMessage[],
+  question: string,
+  minCreatedAtMs: number | null = null
+) {
+  const questionIndex = findQuestionMessageIndex(messages, question, minCreatedAtMs);
+  if (questionIndex < 0) {
+    return null;
+  }
+  return messages.slice(questionIndex + 1).find((message) => message.role === "assistant") ?? null;
+}
+
+function isNetworkLikeError(caught: unknown) {
+  if (caught instanceof TypeError) {
+    return true;
+  }
+  if (!(caught instanceof Error)) {
+    return false;
+  }
+  return /network|fetch|load failed|failed to fetch|connection/i.test(caught.message);
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function createOptimisticChatMessage(role: "user" | "assistant", content: string): MeetingChatMessage {
+  return {
+    id: `local:${createClientId()}`,
+    role,
+    content,
+    retrievedChunkIds: [],
+    citations: [],
+    metadata: { local: true, pending: role === "assistant" },
+    createdAt: new Date().toISOString()
+  };
+}
+
+function buildStreamChunks(content: string) {
+  const tokens = content.match(/\S+\s*/g) ?? [content];
+  const groupSize = Math.max(1, Math.ceil(tokens.length / CHAT_STREAM_MAX_STEPS));
+  const chunks: string[] = [];
+  for (let index = 0; index < tokens.length; index += groupSize) {
+    chunks.push(tokens.slice(index, index + groupSize).join(""));
+  }
+  return chunks;
+}
+
 export function useMeetingWorkspace(
   token: string,
-  isAdmin: boolean,
   requestedMeetingId: string | null,
   onSelectedMeetingChange: (meetingId: string | null) => void
 ) {
@@ -74,6 +157,7 @@ export function useMeetingWorkspace(
   const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<BlobPart[]>([]);
+  const chatStreamGenerationRef = useRef(0);
 
   const selectedMeeting = useMemo(
     () => meetings.find((meeting) => meeting.id === selectedMeetingId) ?? null,
@@ -133,6 +217,7 @@ export function useMeetingWorkspace(
   }, [hasLoadedMeetings, meetings, onSelectedMeetingChange, requestedMeetingId]);
 
   useEffect(() => {
+    chatStreamGenerationRef.current += 1;
     setChatQuestion("");
     setChatMessages([]);
     setLatestJob(null);
@@ -190,6 +275,44 @@ export function useMeetingWorkspace(
     [token]
   );
 
+  const streamAssistantMessage = useCallback(async (placeholderId: string, message: MeetingChatMessage) => {
+    const generation = chatStreamGenerationRef.current;
+    const chunks = buildStreamChunks(message.content);
+    let streamedContent = "";
+
+    setChatMessages((current) =>
+      current.map((item) =>
+        item.id === placeholderId
+          ? {
+              ...message,
+              id: placeholderId,
+              content: "",
+              citations: [],
+              metadata: { ...message.metadata, local: true, streaming: true }
+            }
+          : item
+      )
+    );
+
+    for (const chunk of chunks) {
+      if (chatStreamGenerationRef.current !== generation) {
+        return false;
+      }
+      streamedContent += chunk;
+      setChatMessages((current) =>
+        current.map((item) => (item.id === placeholderId ? { ...item, content: streamedContent } : item))
+      );
+      await wait(CHAT_STREAM_STEP_MS);
+    }
+
+    if (chatStreamGenerationRef.current !== generation) {
+      return false;
+    }
+
+    setChatMessages((current) => current.map((item) => (item.id === placeholderId ? message : item)));
+    return true;
+  }, []);
+
   useEffect(() => {
     if (!selectedMeeting) {
       return;
@@ -198,7 +321,7 @@ export function useMeetingWorkspace(
     void run(async () => {
       await refreshSelectedMeetingState(meeting);
     });
-  }, [refreshSelectedMeetingState, run, selectedMeetingId]);
+  }, [refreshSelectedMeetingState, run, selectedMeeting?.id]);
 
   useEffect(() => {
     if (!selectedMeeting || !isProcessingMeeting(selectedMeeting)) {
@@ -330,19 +453,74 @@ export function useMeetingWorkspace(
       setError("Question must not be empty.");
       return;
     }
+    const optimisticQuestion = createOptimisticChatMessage("user", question);
+    const optimisticAnswer = createOptimisticChatMessage("assistant", CHAT_THINKING_TEXT);
+    const submittedAfterMs = Date.now() - 10000;
+    setChatQuestion("");
+    setChatMessages((current) => [...current, optimisticQuestion, optimisticAnswer]);
+
     void run(async () => {
-      const response = await askMeetingChat(
-        token,
-        selectedMeeting.id,
-        question,
-        selectedMeeting.language
-      );
-      setChatQuestion("");
+      let response;
+      try {
+        response = await askMeetingChat(
+          token,
+          selectedMeeting.id,
+          question,
+          selectedMeeting.language
+        );
+      } catch (caught) {
+        if (!isNetworkLikeError(caught)) {
+          setChatMessages((current) =>
+            current.filter((item) => item.id !== optimisticQuestion.id && item.id !== optimisticAnswer.id)
+          );
+          throw caught;
+        }
+
+        let latestMessages: MeetingChatMessage[] = [];
+        for (let attempt = 0; attempt < CHAT_RECOVERY_ATTEMPTS; attempt += 1) {
+          if (attempt > 0) {
+            await wait(CHAT_RECOVERY_DELAY_MS);
+          }
+          const history = await getMeetingChatHistory(token, selectedMeeting.id);
+          latestMessages = history.messages;
+          const recoveredAnswer = findAssistantAnswerAfterQuestion(history.messages, question, submittedAfterMs);
+          if (recoveredAnswer) {
+            const streamed = await streamAssistantMessage(optimisticAnswer.id, recoveredAnswer);
+            if (streamed) {
+              const latestHistory = await getMeetingChatHistory(token, selectedMeeting.id);
+              setChatMessages(latestHistory.messages);
+            }
+            setNotice("Answer generated.");
+            return;
+          }
+        }
+
+        if (findQuestionMessageIndex(latestMessages, question, submittedAfterMs) >= 0) {
+          setChatMessages((current) =>
+            current.map((item) =>
+              item.id === optimisticAnswer.id
+                ? { ...item, content: "Câu hỏi đã được lưu. Câu trả lời vẫn đang được tạo, hãy refresh chat sau ít giây." }
+                : item
+            )
+          );
+          setNotice("Question saved. The answer is still generating; refresh chat in a moment.");
+          return;
+        }
+
+        setChatMessages((current) =>
+          current.filter((item) => item.id !== optimisticQuestion.id && item.id !== optimisticAnswer.id)
+        );
+        throw caught;
+      }
+      const streamed = await streamAssistantMessage(optimisticAnswer.id, response.message);
+      if (!streamed) {
+        return;
+      }
       const history = await getMeetingChatHistory(token, selectedMeeting.id);
       setChatMessages(history.messages);
       setNotice(response.evidenceState === "not_enough_evidence" ? "No supported answer found." : "Answer generated.");
     });
-  }, [chatQuestion, run, selectedMeeting, token]);
+  }, [chatQuestion, run, selectedMeeting, streamAssistantMessage, token]);
 
   const refreshChatHistory = useCallback(() => {
     if (!selectedMeeting) {
@@ -356,8 +534,8 @@ export function useMeetingWorkspace(
   }, [run, selectedMeeting, token]);
 
   const deleteSelectedMeeting = useCallback(() => {
-    if (!selectedMeeting || !isAdmin) {
-      setError("Admin access is required to delete a meeting session.");
+    if (!selectedMeeting) {
+      setError("Select a meeting first.");
       return;
     }
     void run(async () => {
@@ -370,7 +548,7 @@ export function useMeetingWorkspace(
       await refreshAccountFiles();
       setNotice("Meeting session deleted.");
     });
-  }, [isAdmin, refreshAccountFiles, run, selectMeeting, selectedMeeting, token]);
+  }, [refreshAccountFiles, run, selectMeeting, selectedMeeting, token]);
 
   const startRecording = useCallback(() => {
     if (!selectedMeeting) {

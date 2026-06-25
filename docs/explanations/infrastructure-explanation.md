@@ -103,6 +103,8 @@ Routes:
 
 The gateway forwards request context with `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Request-ID`.
 
+API proxy reads and sends are allowed to run for up to `600` seconds. This keeps long-running chat responses, especially LLM-backed RAG answers, behind the same-origin `/api/` gateway path without prematurely closing the browser connection while the backend is still generating and persisting the answer.
+
 ### Dynamic DNS Resolution
 
 To prevent stale DNS caching issues when service containers (like `frontend` or `backend`) are restarted or recreated (which changes their internal Docker network IP addresses), the gateway uses Docker's internal DNS resolver (`127.0.0.11` with a `valid=5s` TTL). 
@@ -163,6 +165,8 @@ The root `.env.example` follows the project ordering rule:
 bind IPs -> ports -> service credentials -> app config -> global
 ```
 
+Docker Compose uses the root `.env` automatically when no explicit env file override is passed. If a stack was recreated with the template env file by mistake, the running containers keep those example values until they are recreated again with the intended root `.env`.
+
 Notable local defaults:
 
 | Variable | Value | Reason |
@@ -186,38 +190,17 @@ Notable local defaults:
 | `OPERATIONAL_LOG_DEFAULT_TAIL` | `100` | Default Admin log tail size |
 | `OLLAMA_PORT` | `11434` | Localhost-bound Ollama API port |
 | `OLLAMA_BASE_URL` | `http://ollama:11434` | Lets backend/worker containers call the Compose Ollama service |
-| `OLLAMA_BOOTSTRAP_MODELS` | `qwen2.5:1.5b nomic-embed-text llama-guard3:1b` | Models pulled by `ollama-init` into `ollama_data` |
-| `MODEL_CACHE_DIR` | `/models` | Mount point for the `model_cache` volume in backend, worker, and `model-init` |
-| `HF_HOME` | `/models/.hf-cache` | Hugging Face cache directory inside `model_cache` |
-| `VOICE_FFMPEG_PATH` | `ffmpeg` | ffmpeg executable used by backend/worker voice preprocessing |
-| `VOICE_WORK_DIR` | `/tmp/omnicall-audio` | Container-local directory for derived temporary audio files |
 | `VAD_MIN_SPEECH_MS` | `300` | Minimum local VAD speech-region duration |
 | `VAD_SILENCE_GAP_MS` | `500` | Silence gap merged into nearby local VAD speech regions |
 | `VAD_ENERGY_THRESHOLD` | `0.012` | RMS threshold for local energy VAD |
-| `ASR_MODEL` | `whisper-small-int8` | CPU-friendly local ASR model identifier |
-| `ASR_COMPUTE_TYPE` | `int8` | Local ASR compute mode |
-| `ASR_COMMAND` | `python -m backend.model_runners.asr --audio-path {audio_path} --model-dir {model_cache_dir}/asr --model-name {model} --compute-type {compute_type}` | Local faster-whisper ASR command template |
-| `ASR_HF_REPO` | `Systran/faster-whisper-small` | Model repo downloaded by `model-init` into `/models/asr` |
-| `ASR_HF_REVISION` | `main` | ASR model revision downloaded by `model-init` |
-| `ASR_DOWNLOAD_COMMAND` | empty | Optional custom ASR download command; receives `MODEL_TARGET_DIR` |
 | `ASR_TIMEOUT_SECONDS` | `120` | Minimum local ASR command timeout |
 | `ASR_TIMEOUT_REALTIME_FACTOR` | `1.0` | Multiplies normalized audio duration to extend ASR/diarization subprocess timeouts for longer voice files |
-| `DIARIZATION_MODEL` | `wespeaker-voxceleb-resnet34` | WeSpeaker-oriented local diarization model identifier |
-| `DIARIZATION_COMMAND` | `python -m backend.model_runners.diarization --audio-path {audio_path} --model-dir {model_cache_dir}/diarization --device cpu` | Local WeSpeaker diarization command template |
-| `DIARIZATION_HF_REPO` | `Wespeaker/wespeaker-voxceleb-resnet34-LM` | Model repo downloaded by `model-init` into `/models/diarization` |
-| `DIARIZATION_HF_REVISION` | `main` | Diarization model revision downloaded by `model-init` |
-| `DIARIZATION_DOWNLOAD_COMMAND` | empty | Optional custom diarization download command; receives `MODEL_TARGET_DIR` |
 | `LLM_PROVIDER` | `endpoint` | Selects API/private endpoint/Ollama provider path |
 | `LLM_ENDPOINT_COMPATIBILITY` | `openai` | Selects OpenAI-compatible or custom JSON endpoint behavior |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama text embedding model |
 | `EMBEDDING_DIMENSIONS` | `768` | Expected local embedding vector size |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30` | Ollama embedding request timeout |
 | `VECTOR_PROVIDER` | `milvus` | Enables Milvus REST vector index with PostgreSQL fallback |
-| `RERANK_MODEL` | `bge-reranker-v2-m3` | Local reranker model identifier |
-| `RERANK_COMMAND` | `python -m backend.model_runners.rerank --model-dir {model_cache_dir}/rerank --model-name {model}` | Local SentenceTransformers cross-encoder rerank command template |
-| `RERANK_HF_REPO` | `BAAI/bge-reranker-v2-m3` | Model repo downloaded by `model-init` into `/models/rerank` |
-| `RERANK_HF_REVISION` | `main` | Rerank model revision downloaded by `model-init` |
-| `RERANK_DOWNLOAD_COMMAND` | empty | Optional custom rerank download command; receives `MODEL_TARGET_DIR` |
 | `RERANK_TOP_K` | `12` | Retrieval candidate count before rerank |
 | `RERANK_OUTPUT_K` | `6` | Reranked output count returned to chat |
 | `RERANK_TIMEOUT_SECONDS` | `30` | Local rerank command timeout |
@@ -258,7 +241,7 @@ The root `.dockerignore` keeps generated JavaScript artifacts out of service bui
 
 This prevents local frontend installs and Vite output from being sent to Docker when rebuilding services. The frontend image build context was verified at `2.26kB` after these ignores were added.
 
-The backend image uses Python 3.11 and installs `ffmpeg`, `git`, `libsndfile`, `sox`, build tooling, CPU-only `torch/torchaudio`, `faster-whisper`, WeSpeaker, and SentenceTransformers dependencies. The same image is used by the API and worker containers so both can import provider code, while long-running voice processing still executes in the worker path. Compose passes `VOICE_FFMPEG_PATH` so local builds can point to a different binary path if needed.
+The backend image uses Python 3.11 and installs `ffmpeg`, `git`, `libsndfile`, `sox`, build tooling, CPU-only `torch/torchaudio`, `faster-whisper`, WeSpeaker, and SentenceTransformers dependencies. The same image is used by the API and worker containers so both can import provider code, while long-running voice processing still executes in the worker path. ffmpeg, `/models`, `/models/.hf-cache`, and `/tmp/omnicall-audio` are fixed image/runtime contracts rather than environment variables.
 
 ## Model Bootstrap
 
@@ -266,10 +249,10 @@ Compose has two one-shot model bootstrap services:
 
 | Service | Writes to | Behavior |
 |---|---|---|
-| `ollama-init` | `ollama_data:/root/.ollama` through the running `ollama` service | Pulls every model listed in `OLLAMA_BOOTSTRAP_MODELS` with `ollama pull` |
-| `model-init` | `model_cache:/models` | Downloads ASR, diarization, and rerank Hugging Face snapshots, or runs custom `*_DOWNLOAD_COMMAND` values |
+| `ollama-init` | `ollama_data:/root/.ollama` through the running `ollama` service | Pulls `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL` with `ollama pull` |
+| `model-init` | `model_cache:/models` | Downloads the repository-defined ASR, diarization, and rerank Hugging Face snapshots |
 
-`backend` and `worker` mount `model_cache` at `MODEL_CACHE_DIR` and wait for both init services to complete. This means `docker compose up` prepares model files before app services start. Compose uses default model values only when the related env variable is unset; an explicitly empty value means "skip." To skip Ollama pulls, set `OLLAMA_BOOTSTRAP_MODELS` to empty. To skip a specialized model download, set the matching `*_HF_REPO` and `*_DOWNLOAD_COMMAND` to empty. To replace the default source, set a custom `ASR_DOWNLOAD_COMMAND`, `DIARIZATION_DOWNLOAD_COMMAND`, or `RERANK_DOWNLOAD_COMMAND`; the command receives `MODEL_CACHE_DIR` and `MODEL_TARGET_DIR`.
+`backend` and `worker` mount `model_cache` at `/models` and wait for both init services to complete. This means `docker compose up` prepares model files before app services start. Ollama bootstrap derives its pull list directly from the three configured runtime model names, so there is no second list to keep synchronized. Specialized ASR, diarization, and rerank sources are versioned with `model-init`; changing them requires a coordinated code/image change instead of an unchecked `.env` override.
 
 Default specialized local models are stored in the `model_cache` named volume:
 
@@ -285,10 +268,10 @@ Default specialized local models are stored in the `model_cache` named volume:
 Commands used for Phase 2 verification:
 
 ```bash
-docker compose --env-file .env.example config
-docker compose --env-file .env.example up -d --build
-docker compose --env-file .env.example exec -T backend alembic upgrade head
-docker compose --env-file .env.example ps -a
+docker compose config
+docker compose up -d --build
+docker compose exec -T backend alembic upgrade head
+docker compose ps -a
 curl http://127.0.0.1:8080/api/health
 ```
 
@@ -476,4 +459,12 @@ Phase 8 operational-log verification on 2026-06-19 also confirmed:
 | Clear behavior | Admin clear returned `200` and the subsequent tail contained zero events |
 | Runtime health | Backend, worker, frontend, NGINX, and Redis healthy |
 
-*Document reflects project state after Phase 8 operational-log verification on **2026-06-19**. Redis additionally owns the bounded, expiring `admin:logs:operational` Stream consumed through Admin backend APIs; no new database or infrastructure service was added. The previously documented Phase 7 Compose stack remains wired and healthy.*
+For local development after retrieval chunk format changes, rebuild derived retrieval data from the backend environment:
+
+```bash
+python -m backend.scripts.rebuild_retrieval_index --clear-chat
+```
+
+The command reuses backend settings, reads stored `meeting_intelligence_results`, replaces PostgreSQL `meeting_chunks`, upserts fresh Milvus vectors, and optionally clears chat messages that may cite stale chunk IDs. Use `--meeting-id <id>` to rebuild one meeting. When preserving local data is not useful, `docker compose down -v` followed by stack startup, migrations, and reprocessing remains the clean-slate path; it deletes local PostgreSQL, Redis, RabbitMQ, MinIO, Milvus, and model/runtime volumes.
+
+*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-25**. Compose now exposes only operator-facing model controls; specialized model sources, runner commands, and internal model paths are repository-owned runtime contracts. The gateway keeps `/api/` connections open long enough for long RAG chat answers, and the previously documented monitoring, operational-log, and local retrieval rebuild flows remain available.*

@@ -76,7 +76,7 @@ backend/
 ├── services/
 │   ├── __init__.py
 │   ├── admin_account_service.py   <- Admin-only account role and account deletion use cases
-│   ├── admin_meeting_service.py   <- Admin-only meeting deletion and cascading cleanup use case
+│   ├── admin_meeting_service.py   <- Meeting deletion and cascading cleanup use case for admin/global and owner-scoped flows
 │   ├── admin_metrics_service.py   <- Admin metrics aggregation and Redis cache use case
 │   ├── auth_service.py            <- Registration, login, logout, and current account use cases
 │   ├── chat_service.py            <- Meeting-grounded chat use case
@@ -138,6 +138,7 @@ Current public backend route:
 | `POST` | `/api/meetings` | Created meeting shell |
 | `GET` | `/api/meetings` | Meetings owned by the current account |
 | `GET` | `/api/meetings/{meetingId}` | Meeting detail and status |
+| `DELETE` | `/api/meetings/{meetingId}` | Delete an owned meeting session with cascading cleanup |
 | `POST` | `/api/meetings/{meetingId}/assets` | Uploaded audio/video/text asset metadata; one asset per meeting |
 | `GET` | `/api/meetings/{meetingId}/assets/{assetId}/content` | Authorized uploaded asset bytes for browser playback or download |
 | `POST` | `/api/meetings/{meetingId}/process` | Processing job queued or visible queue failure |
@@ -184,9 +185,11 @@ X-User-Role
 
 The fallback validates the user UUID, creates or updates a local `users` row, and returns a `CurrentUserContext`. This is a development boundary, not the frontend product path.
 
-All meeting reads, uploads, process triggers, file-library actions, and chat history reads are scoped by `owner_user_id == context.user_id`.
+All meeting reads, uploads, process triggers, owned meeting deletion, file-library actions, and chat history reads are scoped by `owner_user_id == context.user_id`.
 
-Admin operations APIs use the same current-context dependency plus a backend role check. `GET /api/admin/metrics`, `DELETE /api/admin/meetings/{meetingId}`, account role updates, and account deletion accept only `Admin` and reject `User` with `403 admin_access_required`. Frontend role checks only hide UI affordances; backend authorization is authoritative.
+`DELETE /api/meetings/{meetingId}` is available to authenticated `User` and `Admin` accounts for meetings they own. It uses the production cleanup path: acquire the meeting processing lock, revoke queued processing jobs by ID, delete worker-derived rows and objects, invalidate the admin metrics cache, and release the lock. If processing is actively running and the lock cannot be acquired, it returns `409 meeting_processing_in_progress`. A request for another account's meeting returns `404 meeting_not_found`.
+
+Admin operations APIs use the same current-context dependency plus a backend role check. `GET /api/admin/metrics`, `DELETE /api/admin/meetings/{meetingId}`, account role updates, and account deletion accept only `Admin` and reject `User` with `403 admin_access_required`. Frontend role checks only hide admin portal affordances; backend authorization is authoritative.
 
 `GET /api/admin/accounts` lists local accounts with display name, email, role, creation time, and whether the current admin may change the role. `PATCH /api/admin/accounts/{userId}/role` accepts only `Admin` or `User`, updates `users.role`, records `admin.account.role_update`, and rejects attempts to change the caller's own role with `409 cannot_change_own_role`.
 
@@ -238,6 +241,8 @@ meeting API / worker / RAG service
 Processing events cover file upload, queue delivery, worker receive/lock, transcription, audio preprocessing, VAD, ASR, diarization, transcript guardrail, LLM analysis, validation, persistence, embedding, Milvus upsert, and final result/failure. RAG events cover question receipt, guardrails, query embedding, retrieval source and chunk counts, rerank, LLM answer/fallback, and answer persistence.
 
 Events include meeting/session name and IDs, uploaded file metadata, job/chat IDs, provider/model, duration, counts, and safe error type/message when available. Full prompts, raw transcripts, API keys, passwords, bearer tokens, and secrets are redacted. Primary LLM endpoint failure and the effective Ollama fallback are emitted as separate error/success events.
+
+The LLM analysis start event reports the configured primary model so the log does not look like two models are running at once. The completion event and persisted `source.analysisModel` report the effective model that actually generated the processed JSON. If the primary endpoint fails, a separate `analysis_llm_primary` error event records the primary provider/model and the later analysis completion records the fallback provider/model.
 
 The transcription start event resolves the asset route before logging provider/model context. Text uploads now report `local-text-extraction` with `deterministic-v1`; audio/video uploads report the ASR provider/model and include the voice preprocessing, VAD, and diarization provider details in event metadata. The `LocalTranscriptionProvider` itself remains only a routing boundary named `local-transcription-router` with `routing-v1`, so it is not counted as a separate model.
 
@@ -352,13 +357,13 @@ Current provider behavior is model-backed for the six model points. Test-only fa
 | Text extraction | `DocumentTextExtractionProvider` | Reads `.txt`, `.md`, `.vtt`, and `.srt` uploads from MinIO and turns timestamp/speaker lines into transcript segments |
 | Voice preprocessing | `LocalAudioPreprocessor` | Reads the original asset bytes from MinIO, normalizes supported media to a stable per-asset temporary 16 kHz mono WAV with ffmpeg, deletes raw temp input, reuses valid derived WAVs across retries, and records duration, sample rate, channel count, and warnings |
 | VAD | `LocalVADProvider` | Local energy-based speech-region detector over normalized WAV audio, with configurable minimum speech duration, silence merge gap, energy threshold, and speech-region metadata |
-| ASR | `LocalASRProvider` | Runs a configured `ASR_COMMAND` Whisper-compatible CLI/wrapper, parses JSON segments, and maps them into `TranscriptSegment[]` |
-| Diarization | `LocalCommandDiarizationProvider` | Runs a configured `DIARIZATION_COMMAND` WeSpeaker-oriented wrapper and merges speaker assignments into transcript segments |
+| ASR | `LocalASRProvider` | Runs the repository-owned faster-whisper CPU `int8` runner, parses JSON segments, and maps them into `TranscriptSegment[]` |
+| Diarization | `LocalCommandDiarizationProvider` | Runs the repository-owned WeSpeaker CPU runner and merges speaker assignments into transcript segments |
 | Analysis | `LLMAnalysisProvider` | Calls the configured LLM provider, retries once with a repair prompt if the provider echoes input or omits required intelligence sections, sends transcript evidence to the provider as compact `segmentId|speaker|text` lines to conserve model context, merges generated sections into the canonical result shape, and preserves the full authoritative transcript |
 | LLM | `OpenAICompatibleLLMProvider`, `CustomJSONEndpointLLMProvider`, `OllamaLLMProvider`, `FallbackLLMProvider` | Selects API/private endpoint/Ollama providers, tries the configured API/endpoint primary before Ollama fallback, and records the effective provider/model that actually generated the result |
 | Text embedding | `OllamaEmbeddingProvider` | Calls local Ollama `/api/embed` with `EMBEDDING_MODEL=nomic-embed-text` and validates the configured vector dimension |
 | Vector index | `MilvusVectorProvider`, `NoopVectorProvider` | Upserts derived chunk vectors to Milvus through REST and falls back to PostgreSQL ranking when vector search is unavailable |
-| Rerank | `LocalModelRerankProvider` | Runs a configured `RERANK_COMMAND` specialized local reranker and records unavailable metadata when the command is not configured |
+| Rerank | `LocalModelRerankProvider` | Runs the repository-owned specialized local reranker and records unavailable metadata when model execution fails |
 | Guardrail | `OllamaGuardrailProvider` | Runs local Ollama checks for transcript, chat input, retrieved context, and assistant output, returning normalized allow/warn/redact/block metadata |
 
 The six model roles are ASR, speaker diarization/voice embedding, LLM, text embedding, rerank, and guardrail. With the default endpoint-first LLM setup, runtime usually has seven configured model deployments because LLM has both a primary external/private endpoint model and a small Ollama fallback.
@@ -379,7 +384,9 @@ Local Compose now includes an `ollama` service. Backend and worker call it throu
 
 After each successful processing run, the worker persists the full JSONB result and then rebuilds `meeting_chunks`. The full transcript and structured insight sections stay inside `meeting_intelligence_results.result_json`; the JSONB result remains the authoritative product artifact.
 
-Retrieval chunks are built from structured processed JSON sections first, including summary, detailed summary, key points, decisions, action items, important notes, timeline, risks, blockers, dependencies, follow-ups, open questions, topics, entities, and important quotes when present. The indexer accepts both object-shaped items (`text`, `summary`, `task`, `item`, `quote`, `name`, and related keys) and string-shaped items from LLM output. It also maps `citationIds` to stored citation metadata and maps segment references such as `cites: ["seg-070"]` into segment/time metadata when the matching citation exists. Transcript segment chunks are also created as fallback evidence. Low-signal transcript text is skipped for retrieval indexing, but the original transcript remains preserved inside `meeting_intelligence_results.result_json`.
+Retrieval chunks are built from the full processed JSON instead of only the narrative summary/analysis fields. The indexer creates stable chunks for `meeting` metadata, `source` provider/model/voice/guardrail metadata, participant overview and per-participant records, summary sections, every list-shaped `analysis` section, `analysis.emptySections`, transcript coverage, quality overview/warnings, a compact citation map, and transcript fallback segments. Transcript fallback chunks include speaker, time range, confidence, and text together so questions about who spoke or transcript quality do not have to infer from text alone. Low-signal transcript text is skipped for retrieval indexing, but the original transcript remains preserved inside `meeting_intelligence_results.result_json`.
+
+Structured item text is serialized from meaningful metadata fields instead of selecting only the first text-like field. This keeps owners, assignees, roles, statuses, due dates, priorities, categories, confidence, details, citation IDs, and segment references searchable when the LLM returns rich object-shaped items. The indexer still accepts string-shaped LLM sections and maps `citationIds`, `cites`, `sourceSegmentIds`, and `segmentIds` to stored citation metadata when possible.
 
 When `VECTOR_PROVIDER=milvus`, `RetrievalIndexService` also upserts derived vectors to the Milvus REST API after `meeting_chunks` are persisted. The upsert payload includes stable derived references: meeting ID, result ID, chunk ID, JSON pointer, source type, section type, and time range. Milvus failures are recorded in job `retrievalMetadata.vectorIndex` and do not fail the meeting because Milvus is derived infrastructure.
 
@@ -408,11 +415,13 @@ POST /api/meetings/{meetingId}/chat
 -> return answer, evidence state, and source citations
 ```
 
-Retrieval search prefers Milvus when available, then reloads the returned `chunk_id` values from PostgreSQL within the authorized meeting. If Milvus is unavailable, empty, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`, combining lexical overlap, model embedding similarity, and structured-section priority. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: overview/key-point questions pin executive summary, detailed summary, key points, and topics; reason/cause questions pin detailed summary, requirements, constraints, blockers, and key points; return/refund/process questions pin detailed summary, requirements, constraints, blockers, follow-ups, and key points; action questions pin action items/follow-ups/decisions; risk questions pin risks/blockers/open questions; decision/outcome questions pin decisions/outcomes; and timeline questions pin timeline/follow-up sections. This prevents broad Vietnamese questions from being answered only from semantically noisy transcript snippets.
+Retrieval search prefers Milvus when available, then reloads the returned `chunk_id` values from PostgreSQL within the authorized meeting. If Milvus is unavailable, empty, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`, combining lexical overlap, model embedding similarity, and structured-section priority. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: participant/count/role questions pin participant chunks; quality/confidence/warning questions pin quality, transcript coverage, voice metadata, and guardrail metadata; source/model/file questions pin source metadata; meeting-title/language/duration questions pin meeting metadata; missing-evidence questions pin `analysis.emptySections`; metric/entity/glossary questions pin those analysis sections; overview/key-point questions pin executive summary, detailed summary, key points, and topics; reason/cause questions pin detailed summary, requirements, constraints, blockers, and key points; return/refund/process questions pin detailed summary, requirements, constraints, blockers, follow-ups, and key points; action questions pin action items/follow-ups/decisions; risk questions pin risks/blockers/open questions; decision/outcome questions pin decisions/outcomes; and timeline questions pin timeline/follow-up sections. This prevents broad Vietnamese questions from being answered only from semantically noisy transcript snippets.
 
 If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. If input guardrails block the user question, the service stores a safe placeholder user message and a safe assistant refusal without calling retrieval or the answer LLM. If retrieved context is suspicious because it has prompt-injection, jailbreak, system-prompt, exfiltration, or bypass categories, answer generation is skipped. In non-strict local mode, provider timeouts/outages and other retrieved-context block decisions from the local guardrail model are downgraded to auditable warnings so normal customer-support, refund, order, or contact-detail meeting context does not overblock answers. These fail-open provider warnings are emitted to operational logs as `info` events with `warned` status instead of red failure events because the answer flow continues and persists normally. If output guardrails block an unsupported answer, the assistant response is downgraded to `not_enough_evidence`. Provider prompts and raw provider responses are not saved in chat history.
 
-Answer prompts instruct the LLM to behave like a meeting intelligence analyst: prefer structured meeting intelligence over raw transcript fragments, synthesize the most relevant evidence, include concrete details for topics, issues, reasons, decisions, risks, timelines, and next actions, and use `not_enough_evidence` only when the retrieved context truly does not support the answer. Assistant message metadata includes the effective LLM provider/model, rerank provider/model/input/output counts, and guardrail action/category/provider/model/confidence/latency metadata so answer generation, retrieval ordering, and guardrail decisions can be observed without storing LLM prompts, rerank prompts, guardrail prompts, or raw provider responses. `GET /api/meetings/{meetingId}/chat` returns the authorized meeting thread and messages, allowing the frontend to recover persisted chat after reloads, route changes, or lost browser state.
+Answer prompts instruct the LLM to behave like a meeting intelligence analyst: prefer structured meeting intelligence over raw transcript fragments, treat metadata/participant/source/quality chunks as valid evidence for matching factual questions, synthesize the most relevant evidence, answer count/list questions directly from structured chunks, include concrete details for topics, issues, reasons, decisions, risks, timelines, quality warnings, source/model details, and next actions, and use `not_enough_evidence` only when the retrieved context truly does not support the answer. Assistant message metadata includes the effective LLM provider/model, rerank provider/model/input/output counts, and guardrail action/category/provider/model/confidence/latency metadata so answer generation, retrieval ordering, and guardrail decisions can be observed without storing LLM prompts, rerank prompts, guardrail prompts, or raw provider responses. `GET /api/meetings/{meetingId}/chat` returns the authorized meeting thread and messages, allowing the frontend to recover persisted chat after reloads, route changes, or lost browser state.
+
+For local development after changing chunk formats, run `python -m backend.scripts.rebuild_retrieval_index --clear-chat` inside the backend environment to rebuild all PostgreSQL chunks and Milvus vectors from stored `meeting_intelligence_results` and remove chat history that may cite stale chunk IDs. Use `--meeting-id <id>` to target one meeting. A full disposable reset is still possible with Compose volume deletion, migrations, and reprocessing when old local data is not worth preserving.
 
 Voice provider metadata is persisted under `source.voiceMetadata` and job `providerMetadata.voiceMetadata`. Warnings from preprocessing, VAD, ASR, diarization, or missing speech regions are also copied into `quality.warnings` so chat/review surfaces can explain transcript confidence without exposing internal stack traces.
 
@@ -448,34 +457,14 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `UPLOAD_MAX_BYTES` | `524288000` | Backend upload size limit |
 | `UPLOAD_ALLOWED_EXTENSIONS` | audio/video/text transcript extensions | Upload extension allowlist |
 | `UPLOAD_ALLOWED_CONTENT_TYPES` | audio/video/text transcript MIME types | Upload content-type allowlist |
-| `MODEL_CACHE_DIR` | `/models` | Container path for the shared `model_cache` volume used by local model commands |
-| `HF_HOME` | `/models/.hf-cache` | Hugging Face cache path used by `model-init` |
-| `VOICE_FFMPEG_PATH` | `ffmpeg` | ffmpeg executable used to normalize audio/video assets |
-| `VOICE_WORK_DIR` | `/tmp/omnicall-audio` | Worker-local directory for derived temporary audio files |
 | `VAD_MIN_SPEECH_MS` | `300` | Minimum speech-region duration retained by local VAD |
 | `VAD_SILENCE_GAP_MS` | `500` | Maximum silence gap merged into one speech region |
 | `VAD_ENERGY_THRESHOLD` | `0.012` | RMS energy threshold used by local VAD |
-| `ASR_MODEL` | `whisper-small-int8` | Local ASR model identifier passed to `ASR_COMMAND` |
-| `ASR_COMPUTE_TYPE` | `int8` | Local ASR compute mode passed to `ASR_COMMAND` |
-| `ASR_COMMAND` | `python -m backend.model_runners.asr ...` | Default faster-whisper runner command. Supports `{audio_path}`, `{language}`, `{model}`, `{compute_type}`, and `{model_cache_dir}` placeholders and expects JSON on stdout |
-| `ASR_HF_REPO` | `Systran/faster-whisper-small` | Hugging Face repo downloaded into `/models/asr` by `model-init` |
-| `ASR_HF_REVISION` | `main` | ASR model revision downloaded by `model-init` |
-| `ASR_DOWNLOAD_COMMAND` | empty | Optional custom ASR download command for `model-init` |
 | `ASR_TIMEOUT_SECONDS` | `120` | Minimum local ASR command timeout |
 | `ASR_TIMEOUT_REALTIME_FACTOR` | `1.0` | Multiplies normalized audio duration to extend ASR/diarization subprocess timeouts for longer voice files |
-| `DIARIZATION_MODEL` | `wespeaker-voxceleb-resnet34` | Local speaker embedding/diarization model identifier |
-| `DIARIZATION_COMMAND` | `python -m backend.model_runners.diarization ...` | Default WeSpeaker runner command. Supports `{audio_path}`, `{model}`, and `{model_cache_dir}`, receives JSON on stdin, and returns speaker assignments as JSON on stdout |
-| `DIARIZATION_HF_REPO` | `Wespeaker/wespeaker-voxceleb-resnet34-LM` | Hugging Face repo downloaded into `/models/diarization` by `model-init` |
-| `DIARIZATION_HF_REVISION` | `main` | Diarization model revision downloaded by `model-init` |
-| `DIARIZATION_DOWNLOAD_COMMAND` | empty | Optional custom diarization download command for `model-init` |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama text embedding model |
 | `EMBEDDING_DIMENSIONS` | `768` | Expected local text embedding vector size |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30` | Ollama embedding request timeout |
-| `RERANK_MODEL` | `bge-reranker-v2-m3` | Local reranker model identifier passed to `RERANK_COMMAND` |
-| `RERANK_COMMAND` | `python -m backend.model_runners.rerank ...` | Default SentenceTransformers cross-encoder runner command. Supports `{model}` and `{model_cache_dir}`, receives query/chunks JSON on stdin, and returns ranked chunk IDs |
-| `RERANK_HF_REPO` | `BAAI/bge-reranker-v2-m3` | Hugging Face repo downloaded into `/models/rerank` by `model-init` |
-| `RERANK_HF_REVISION` | `main` | Rerank model revision downloaded by `model-init` |
-| `RERANK_DOWNLOAD_COMMAND` | empty | Optional custom rerank download command for `model-init` |
 | `RERANK_TOP_K` | `12` | Number of retrieval candidates collected before rerank |
 | `RERANK_OUTPUT_K` | `6` | Number of reranked chunks returned to chat |
 | `RERANK_TIMEOUT_SECONDS` | `30` | Local rerank command timeout |
@@ -504,9 +493,8 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | Small local fallback model |
 | `OLLAMA_LLM_TIMEOUT_SECONDS` | `600` | Local fallback generation timeout, separate from the primary endpoint timeout |
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Context window used for local fallback meeting analysis |
-| `OLLAMA_BOOTSTRAP_MODELS` | `qwen2.5:1.5b nomic-embed-text llama-guard3:1b` | Models pulled by `ollama-init` into `ollama_data` |
 
-The settings loader reads a root `.env` file when present. For bootstrap-only model variables, Compose uses default values when a variable is unset and treats an explicitly empty value as an intentional skip. This applies to `OLLAMA_BOOTSTRAP_MODELS`, `ASR_HF_REPO`, `ASR_DOWNLOAD_COMMAND`, `DIARIZATION_HF_REPO`, `DIARIZATION_DOWNLOAD_COMMAND`, `RERANK_HF_REPO`, and `RERANK_DOWNLOAD_COMMAND`.
+The settings loader reads a root `.env` file when present. The environment exposes deployment addresses, credentials, feature toggles, timeouts, VAD thresholds, retrieval limits, and Ollama model selection. `ollama-init` pulls the configured `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL` directly, so no duplicate bootstrap-list variable is needed. Repository-owned local runner details live in `backend/configs/model_runtime.py`: ASR/diarization/rerank model names and commands, CPU/`int8` runtime choices, `/models`, ffmpeg, and the temporary voice directory. Specialized Hugging Face repositories and revisions live in `infras/model-init/model_init.py`.
 
 ## Dependencies
 
@@ -545,20 +533,20 @@ uvicorn backend.main:app --reload
 Run through Docker Compose:
 
 ```bash
-docker compose --env-file .env.example up -d --build backend worker beat nginx
+docker compose up -d --build backend worker beat nginx
 curl http://127.0.0.1:8080/api/health
 ```
 
 Run migrations:
 
 ```bash
-docker compose --env-file .env.example exec -T backend alembic upgrade head
+docker compose exec -T backend alembic upgrade head
 ```
 
 Run backend tests in the backend container:
 
 ```bash
-docker compose --env-file .env.example exec -T backend python -m unittest discover -s backend/tests -v
+docker compose exec -T backend python -m unittest discover -s backend/tests -v
 ```
 
 Register and call authenticated APIs through the gateway:
@@ -626,4 +614,4 @@ Phase 8 operational-log verification on 2026-06-19 confirmed:
 | Admin account deletion and cleanup tests | Passed |
 | Account deletion processing-lock, queued-job revoke, and metrics-cache invalidation tests | Passed |
 
-*Document reflects project state after the 9-table PostgreSQL schema consolidation on **2026-06-19**. Backend behavior includes Admin-only temporary Redis Stream logs for detailed processing and RAG events, bounded retention/TTL, safe redaction, tail/search/clear APIs, provider fallback visibility, and the previously verified Phase 7 auth, storage, deletion, metrics, processing, retrieval, guardrail, and chat behavior.*
+*Document reflects project state after Phase 9 full JSON RAG coverage and LLM operational-log model labeling updates on **2026-06-25**. Backend behavior includes repository-owned ASR/diarization/rerank runtime contracts, operator-facing model tuning through `.env`, Admin-only temporary Redis Stream logs, and the previously verified auth, storage, deletion, metrics, processing, retrieval, guardrail, and chat behavior.*

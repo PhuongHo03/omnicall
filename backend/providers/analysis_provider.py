@@ -8,6 +8,7 @@ from backend.configs.settings import Settings, get_settings
 from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.providers.llm_provider import (
     LLMProvider,
+    get_configured_primary_model_name,
     get_effective_model_name,
     get_effective_provider_name,
     get_llm_provider,
@@ -39,7 +40,7 @@ class LLMAnalysisProvider:
 
     def __init__(self, llm_provider: LLMProvider) -> None:
         self.llm_provider = llm_provider
-        self.provider_model = llm_provider.model_name
+        self.provider_model = get_configured_primary_model_name(llm_provider)
         self.last_provider_name = self.provider_name
         self.last_provider_model = self.provider_model
 

@@ -130,7 +130,7 @@
 ## Completion Report
 
 > **Completed at:** 2026-06-12
-> **Verified by:** `python3 -m compileall backend`, `docker compose --env-file .env.example config`, `alembic current`, backend `unittest` suite, gateway health check, and healthy backend/worker/nginx containers
+> **Verified by:** `python3 -m compileall backend`, `docker compose config`, `alembic current`, backend `unittest` suite, gateway health check, and healthy backend/worker/nginx containers
 
 ### What was implemented
 

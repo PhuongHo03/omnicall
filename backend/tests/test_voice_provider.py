@@ -35,11 +35,12 @@ class VoiceProviderTestCase(unittest.TestCase):
     def test_wav_metadata_fallback_returns_working_path_and_audio_metadata(self) -> None:
         wav_bytes = _wav_bytes(with_tone=True)
         with tempfile.TemporaryDirectory() as tmp_dir:
-            settings = Settings(
-                voice_ffmpeg_path="/missing/ffmpeg",
-                voice_work_dir=tmp_dir,
+            provider = LocalAudioPreprocessor(
+                FakeStorageProvider(wav_bytes),
+                Settings(),
+                ffmpeg_path="/missing/ffmpeg",
+                work_dir=tmp_dir,
             )
-            provider = LocalAudioPreprocessor(FakeStorageProvider(wav_bytes), settings)
 
             result = provider.preprocess(_asset())
             remaining_files = list(Path(tmp_dir).iterdir())
@@ -56,11 +57,12 @@ class VoiceProviderTestCase(unittest.TestCase):
         wav_bytes = _wav_bytes(with_tone=True)
         storage = FakeStorageProvider(wav_bytes)
         with tempfile.TemporaryDirectory() as tmp_dir:
-            settings = Settings(
-                voice_ffmpeg_path="/missing/ffmpeg",
-                voice_work_dir=tmp_dir,
+            provider = LocalAudioPreprocessor(
+                storage,
+                Settings(),
+                ffmpeg_path="/missing/ffmpeg",
+                work_dir=tmp_dir,
             )
-            provider = LocalAudioPreprocessor(storage, settings)
 
             first = provider.preprocess(_asset())
             second = provider.preprocess(_asset())
@@ -108,11 +110,11 @@ class VoiceProviderTestCase(unittest.TestCase):
                 "]}))\n",
                 encoding="utf-8",
             )
-            settings = Settings(
-                ASR_COMMAND=f"{sys.executable} {script_path} --audio {{audio_path}}",
-                ASR_MODEL="fake-whisper-int8",
+            provider = LocalASRProvider(
+                Settings(),
+                command_template=f"{sys.executable} {script_path} --audio {{audio_path}}",
+                model_name="fake-whisper-int8",
             )
-            provider = LocalASRProvider(settings)
 
             segments = provider.transcribe_audio(
                 audio=_audio_result(str(audio_path)),
@@ -174,10 +176,9 @@ class VoiceProviderTestCase(unittest.TestCase):
                 encoding="utf-8",
             )
             provider = LocalCommandDiarizationProvider(
-                Settings(
-                    DIARIZATION_COMMAND=f"{sys.executable} {script_path}",
-                    DIARIZATION_MODEL="fake-wespeaker",
-                )
+                Settings(),
+                command_template=f"{sys.executable} {script_path}",
+                model_name="fake-wespeaker",
             )
 
             segments = provider.assign_speakers(

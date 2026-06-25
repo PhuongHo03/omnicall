@@ -95,7 +95,7 @@
 ## Completion Report
 
 > **Completed at:** 2026-06-12
-> **Verified by:** `python3 -m compileall backend`, `docker compose --env-file .env.example config`, `alembic upgrade head`, gateway API curl checks, PostgreSQL count check, RabbitMQ queue check, `python -m unittest discover -s backend/tests -v`, `npm run build`, Playwright screenshots, Playwright UI smoke test
+> **Verified by:** `python3 -m compileall backend`, `docker compose config`, `alembic upgrade head`, gateway API curl checks, PostgreSQL count check, RabbitMQ queue check, `python -m unittest discover -s backend/tests -v`, `npm run build`, Playwright screenshots, Playwright UI smoke test
 
 ### What was implemented
 
@@ -115,7 +115,7 @@
 
 ### Notes for future sessions
 
-- Run migrations after backend rebuilds with `docker compose --env-file .env.example exec -T backend alembic upgrade head`.
+- Run migrations after backend rebuilds with `docker compose exec -T backend alembic upgrade head`.
 - Use `Idempotency-Key` on upload and process requests when clients need retry-safe behavior.
 - Add the Celery worker service and real processing task implementation in Phase 4.
 

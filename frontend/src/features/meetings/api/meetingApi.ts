@@ -183,7 +183,7 @@ export async function deleteAccountFile(token: string, fileId: string): Promise<
 }
 
 export async function deleteMeetingSession(token: string, meetingId: string): Promise<void> {
-  const response = await fetch(`${API_PREFIX}/admin/meetings/${meetingId}`, {
+  const response = await fetch(`${API_PREFIX}/meetings/${meetingId}`, {
     method: "DELETE",
     headers: authHeaders(token)
   });

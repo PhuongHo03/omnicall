@@ -20,10 +20,9 @@ class RerankProviderTestCase(unittest.TestCase):
                 encoding="utf-8",
             )
             provider = LocalModelRerankProvider(
-                Settings(
-                    RERANK_COMMAND=f"{sys.executable} {script_path}",
-                    RERANK_MODEL="fake-bge-reranker",
-                )
+                Settings(),
+                command_template=f"{sys.executable} {script_path}",
+                model_name="fake-bge-reranker",
             )
             transcript = _item("transcript-001", "deadline follow up", priority=400, score=0.95)
             structured = _item("analysis.actionItems-001", "deadline follow up", priority=50, score=0.91)
@@ -37,10 +36,10 @@ class RerankProviderTestCase(unittest.TestCase):
         self.assertEqual([item.record.chunk_id for item in results], ["analysis.actionItems-001", "transcript-001"])
         self.assertEqual(provider.model_name, "fake-bge-reranker")
 
-    def test_local_model_reranker_requires_command_configuration(self) -> None:
-        provider = LocalModelRerankProvider(Settings(RERANK_COMMAND=""))
+    def test_local_model_reranker_reports_command_failure(self) -> None:
+        provider = LocalModelRerankProvider(Settings(), command_template="missing-rerank-command")
 
-        with self.assertRaisesRegex(RerankProviderError, "RERANK_COMMAND"):
+        with self.assertRaisesRegex(RerankProviderError, "could not start"):
             provider.rerank(
                 query="risk owner",
                 chunks=[_item("analysis.risks-001", "risk owner", priority=50, score=0.91)],

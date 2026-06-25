@@ -325,25 +325,9 @@ PROCESSING_RECONCILIATION_BATCH_SIZE=100
 LLM_FALLBACK_PROVIDER=ollama
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=qwen2.5:1.5b
-OLLAMA_BOOTSTRAP_MODELS=qwen2.5:1.5b nomic-embed-text llama-guard3:1b
-MODEL_CACHE_DIR=/models
-HF_HOME=/models/.hf-cache
 
-VOICE_FFMPEG_PATH=ffmpeg
-VOICE_WORK_DIR=/tmp/omnicall-audio
-ASR_MODEL=whisper-small-int8
-ASR_COMPUTE_TYPE=int8
-ASR_COMMAND=...
-ASR_HF_REPO=Systran/faster-whisper-small
-ASR_HF_REVISION=main
-ASR_DOWNLOAD_COMMAND=
 ASR_TIMEOUT_SECONDS=120
 ASR_TIMEOUT_REALTIME_FACTOR=1.0
-DIARIZATION_MODEL=wespeaker-voxceleb-resnet34
-DIARIZATION_COMMAND=...
-DIARIZATION_HF_REPO=Wespeaker/wespeaker-voxceleb-resnet34-LM
-DIARIZATION_HF_REVISION=main
-DIARIZATION_DOWNLOAD_COMMAND=
 EMBEDDING_MODEL=nomic-embed-text
 EMBEDDING_DIMENSIONS=768
 EMBEDDING_TIMEOUT_SECONDS=30
@@ -351,11 +335,6 @@ VECTOR_PROVIDER=milvus
 MILVUS_HOST=milvus
 MILVUS_PORT=19530
 MILVUS_COLLECTION=meeting_chunks
-RERANK_MODEL=bge-reranker-v2-m3
-RERANK_COMMAND=...
-RERANK_HF_REPO=BAAI/bge-reranker-v2-m3
-RERANK_HF_REVISION=main
-RERANK_DOWNLOAD_COMMAND=
 RERANK_TOP_K=12
 RERANK_OUTPUT_K=6
 RERANK_TIMEOUT_SECONDS=30
@@ -373,6 +352,8 @@ GUARDRAIL_CONTEXT_ENABLED=true
 GUARDRAIL_OUTPUT_ENABLED=true
 GUARDRAIL_STRICT_MODE=false
 ```
+
+ASR, diarization, and rerank commands, model snapshots, CPU device selection, `int8` ASR compute mode, `/models` mount path, ffmpeg binary, and temporary voice work directory are repository-owned runtime contracts. They are intentionally not environment variables because changing any of them requires a coordinated image/code change. `ollama-init` derives its pull list from `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL`, avoiding a duplicate bootstrap-list variable.
 
 Local model defaults for the completed Phase 5.5 and 5.6 scope:
 
@@ -489,8 +470,8 @@ Current meeting intake rule: one meeting accepts only one uploaded or recorded a
 | Frontend app | `GET http://127.0.0.1:8080/` through NGINX |
 | Backend health through gateway | `GET http://127.0.0.1:8080/api/health` |
 | Local backend command | `uvicorn backend.main:app --reload` |
-| Local Compose command | `docker compose --env-file .env.example up -d --build` |
-| Migration command | `docker compose --env-file .env.example exec -T backend alembic upgrade head` |
+| Local Compose command | `docker compose up -d --build` |
+| Migration command | `docker compose exec -T backend alembic upgrade head` |
 | Worker command | `celery -A backend.configs.celery_app.celery_app worker --queues=meeting-processing,processing-maintenance` |
 | Beat command | `celery -A backend.configs.celery_app.celery_app beat` |
 | Env template | Root `.env.example` |
@@ -502,7 +483,7 @@ Current meeting intake rule: one meeting accepts only one uploaded or recorded a
 | RabbitMQ Management | `http://127.0.0.1:8085` |
 | Prometheus | `http://127.0.0.1:8086` |
 | Admin dashboard | Open the Dashboard button in the frontend at `http://127.0.0.1:8080` |
-| Credentials | Development defaults are in `.env.example`; replace before any shared environment |
+| Credentials | Development defaults are templated in `.env.example`; runtime values should live in root `.env` |
 
 The primary frontend and API path now uses backend-issued bearer sessions from `/api/auth/register` and `/api/auth/login`. Meeting, file, chat, and admin calls send:
 
@@ -565,3 +546,4 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 6 | Admin and operations | Done |
 | 7 | Hardening | Done |
 | 8 | Operational logs | Done |
+| 9 | Full JSON RAG coverage | Done |

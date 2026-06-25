@@ -3,6 +3,7 @@ import shlex
 import subprocess
 from typing import Any, Protocol
 
+from backend.configs.model_runtime import RERANK_COMMAND, RERANK_MODEL
 from backend.configs.settings import Settings, get_settings
 
 
@@ -21,15 +22,20 @@ class RerankProvider(Protocol):
 class LocalModelRerankProvider:
     provider_name = "local-model-rerank"
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        command_template: str = RERANK_COMMAND,
+        model_name: str = RERANK_MODEL,
+    ) -> None:
         self.settings = settings or get_settings()
-        self.model_name = self.settings.rerank_model
+        self.command_template = command_template
+        self.model_name = model_name
 
     def rerank(self, *, query: str, chunks: list[Any], output_k: int) -> list[Any]:
         if not chunks:
             return []
-        if not self.settings.rerank_command.strip():
-            raise RerankProviderError("RERANK_COMMAND is required for local model rerank.")
         payload = {
             "model": self.model_name,
             "query": query,
@@ -45,18 +51,18 @@ class LocalModelRerankProvider:
             ],
             "outputK": output_k,
         }
-        command_text = self.settings.rerank_command.format(
-            model=self.model_name,
-            model_cache_dir=self.settings.model_cache_dir,
-        )
-        completed = subprocess.run(
-            shlex.split(command_text),
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            timeout=self.settings.rerank_timeout_seconds,
-            check=False,
-        )
+        command_text = self.command_template
+        try:
+            completed = subprocess.run(
+                shlex.split(command_text),
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True,
+                text=True,
+                timeout=self.settings.rerank_timeout_seconds,
+                check=False,
+            )
+        except OSError as exc:
+            raise RerankProviderError("Local rerank model command could not start.") from exc
         if completed.returncode != 0:
             raise RerankProviderError("Local rerank model command failed.")
         try:

@@ -11,6 +11,14 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from backend.configs.model_runtime import (
+    ASR_COMMAND,
+    ASR_MODEL,
+    DIARIZATION_COMMAND,
+    DIARIZATION_MODEL,
+    VOICE_FFMPEG_PATH,
+    VOICE_WORK_DIR,
+)
 from backend.configs.settings import Settings, get_settings
 from backend.models.meeting_models import MeetingAsset
 from backend.providers.storage_provider import ObjectStorageProvider, get_object_storage_provider
@@ -88,13 +96,22 @@ class LocalAudioPreprocessor:
     provider_name = "local-ffmpeg-audio-preprocessor"
     provider_model = "ffmpeg-wav-16khz-mono-v1"
 
-    def __init__(self, storage_provider: ObjectStorageProvider, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        storage_provider: ObjectStorageProvider,
+        settings: Settings | None = None,
+        *,
+        ffmpeg_path: str = VOICE_FFMPEG_PATH,
+        work_dir: str = VOICE_WORK_DIR,
+    ) -> None:
         self.storage_provider = storage_provider
         self.settings = settings or get_settings()
+        self.ffmpeg_path = ffmpeg_path
+        self.work_dir = work_dir
 
     def preprocess(self, asset: MeetingAsset) -> AudioPreprocessingResult:
         warnings: list[str] = []
-        work_dir = Path(self.settings.voice_work_dir)
+        work_dir = Path(self.work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         output_path = work_dir / f"{_safe_audio_stem(asset)}.16k-mono.wav"
         if output_path.exists():
@@ -115,7 +132,7 @@ class LocalAudioPreprocessor:
         input_path.write_bytes(raw)
 
         try:
-            ffmpeg_path = _resolve_binary(self.settings.voice_ffmpeg_path)
+            ffmpeg_path = _resolve_binary(self.ffmpeg_path)
             if ffmpeg_path is None:
                 warnings.append("ffmpeg was not found; voice preprocessing used WAV metadata fallback when possible.")
                 _copy_wav_fallback(input_path=input_path, output_path=output_path, warnings=warnings)
@@ -203,9 +220,16 @@ class LocalVADProvider:
 class LocalASRProvider:
     provider_name = "local-whisper-command-asr"
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        command_template: str = ASR_COMMAND,
+        model_name: str = ASR_MODEL,
+    ) -> None:
         self.settings = settings or get_settings()
-        self.provider_model = self.settings.asr_model
+        self.command_template = command_template
+        self.provider_model = model_name
 
     def transcribe_audio(
         self,
@@ -215,15 +239,9 @@ class LocalASRProvider:
     ) -> list[TranscriptSegment]:
         if audio.working_path is None or not Path(audio.working_path).exists():
             return []
-        command_template = self.settings.asr_command.strip()
-        if not command_template:
-            raise RuntimeError("ASR_COMMAND is required for local ASR.")
-        command_text = command_template.format(
+        command_text = self.command_template.format(
             audio_path=audio.working_path,
             language="auto",
-            model=self.settings.asr_model,
-            compute_type=self.settings.asr_compute_type,
-            model_cache_dir=self.settings.model_cache_dir,
         )
         completed = subprocess.run(
             shlex.split(command_text),
@@ -247,9 +265,16 @@ class LocalASRProvider:
 class LocalCommandDiarizationProvider:
     provider_name = "local-wespeaker-diarization"
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        command_template: str = DIARIZATION_COMMAND,
+        model_name: str = DIARIZATION_MODEL,
+    ) -> None:
         self.settings = settings or get_settings()
-        self.provider_model = self.settings.diarization_model
+        self.command_template = command_template
+        self.provider_model = model_name
 
     def assign_speakers(
         self,
@@ -259,8 +284,6 @@ class LocalCommandDiarizationProvider:
     ) -> list[TranscriptSegment]:
         if audio.working_path is None or not Path(audio.working_path).exists():
             raise RuntimeError("Diarization requires a preprocessed audio file.")
-        if not self.settings.diarization_command.strip():
-            raise RuntimeError("DIARIZATION_COMMAND is required for local diarization.")
         payload = {
             "model": self.provider_model,
             "audioPath": audio.working_path,
@@ -276,10 +299,8 @@ class LocalCommandDiarizationProvider:
                 for segment in transcript_segments
             ],
         }
-        command_text = self.settings.diarization_command.format(
+        command_text = self.command_template.format(
             audio_path=audio.working_path,
-            model=self.provider_model,
-            model_cache_dir=self.settings.model_cache_dir,
         )
         completed = subprocess.run(
             shlex.split(command_text),

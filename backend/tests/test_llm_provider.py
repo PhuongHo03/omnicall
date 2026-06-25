@@ -9,6 +9,7 @@ from backend.providers.llm_provider import (
     LLMProviderError,
     OpenAICompatibleLLMProvider,
     build_llm_provider,
+    get_configured_primary_model_name,
 )
 
 
@@ -163,6 +164,11 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertTrue(provider.last_fallback_used)
         self.assertEqual(provider.last_primary_error_type, "LLMProviderError")
         self.assertEqual(provider.last_primary_error_message, "primary failed")
+
+    def test_configured_primary_model_name_ignores_fallback_display_model(self) -> None:
+        provider = FallbackLLMProvider(StaticProvider(), BrokenProvider())
+
+        self.assertEqual(get_configured_primary_model_name(provider), "static-model")
 
     def test_fallback_provider_records_primary_provider_when_primary_succeeds(self) -> None:
         provider = FallbackLLMProvider(StaticProvider(), BrokenProvider())

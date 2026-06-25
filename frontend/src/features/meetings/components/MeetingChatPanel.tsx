@@ -79,20 +79,22 @@ export function MeetingChatPanel({
 
 function ChatMessageBubble({ message }: { message: MeetingChatMessage }) {
   const evidenceState = typeof message.metadata.evidenceState === "string" ? message.metadata.evidenceState : null;
+  const isStreaming = message.metadata.streaming === true || message.metadata.pending === true;
 
   return (
-    <article className={`chat-message chat-message--${message.role}`}>
+    <article className={`chat-message chat-message--${message.role}${isStreaming ? " chat-message--streaming" : ""}`}>
       <div className="chat-message__meta">
         <strong>{message.role === "assistant" ? "Assistant" : "You"}</strong>
         {evidenceState ? <span className={`evidence-badge evidence-badge--${evidenceState}`}>{evidenceState}</span> : null}
       </div>
       <p>{message.content}</p>
       {message.citations.length > 0 ? (
-        <div className="citation-list">
+        <section className="citation-list" aria-label="Sources">
+          <div className="citation-list__heading">Sources</div>
           {message.citations.map((citation) => (
             <CitationCard key={`${message.id}-${citation.chunkId}`} citation={citation} />
           ))}
-        </div>
+        </section>
       ) : null}
     </article>
   );
@@ -102,13 +104,34 @@ function CitationCard({ citation }: { citation: MeetingChatCitation }) {
   return (
     <div className="citation-card">
       <div className="citation-card__topline">
-        <strong>{citation.sectionType}</strong>
-        <span>{formatRange(citation.startMs, citation.endMs)}</span>
+        <strong>{formatSectionType(citation.sectionType)}</strong>
+        <span>{formatCitationKind(citation)}</span>
       </div>
       <span>{citation.jsonPointer}</span>
       <p>{citation.text}</p>
     </div>
   );
+}
+
+function formatSectionType(sectionType: string) {
+  return sectionType
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatCitationKind(citation: MeetingChatCitation) {
+  const range = formatRange(citation.startMs, citation.endMs);
+  if (range !== "section") {
+    return range;
+  }
+  if (citation.sourceType === "metadata") {
+    return "metadata";
+  }
+  if (citation.sourceType === "structured") {
+    return "section";
+  }
+  return citation.sourceType;
 }
 
 function formatRange(startMs: number | null, endMs: number | null) {

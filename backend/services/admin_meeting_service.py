@@ -47,6 +47,7 @@ class AdminMeetingService:
         context: CurrentUserContext,
         meeting_id: str,
         *,
+        require_owner: bool = False,
         use_processing_lock: bool = True,
         commit: bool = True,
     ) -> DeleteResponse:
@@ -61,7 +62,7 @@ class AdminMeetingService:
                     "Meeting processing is currently running. Please retry deletion after processing finishes.",
                 )
         try:
-            response = self._delete_meeting_without_lock(context, meeting_id)
+            response = self._delete_meeting_without_lock(context, meeting_id, require_owner=require_owner)
             if commit:
                 self.session.commit()
                 self._invalidate_admin_metrics_cache()
@@ -70,8 +71,18 @@ class AdminMeetingService:
             if lock_token is not None:
                 self.lock_provider.release(lock_key, lock_token)
 
-    def _delete_meeting_without_lock(self, context: CurrentUserContext, meeting_id: str) -> DeleteResponse:
-        meeting = self.meetings.get(meeting_id)
+    def _delete_meeting_without_lock(
+        self,
+        context: CurrentUserContext,
+        meeting_id: str,
+        *,
+        require_owner: bool = False,
+    ) -> DeleteResponse:
+        meeting = (
+            self.meetings.get_for_owner(meeting_id, context.user_id)
+            if require_owner
+            else self.meetings.get(meeting_id)
+        )
         if meeting is None:
             self.audit.create(
                 event_type="meeting.delete",

@@ -261,3 +261,16 @@
 - Verified Beat automatically sent reconciliation after 60 seconds and the worker completed it from the maintenance path.
 - Added transaction rollback and authoritative row reload before worker failure-state persistence.
 - Re-ran the complete backend suite after reconciliation hardening: `82` tests passed.
+
+### 2026-06-22 chat response transport recovery update
+
+- Confirmed the chat failure pattern was an NGINX `499` on `POST /api/meetings/{meetingId}/chat`: the browser connection closed while the backend still completed and persisted the answer.
+- Increased NGINX `/api/` proxy read/send timeout to `600` seconds so long RAG chat answers can return through both localhost and LAN IP access.
+- Added frontend chat recovery after network-like POST failures: the meeting hook polls chat history briefly and shows the persisted question/answer instead of leaving a false `NetworkError` when the backend has already saved the result.
+
+### 2026-06-22 optimistic chat and answer streaming UI update
+
+- Added immediate user-message rendering when a chat question is submitted.
+- Added a local assistant `Đang tra cứu...` pending bubble while the backend performs retrieval and answer generation.
+- Added frontend typewriter rendering for the returned assistant answer, then swapped back to persisted backend chat history after the stream completes.
+- Kept citations hidden during streaming and displayed all returned sources under a `Sources` heading after the answer finishes.

@@ -16,14 +16,12 @@ type MeetingsScreenProps = {
 };
 
 export function MeetingsScreen({
-  account,
   onSelectedMeetingChange,
   requestedMeetingId,
   token
 }: MeetingsScreenProps) {
   const workspace = useMeetingWorkspace(
     token,
-    account.role === "Admin",
     requestedMeetingId,
     onSelectedMeetingChange
   );
@@ -66,7 +64,6 @@ export function MeetingsScreen({
           lastAsset={workspace.lastAsset}
           latestJob={workspace.latestJob}
           selectedMeeting={workspace.selectedMeeting}
-          showAdminActions={account.role === "Admin"}
           onDeleteMeeting={workspace.deleteSelectedMeeting}
           onFileUpload={workspace.uploadFile}
           onProcess={workspace.queueProcessing}
