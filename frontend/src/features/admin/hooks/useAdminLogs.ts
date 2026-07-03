@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { clearAdminOperationalLogs, getAdminOperationalLogs } from "../api/adminApi";
 import type { AdminLogFlow, AdminLogLevel, AdminOperationalLog } from "../types/adminTypes";
 
-export function useAdminLogs(token: string) {
+export function useAdminLogs(token: string, meetingId?: string) {
   const [logs, setLogs] = useState<AdminOperationalLog[]>([]);
   const [flow, setFlow] = useState<AdminLogFlow>("processing");
   const [level, setLevel] = useState<AdminLogLevel | "all">("all");
@@ -19,12 +19,16 @@ export function useAdminLogs(token: string) {
 
   const refreshLogs = useCallback(
     async (silent = false) => {
-      if (!silent) {
-        setIsLoading(true);
-      }
+      if (!silent) setIsLoading(true);
       setError(null);
       try {
-        const response = await getAdminOperationalLogs(token, { flow, level, limit, search });
+        const response = await getAdminOperationalLogs(token, {
+          flow,
+          level,
+          limit,
+          search,
+          meetingId,
+        });
         setLogs(response.items);
         setRetainedLimit(response.retainedLimit);
         setSelectedEventId((current) => {
@@ -39,12 +43,10 @@ export function useAdminLogs(token: string) {
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Operational logs request failed.");
       } finally {
-        if (!silent) {
-          setIsLoading(false);
-        }
+        if (!silent) setIsLoading(false);
       }
     },
-    [flow, level, limit, search, token]
+    [flow, level, limit, search, token, meetingId]
   );
 
   useEffect(() => {
@@ -52,9 +54,7 @@ export function useAdminLogs(token: string) {
   }, [refreshLogs]);
 
   useEffect(() => {
-    if (!autoRefresh) {
-      return;
-    }
+    if (!autoRefresh) return;
     const interval = window.setInterval(() => {
       void refreshLogs(true);
     }, 2000);
@@ -65,16 +65,16 @@ export function useAdminLogs(token: string) {
     setIsClearing(true);
     setError(null);
     try {
-      await clearAdminOperationalLogs(token);
+      await clearAdminOperationalLogs(token, meetingId);
       setLogs([]);
       setSelectedEventId(null);
-      setNotice("Operational logs cleared.");
+      setNotice(meetingId ? "Meeting logs cleared." : "Operational logs cleared.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Operational logs could not be cleared.");
     } finally {
       setIsClearing(false);
     }
-  }, [token]);
+  }, [token, meetingId]);
 
   const selectedEvent = useMemo(
     () => logs.find((event) => event.id === selectedEventId) ?? null,
@@ -94,14 +94,14 @@ export function useAdminLogs(token: string) {
     notice,
     refreshLogs,
     retainedLimit,
-    search,
     selectedEvent,
+    search,
     selectedEventId,
     setAutoRefresh,
     setFlow,
     setLevel,
     setLimit,
     setSearch,
-    setSelectedEventId
+    setSelectedEventId,
   };
 }

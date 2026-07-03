@@ -109,7 +109,6 @@ def _build_base_result(*, meeting: Meeting, asset: MeetingAsset, transcript_segm
         "meeting": {
             "id": meeting.id,
             "title": meeting.title,
-            "language": meeting.language,
             "startedAt": None,
             "durationSeconds": None,
         },
@@ -219,7 +218,6 @@ def _prompt_payload(*, meeting: Meeting, asset: MeetingAsset) -> dict:
         "meeting": {
             "id": meeting.id,
             "title": meeting.title,
-            "language": meeting.language,
         },
         "asset": {
             "id": asset.id,

@@ -1,4 +1,5 @@
 import { AlertCircle, Bot, CheckCircle2, FileAudio, Workflow } from "lucide-react";
+import { EmptyState } from "../../../shared/components/EmptyState";
 
 import type { AdminOperationalLog } from "../types/adminTypes";
 
@@ -6,11 +7,12 @@ type AdminLogStreamProps = {
   logs: AdminOperationalLog[];
   selectedEventId: string | null;
   onSelect: (eventId: string) => void;
+  meetingNameOverride?: string;
 };
 
-export function AdminLogStream({ logs, selectedEventId, onSelect }: AdminLogStreamProps) {
+export function AdminLogStream({ logs, selectedEventId, onSelect, meetingNameOverride }: AdminLogStreamProps) {
   if (!logs.length) {
-    return <div className="admin-log-empty">No matching operational events.</div>;
+    return <EmptyState message="No matching operational events." />;
   }
 
   return (
@@ -21,6 +23,7 @@ export function AdminLogStream({ logs, selectedEventId, onSelect }: AdminLogStre
         const isSelected = selectedEventId === event.id;
         const FlowIcon = event.flow === "rag" ? Bot : Workflow;
         const LevelIcon = event.level === "error" ? AlertCircle : CheckCircle2;
+        const displayName = meetingNameOverride || event.meetingName || event.meetingId || "System";
         return (
           <button
             className={isSelected ? "admin-log-event admin-log-event--selected" : "admin-log-event"}
@@ -44,7 +47,7 @@ export function AdminLogStream({ logs, selectedEventId, onSelect }: AdminLogStre
               <div className="admin-log-event__identity">
                 <span>
                   <FlowIcon size={13} />
-                  {event.meetingName ?? event.meetingId ?? "System"}
+                  {displayName}
                 </span>
                 {fileName ? (
                   <span>

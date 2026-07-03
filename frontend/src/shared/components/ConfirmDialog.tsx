@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Trash2, X } from "lucide-react";
+import { IconButton } from "./IconButton";
 
 type ConfirmDialogProps = {
   cancelLabel?: string;
@@ -39,12 +40,20 @@ export function ConfirmDialog({
           {children}
         </div>
         <div className="confirm-dialog__actions">
-          <button className="icon-button icon-button--secondary" type="button" onClick={onCancel}>
-            {cancelLabel}
-          </button>
-          <button className="icon-button icon-button--danger" type="button" onClick={onConfirm}>
-            {confirmLabel}
-          </button>
+          <IconButton
+            icon={<X size={16} />}
+            label={cancelLabel}
+            variant="secondary"
+            type="button"
+            onClick={onCancel}
+          />
+          <IconButton
+            icon={<Trash2 size={16} />}
+            label={confirmLabel}
+            variant="danger"
+            type="button"
+            onClick={onConfirm}
+          />
         </div>
       </section>
     </div>

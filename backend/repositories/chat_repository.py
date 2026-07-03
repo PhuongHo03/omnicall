@@ -30,6 +30,23 @@ class ChatMessageRepository:
         self.session.flush()
         return message
 
+    def get_by_id(self, message_id: str) -> ChatMessage | None:
+        return self.session.get(ChatMessage, message_id)
+
+    def update(
+        self,
+        message: ChatMessage,
+        *,
+        content: str | None = None,
+        metadata: dict | None = None,
+    ) -> ChatMessage:
+        if content is not None:
+            message.content = content
+        if metadata is not None:
+            message.metadata_json = metadata
+        self.session.flush()
+        return message
+
     def list_for_meeting(self, *, meeting_id: str) -> list[ChatMessage]:
         statement = (
             select(ChatMessage)

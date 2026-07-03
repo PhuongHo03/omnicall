@@ -1,6 +1,7 @@
 import type {
   AdminAccount,
   AdminAccountList,
+  AdminMeetingLogSummary,
   AdminMetric,
   AdminMetrics,
   AdminMetricsTarget,
@@ -192,9 +193,7 @@ function parseAdminOperationalLog(raw: unknown): AdminOperationalLog {
     workspaceId: nullableString(raw.workspaceId, "log.workspaceId"),
     meetingId: nullableString(raw.meetingId, "log.meetingId"),
     meetingName: nullableString(raw.meetingName, "log.meetingName"),
-    language: nullableString(raw.language, "log.language"),
     file: isRecord(raw.file) ? raw.file : {},
-    job: isRecord(raw.job) ? raw.job : {},
     chat: isRecord(raw.chat) ? raw.chat : {},
     provider: nullableString(raw.provider, "log.provider"),
     model: nullableString(raw.model, "log.model"),
@@ -203,4 +202,22 @@ function parseAdminOperationalLog(raw: unknown): AdminOperationalLog {
     errorType: nullableString(raw.errorType, "log.errorType"),
     errorMessage: nullableString(raw.errorMessage, "log.errorMessage")
   };
+}
+
+export function parseAdminMeetingLogSummaries(raw: unknown): AdminMeetingLogSummary[] {
+  if (!raw || typeof raw !== "object" || !("items" in raw)) {
+    return [];
+  }
+  const items = (raw as Record<string, unknown>).items;
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map((item) => ({
+    meetingId: requireString(item.meetingId, "meetingLog.meetingId"),
+    meetingName: nullableString(item.meetingName, "meetingLog.meetingName"),
+    processingCount: typeof item.processingCount === "number" ? item.processingCount : 0,
+    ragCount: typeof item.ragCount === "number" ? item.ragCount : 0,
+    latestTimestamp: nullableString(item.latestTimestamp, "meetingLog.latestTimestamp"),
+    latestLevel: nullableString(item.latestLevel, "meetingLog.latestLevel"),
+  }));
 }

@@ -4,13 +4,16 @@ import { Navigate, Outlet, Route, Routes, useNavigate, useParams } from "react-r
 import { AdminAccountsScreen } from "../features/admin/screens/AdminAccountsScreen";
 import { AdminMetricsScreen } from "../features/admin/screens/AdminMetricsScreen";
 import { AdminLogsScreen } from "../features/admin/screens/AdminLogsScreen";
+import { AdminMeetingLogsScreen } from "../features/admin/screens/AdminMeetingLogsScreen";
 import { AuthScreen } from "../features/auth/screens/AuthScreen";
 import { useAuthSession } from "../features/auth/hooks/useAuthSession";
 import type { Account } from "../features/auth/types/authTypes";
 import { MeetingsScreen } from "../features/meetings/screens/MeetingsScreen";
 import { AppShell } from "../shared/layouts/AppShell";
+import { SidebarProvider } from "../shared/layouts/SidebarContext";
 
 type AuthState = ReturnType<typeof useAuthSession>;
+
 
 export function AppRoutes() {
   const auth = useAuthSession();
@@ -30,6 +33,7 @@ export function AppRoutes() {
           <Route path="/admin/metrics" element={<AdminMetricsScreen token={auth.token as string} />} />
           <Route path="/admin/accounts" element={<AdminAccountsScreen token={auth.token as string} />} />
           <Route path="/admin/logs" element={<AdminLogsScreen token={auth.token as string} />} />
+          <Route path="/admin/logs/:id" element={<AdminMeetingLogsScreen token={auth.token as string} />} />
         </Route>
       </Route>
       <Route path="/" element={<Navigate to={auth.account ? "/meetings" : "/auth"} replace />} />
@@ -66,9 +70,9 @@ function AuthenticatedLayout({ auth }: { auth: AuthState }) {
     return <Navigate to="/auth" replace />;
   }
   return (
-    <AppShell account={auth.account} onLogout={auth.logout}>
+    <SidebarProvider><AppShell account={auth.account} onLogout={auth.logout}>
       <Outlet />
-    </AppShell>
+    </AppShell></SidebarProvider>
   );
 }
 
@@ -93,7 +97,6 @@ function MeetingsRoute({ auth }: { auth: AuthState }) {
   }
   return (
     <MeetingsScreen
-      account={auth.account}
       token={auth.token}
       requestedMeetingId={meetingId ?? null}
       onSelectedMeetingChange={handleSelectedMeetingChange}

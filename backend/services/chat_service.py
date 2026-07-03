@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import Any
 import time
 
 from sqlalchemy.orm import Session
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.configs.settings import Settings, get_settings
 from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.meeting_dto import (
+    MeetingChatAcceptedResponse,
     MeetingChatCitationResponse,
     MeetingChatHistoryResponse,
     MeetingChatMessageResponse,
@@ -49,7 +51,7 @@ class MeetingChatService:
         self.guardrail_provider = guardrail_provider or get_guardrail_provider()
         self.operational_logs = operational_logs
 
-    def ask(self, context: CurrentUserContext, meeting_id: str, request: MeetingChatRequest) -> MeetingChatResponse:
+    def ask(self, context: CurrentUserContext, meeting_id: str, request: MeetingChatRequest) -> MeetingChatAcceptedResponse:
         meeting = self.meetings.get_for_owner(meeting_id, context.user_id)
         if meeting is None:
             raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
@@ -65,7 +67,6 @@ class MeetingChatService:
             "workspace_id": context.user_id,
             "meeting_id": meeting.id,
             "meeting_name": meeting.title,
-            "language": request.language or meeting.language,
             "file": _asset_log_context(asset),
             "chat": _chat_log_context(question),
         }
@@ -79,12 +80,72 @@ class MeetingChatService:
             details={"questionLength": len(question)},
         )
 
+        user_message = self.chat_messages.create(
+            meeting_id=meeting.id,
+            role="user",
+            content=question,
+            metadata={"guardrails": {}},
+        )
+        meeting.pending_chat_status = "queued"
+        self.session.commit()
+
+        from backend.tasks.chat_tasks import generate_chat_answer
+        generate_chat_answer.delay(
+            meeting_id=meeting.id,
+            user_id=context.user_id,
+            question=question,
+            user_message_id=user_message.id,
+            guardrails={},
+        )
+
+        self._emit(
+            level="info",
+            flow="rag",
+            stage="question",
+            status="queued",
+            message="RAG answer generation queued.",
+            **log_context,
+        )
+        return MeetingChatAcceptedResponse()
+
+    def generate_answer(
+        self,
+        *,
+        meeting_id: str,
+        user_id: str,
+        question: str,
+        user_message_id: str,
+        input_guardrails: dict,
+        event_callback: Any = None,
+    ) -> dict[str, str]:
+        meeting = self.meetings.get_for_owner(meeting_id, user_id)
+        if meeting is None:
+            return {"status": "error", "error": "meeting_not_found"}
+
+        user_message = self.chat_messages.get_by_id(user_message_id)
+        if user_message is None:
+            return {"status": "error", "error": "user_message_not_found"}
+
+        meeting.pending_chat_status = "started"
+        self.session.commit()
+
+        asset = self.assets.get_latest_for_meeting(meeting.id)
+        log_context = {
+            "workspace_id": user_id,
+            "meeting_id": meeting.id,
+            "meeting_name": meeting.title,
+            "file": _asset_log_context(asset),
+            "chat": _chat_log_context(question),
+        }
+
+        if event_callback:
+            event_callback({"type": "status", "stage": "input_guardrail", "message": "Đang kiểm tra câu hỏi..."})
         guardrail_started = time.perf_counter()
         input_guardrail = self._check_guardrail(
             enabled=self.settings.guardrail_input_enabled,
             kind="chat_input",
             text=question,
-            metadata={"meetingId": meeting.id, "language": request.language or meeting.language},
+            metadata={"meetingId": meeting.id},
         )
         self._emit_guardrail(
             stage="input_guardrail",
@@ -93,7 +154,18 @@ class MeetingChatService:
             message="Input guardrail check completed.",
             log_context=log_context,
         )
+
+        effective_question = input_guardrail.redacted_text if input_guardrail and input_guardrail.redacted_text else question
+        self.chat_messages.update(
+            user_message,
+            content=effective_question,
+            metadata={"guardrails": _guardrail_map(input=input_guardrail)},
+        )
+        self.session.commit()
+
         if input_guardrail and input_guardrail.action == "block":
+            if event_callback:
+                event_callback({"type": "blocked", "message": "Câu hỏi đã bị đánh dấu không an toàn"})
             self._emit(
                 level="info",
                 flow="rag",
@@ -105,25 +177,16 @@ class MeetingChatService:
                 model=input_guardrail.model,
                 details=input_guardrail.to_metadata(),
             )
-            return self._save_blocked_chat_response(
-                context=context,
+            meeting.pending_chat_status = None
+            self._save_blocked_chat_response(
                 meeting_id=meeting.id,
-                user_content="[blocked by guardrail]",
+                user_content=user_message.content,
                 guardrails={"input": input_guardrail.to_metadata()},
-                safe_message=input_guardrail.safe_message or _blocked_message(),
+                safe_message=input_guardrail.safe_message or "Câu hỏi đã bị đánh dấu không an toàn",
             )
-
-        effective_question = input_guardrail.redacted_text if input_guardrail and input_guardrail.redacted_text else question
-        self.chat_messages.create(
-            meeting_id=meeting.id,
-            role="user",
-            content=effective_question,
-            metadata={
-                "language": request.language or meeting.language,
-                "guardrails": _guardrail_map(input=input_guardrail),
-            },
-        )
-
+            return {"status": "blocked"}
+        if event_callback:
+            event_callback({"type": "status", "stage": "retrieval", "message": "Đang tìm kiếm ngữ cảnh..."})
         self._emit(
             level="info",
             flow="rag",
@@ -134,7 +197,7 @@ class MeetingChatService:
         )
         try:
             retrieved = self.retrieval_search.search_meeting(
-                workspace_id=context.user_id,
+                workspace_id=user_id,
                 meeting_id=meeting.id,
                 query=effective_question,
             )
@@ -151,7 +214,10 @@ class MeetingChatService:
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
-            raise
+            meeting.pending_chat_status = None
+            self._save_error_message(meeting.id, f"Retrieval failed: {exc}", input_guardrails)
+            return {"status": "error", "error": str(exc)}
+
         search_metadata = self.retrieval_search.last_search_metadata
         embedding_metadata = search_metadata.get("embedding", {})
         self._emit(
@@ -200,6 +266,7 @@ class MeetingChatService:
             error_message=rerank_metadata.get("error") if rerank_failed else None,
         )
         citations = [_citation_response(item.record) for item in retrieved[:4]]
+        context_guardrail = None
         if not retrieved:
             answer_payload = {
                 "answer": "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này.",
@@ -208,6 +275,8 @@ class MeetingChatService:
                 "provider": "local-evidence-guard",
             }
         else:
+            if event_callback:
+                event_callback({"type": "status", "stage": "context_guardrail", "message": "Đang kiểm tra ngữ cảnh..."})
             guardrail_started = time.perf_counter()
             context_guardrail = self._check_guardrail(
                 enabled=self.settings.guardrail_context_enabled,
@@ -229,13 +298,18 @@ class MeetingChatService:
             if context_guardrail and context_guardrail.action == "block":
                 citations = []
                 answer_payload = {
-                    "answer": context_guardrail.safe_message or _blocked_message(),
+                    "answer": context_guardrail.safe_message or "Câu trả lời đã bị đánh dấu không an toàn",
                     "evidenceState": "blocked",
                     "confidence": context_guardrail.confidence,
                     "provider": context_guardrail.provider,
                 }
             else:
-                answer_payload = self._generate_answer(question=effective_question, retrieved=retrieved)
+                if event_callback:
+                    event_callback({"type": "status", "stage": "generating", "message": "Đang tạo câu trả lời..."})
+                answer_payload = self._generate_answer(
+                    question=effective_question,
+                    retrieved=retrieved,
+                )
                 answer_error = answer_payload.pop("_error", None)
                 fallback_error = answer_payload.pop("_fallbackError", None)
                 answer_duration_ms = answer_payload.pop("_durationMs", None)
@@ -285,6 +359,8 @@ class MeetingChatService:
                 )
 
         guardrail_started = time.perf_counter()
+        if event_callback:
+            event_callback({"type": "status", "stage": "output_guardrail", "message": "Đang kiểm tra câu trả lời..."})
         output_guardrail = self._check_guardrail(
             enabled=self.settings.guardrail_output_enabled,
             kind="answer",
@@ -305,11 +381,11 @@ class MeetingChatService:
         answer_payload, citations = _apply_output_guardrail(answer_payload, citations, output_guardrail)
         guardrails = _guardrail_map(
             input=input_guardrail,
-            context=locals().get("context_guardrail"),
+            context=context_guardrail,
             output=output_guardrail,
         )
 
-        assistant = self.chat_messages.create(
+        self.chat_messages.create(
             meeting_id=meeting.id,
             role="assistant",
             content=answer_payload["answer"],
@@ -325,21 +401,20 @@ class MeetingChatService:
                 "guardrailDecisionCounts": _decision_counts(guardrails),
             },
         )
+        meeting.pending_chat_status = None
         self.session.commit()
-        self.session.refresh(assistant)
+        if event_callback:
+            if answer_payload.get("evidenceState") == "blocked":
+                event_callback({"type": "blocked", "message": answer_payload["answer"]})
+            else:
+                event_callback({"type": "done", "answer": answer_payload["answer"]})
         self._emit(
             level="info",
             flow="rag",
             stage="answer",
             status="succeeded",
-            message="RAG answer persisted and returned.",
-            **{
-                **log_context,
-                "chat": {
-                    **log_context["chat"],
-                    "messageId": assistant.id,
-                },
-            },
+            message="RAG answer persisted.",
+            **log_context,
             provider=answer_payload.get("provider"),
             model=answer_payload.get("model"),
             details={
@@ -349,12 +424,21 @@ class MeetingChatService:
                 "retrievedChunkCount": len(retrieved),
             },
         )
-        return MeetingChatResponse(
-            answer=assistant.content,
-            evidence_state=answer_payload["evidenceState"],
-            citations=citations,
-            message=_message_response(assistant),
+        return {"status": "succeeded"}
+
+    def _save_error_message(self, meeting_id: str, error_text: str, guardrails: dict) -> None:
+        self.chat_messages.create(
+            meeting_id=meeting_id,
+            role="assistant",
+            content=f"Error generating answer: {error_text}",
+            metadata={
+                "evidenceState": "error",
+                "confidence": 0.0,
+                "provider": "system",
+                "guardrails": guardrails,
+            },
         )
+        self.session.commit()
 
     def _check_guardrail(
         self,
@@ -377,18 +461,11 @@ class MeetingChatService:
     def _save_blocked_chat_response(
         self,
         *,
-        context: CurrentUserContext,
         meeting_id: str,
         user_content: str,
         guardrails: dict,
         safe_message: str,
-    ) -> MeetingChatResponse:
-        self.chat_messages.create(
-            meeting_id=meeting_id,
-            role="user",
-            content=user_content,
-            metadata={"guardrails": guardrails},
-        )
+    ) -> None:
         assistant = self.chat_messages.create(
             meeting_id=meeting_id,
             role="assistant",
@@ -402,8 +479,7 @@ class MeetingChatService:
             },
         )
         self.session.commit()
-        self.session.refresh(assistant)
-        meeting = self.meetings.get_for_owner(meeting_id, context.user_id)
+        meeting = self.meetings.get(meeting_id)
         asset = self.assets.get_latest_for_meeting(meeting_id)
         self._emit(
             level="info",
@@ -411,10 +487,8 @@ class MeetingChatService:
             stage="answer",
             status="succeeded",
             message="Blocked RAG response persisted and returned.",
-            workspace_id=context.user_id,
             meeting_id=meeting_id,
             meeting_name=meeting.title if meeting else None,
-            language=meeting.language if meeting else None,
             file=_asset_log_context(asset),
             chat={
                 **_chat_log_context(user_content),
@@ -422,12 +496,6 @@ class MeetingChatService:
             },
             provider="local-guardrail",
             details={"evidenceState": "blocked", "guardrails": guardrails},
-        )
-        return MeetingChatResponse(
-            answer=assistant.content,
-            evidence_state="blocked",
-            citations=[],
-            message=_message_response(assistant),
         )
 
     def get_history(self, context: CurrentUserContext, meeting_id: str) -> MeetingChatHistoryResponse:
@@ -641,8 +709,8 @@ def _apply_output_guardrail(
     if output_guardrail and output_guardrail.action == "block":
         return (
             {
-                "answer": output_guardrail.safe_message or "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này.",
-                "evidenceState": "not_enough_evidence",
+                "answer": output_guardrail.safe_message or "Câu trả lời đã bị đánh dấu không an toàn",
+                "evidenceState": "blocked",
                 "confidence": min(float(answer_payload.get("confidence", 0.0)), output_guardrail.confidence),
                 "provider": output_guardrail.provider,
             },
@@ -678,9 +746,6 @@ def _decision_counts(guardrails: dict) -> dict[str, int]:
             counts[action] = counts.get(action, 0) + 1
     return counts
 
-
-def _blocked_message() -> str:
-    return "Yêu cầu này đã bị chặn bởi guardrail vì không an toàn hoặc cố gắng vượt qua ngữ cảnh cuộc họp."
 
 
 def _citation_response(chunk: MeetingChunkRecord) -> MeetingChatCitationResponse:

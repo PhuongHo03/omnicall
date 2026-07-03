@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from backend.configs.settings import Settings, get_settings
 from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.admin_dto import AdminAccountListResponse, AdminAccountResponse
-from backend.dtos.file_dto import DeleteResponse
+from backend.dtos.error_dto import DeleteResponse
 from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.providers.cache_provider import CacheProviderError, JsonCacheProvider, get_json_cache_provider
 from backend.providers.lock_provider import RedisLockProvider, get_redis_lock_provider

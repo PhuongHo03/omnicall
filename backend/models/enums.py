@@ -10,19 +10,6 @@ class MeetingStatus(StrEnum):
     FAILED = "FAILED"
 
 
-class ProcessingJobStatus(StrEnum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    RETRYING = "RETRYING"
-    SUCCEEDED = "SUCCEEDED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-
-
-class ProcessingJobType(StrEnum):
-    MEETING_PROCESSING = "MEETING_PROCESSING"
-
-
 class MeetingAssetKind(StrEnum):
     UPLOAD = "UPLOAD"
     RECORDING = "RECORDING"

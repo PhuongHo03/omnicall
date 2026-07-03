@@ -131,7 +131,7 @@ services:
         "backend.configs.celery_app.celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=meeting-processing,processing-maintenance",
+        "--queues=meeting-processing,processing-maintenance,chat-processing",
         "--concurrency=1",
         "--hostname=worker@%h",
         "--without-gossip",

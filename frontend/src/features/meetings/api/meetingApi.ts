@@ -1,26 +1,17 @@
 import {
   buildChatPayload,
-  buildMeetingPayload,
-  parseAccountFile,
-  parseAccountFileList,
+  buildMeetingTitlePayload,
   parseAsset,
   parseMeeting,
   parseMeetingChatHistory,
-  parseMeetingChatResponse,
   parseMeetingIntelligenceResult,
   parseMeetingList,
-  parseProcessingJob,
-  parseProcessingStatus
 } from "../dtos/meetingDtos";
 import type {
-  AccountFile,
   Meeting,
   MeetingAsset,
   MeetingChatHistory,
-  MeetingChatResponse,
   MeetingIntelligenceResult,
-  ProcessingJob,
-  ProcessingStatus
 } from "../types/meetingTypes";
 
 const API_PREFIX = "/api";
@@ -47,14 +38,33 @@ export async function listMeetings(token: string): Promise<Meeting[]> {
   return parseMeetingList(await parseJsonResponse(response));
 }
 
-export async function createMeeting(token: string, title: string, language: string): Promise<Meeting> {
+export async function getMeeting(token: string, meetingId: string): Promise<Meeting> {
+  const response = await fetch(`${API_PREFIX}/meetings/${meetingId}`, {
+    headers: authHeaders(token)
+  });
+  return parseMeeting(await parseJsonResponse(response));
+}
+
+export async function createMeeting(token: string): Promise<Meeting> {
   const response = await fetch(`${API_PREFIX}/meetings`, {
     method: "POST",
     headers: {
       ...authHeaders(token),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(buildMeetingPayload(title, language))
+    body: JSON.stringify({})
+  });
+  return parseMeeting(await parseJsonResponse(response));
+}
+
+export async function updateMeetingTitle(token: string, meetingId: string, title: string): Promise<Meeting> {
+  const response = await fetch(`${API_PREFIX}/meetings/${meetingId}`, {
+    method: "PATCH",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(buildMeetingTitlePayload(title))
   });
   return parseMeeting(await parseJsonResponse(response));
 }
@@ -83,7 +93,7 @@ export async function queueMeetingProcessing(
   token: string,
   meetingId: string,
   idempotencyKey: string
-): Promise<ProcessingJob> {
+): Promise<Meeting> {
   const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/process`, {
     method: "POST",
     headers: {
@@ -91,15 +101,9 @@ export async function queueMeetingProcessing(
       "Idempotency-Key": idempotencyKey
     }
   });
-  return parseProcessingJob(await parseJsonResponse(response));
+  return parseMeeting(await parseJsonResponse(response));
 }
 
-export async function getProcessingStatus(token: string, meetingId: string): Promise<ProcessingStatus> {
-  const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/processing-status`, {
-    headers: authHeaders(token)
-  });
-  return parseProcessingStatus(await parseJsonResponse(response));
-}
 
 export async function getMeetingIntelligenceResult(token: string, meetingId: string): Promise<MeetingIntelligenceResult> {
   const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/intelligence-result`, {
@@ -123,18 +127,17 @@ export async function downloadMeetingAsset(token: string, meetingId: string, ass
 export async function askMeetingChat(
   token: string,
   meetingId: string,
-  question: string,
-  language: string | null
-): Promise<MeetingChatResponse> {
+  question: string
+): Promise<{ status: string; message: string }> {
   const response = await fetch(`${API_PREFIX}/meetings/${meetingId}/chat`, {
     method: "POST",
     headers: {
       ...authHeaders(token),
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(buildChatPayload(question, language))
+    body: JSON.stringify(buildChatPayload(question))
   });
-  return parseMeetingChatResponse(await parseJsonResponse(response));
+  return parseJsonResponse(response) as Promise<{ status: string; message: string }>;
 }
 
 export async function getMeetingChatHistory(token: string, meetingId: string): Promise<MeetingChatHistory> {
@@ -144,42 +147,75 @@ export async function getMeetingChatHistory(token: string, meetingId: string): P
   return parseMeetingChatHistory(await parseJsonResponse(response));
 }
 
-export async function listAccountFiles(token: string): Promise<AccountFile[]> {
-  const response = await fetch(`${API_PREFIX}/files`, {
-    headers: authHeaders(token)
-  });
-  return parseAccountFileList(await parseJsonResponse(response));
-}
 
-export async function uploadAccountFile(token: string, file: File): Promise<AccountFile> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const response = await fetch(`${API_PREFIX}/files`, {
-    method: "POST",
+
+
+
+export type ChatStreamEvent =
+  | { type: "status"; stage: string; message: string }
+  | { type: "token"; token: string }
+  | { type: "done"; answer: string }
+  | { type: "blocked"; message: string }
+  | { type: "error"; message: string }
+  | { type: "connected"; status: string };
+
+export function streamChatEvents(
+  token: string,
+  meetingId: string,
+  onEvent: (event: ChatStreamEvent) => void,
+  onError?: (error: Error) => void,
+  onEnd?: () => void,
+): () => void {
+  const controller = new AbortController();
+  const url = `${API_PREFIX}/meetings/${meetingId}/chat/stream`;
+
+  fetch(url, {
     headers: authHeaders(token),
-    body: formData
-  });
-  return parseAccountFile(await parseJsonResponse(response));
-}
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`SSE connection failed: ${response.status}`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("ReadableStream not supported");
+      }
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("event:") || trimmed.startsWith("retry:")) {
+            continue;
+          }
+          if (trimmed.startsWith("data: ")) {
+            const jsonStr = trimmed.slice(6);
+            try {
+              const event = JSON.parse(jsonStr) as ChatStreamEvent;
+              onEvent(event);
+            } catch {
+              // skip malformed events
+            }
+          }
+        }
+      }
+      onEnd?.();
+    })
+    .catch((caught) => {
+      if (caught instanceof Error && caught.name !== "AbortError") {
+        onError?.(caught);
+      }
+    });
 
-export async function downloadAccountFile(token: string, fileId: string): Promise<Blob> {
-  const response = await fetch(`${API_PREFIX}/files/${fileId}/content`, {
-    headers: authHeaders(token)
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    const message = typeof payload?.message === "string" ? payload.message : "File download failed.";
-    throw new Error(message);
-  }
-  return response.blob();
-}
-
-export async function deleteAccountFile(token: string, fileId: string): Promise<void> {
-  const response = await fetch(`${API_PREFIX}/files/${fileId}`, {
-    method: "DELETE",
-    headers: authHeaders(token)
-  });
-  await parseJsonResponse(response);
+  return () => controller.abort();
 }
 
 export async function deleteMeetingSession(token: string, meetingId: string): Promise<void> {

@@ -1,7 +1,9 @@
-import { RefreshCcw, ShieldCheck, Trash2, UsersRound } from "lucide-react";
+import { RefreshCw, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { useState } from "react";
 
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
+import { IconButton } from "../../../shared/components/IconButton";
+import { IconOnlyButton } from "../../../shared/components/IconOnlyButton";
 import type { AdminAccount, AdminAccountRole } from "../types/adminTypes";
 
 type AdminAccountsTableProps = {
@@ -28,16 +30,6 @@ export function AdminAccountsTable({
 
   return (
     <section className="admin-panel">
-      <div className="panel-heading admin-panel-heading-actions">
-        <div>
-          <h2>Accounts</h2>
-          <span>Manage local account roles.</span>
-        </div>
-        <button className="icon-button icon-button--secondary" disabled={isLoading} type="button" onClick={onRefresh}>
-          <RefreshCcw size={16} />
-          Refresh
-        </button>
-      </div>
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
@@ -45,7 +37,12 @@ export function AdminAccountsTable({
               <th>Account</th>
               <th>Created</th>
               <th>Role</th>
-              <th>Actions</th>
+              <th>
+                <div className="admin-table__actions-header">
+                  Actions
+                  <IconButton icon={<RefreshCw size={15} />} label="Refresh" disabled={isLoading} type="button" onClick={onRefresh} />
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -76,15 +73,13 @@ export function AdminAccountsTable({
                   </div>
                 </td>
                 <td>
-                  <button
-                    className="icon-only-button icon-only-button--danger"
-                    type="button"
+                  <IconOnlyButton
+                    icon={<Trash2 size={16} />}
+                    label={account.canChangeRole ? "Delete account" : "You cannot delete your own account"}
                     disabled={!account.canChangeRole || deletingAccountId === account.userId}
-                    title={account.canChangeRole ? "Delete account" : "You cannot delete your own account"}
                     onClick={() => setAccountIdToDelete(account.userId)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                    variant="danger"
+                  />
                 </td>
               </tr>
             ))}

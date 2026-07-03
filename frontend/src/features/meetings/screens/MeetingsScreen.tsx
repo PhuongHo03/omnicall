@@ -1,15 +1,15 @@
-import type { Account } from "../../auth/types/authTypes";
-import { AccountFileLibrary } from "../components/AccountFileLibrary";
-import { MeetingAssetPlaybackPanel } from "../components/MeetingAssetPlaybackPanel";
-import { MeetingIntelligenceResultPanel } from "../components/MeetingIntelligenceResultPanel";
+import { useCallback, useEffect, useState } from "react";
+import { EmptyState } from "../../../shared/components/EmptyState";
+
+import { useSidebarSlot } from "../../../shared/layouts/SidebarContext";
+import { PlaybackDrawer } from "../components/PlaybackDrawer";
+import { ResultDrawer } from "../components/ResultDrawer";
 import { MeetingActionPanel } from "../components/MeetingActionPanel";
 import { MeetingChatPanel } from "../components/MeetingChatPanel";
-import { MeetingCreateForm } from "../components/MeetingCreateForm";
 import { MeetingList } from "../components/MeetingList";
 import { useMeetingWorkspace } from "../hooks/useMeetingWorkspace";
 
 type MeetingsScreenProps = {
-  account: Account;
   requestedMeetingId: string | null;
   token: string;
   onSelectedMeetingChange: (meetingId: string | null) => void;
@@ -26,73 +26,92 @@ export function MeetingsScreen({
     onSelectedMeetingChange
   );
 
+  const [isResultDrawerOpen, setIsResultDrawerOpen] = useState(false);
+  const openResultDrawer = useCallback(() => setIsResultDrawerOpen(true), []);
+  const closeResultDrawer = useCallback(() => setIsResultDrawerOpen(false), []);
+
+  const [isPlaybackDrawerOpen, setIsPlaybackDrawerOpen] = useState(false);
+  const openPlaybackDrawer = useCallback(() => setIsPlaybackDrawerOpen(true), []);
+  const closePlaybackDrawer = useCallback(() => setIsPlaybackDrawerOpen(false), []);
+
+  const { setExtraContent, setOnCreateMeeting } = useSidebarSlot();
+
+  useEffect(() => {
+    setOnCreateMeeting(() => workspace.createNewMeeting);
+    return () => setOnCreateMeeting(null);
+  }, [workspace.createNewMeeting, setOnCreateMeeting]);
+
+  useEffect(() => {
+    setExtraContent(
+      <MeetingList
+        disabled={workspace.isLoading}
+        meetings={workspace.meetings}
+        selectedMeetingId={workspace.selectedMeetingId}
+        onCreate={workspace.createNewMeeting}
+        onSelect={workspace.setSelectedMeetingId}
+      />
+    );
+    return () => setExtraContent(null);
+  }, [workspace.isLoading, workspace.meetings, workspace.selectedMeetingId, workspace.createNewMeeting, workspace.setSelectedMeetingId, setExtraContent]);
+
+  if (!workspace.selectedMeeting) {
+    return (
+      <div className="workspace-screen">
+        <EmptyState icon="📋" message="Select a meeting" description="Choose a meeting from the sidebar or create a new one." className="empty-state--hero" />
+      </div>
+    );
+  }
+
   return (
     <div className="workspace-screen">
-      <aside className="workspace-sidebar">
-        <MeetingCreateForm
-          draft={workspace.draft}
-          disabled={workspace.isLoading}
-          onChange={workspace.setDraft}
-          onSubmit={workspace.submitMeeting}
-        />
-        <MeetingList
-          disabled={workspace.isLoading}
-          meetings={workspace.meetings}
-          selectedMeetingId={workspace.selectedMeetingId}
-          onRefresh={workspace.refreshMeetings}
-          onSelect={workspace.setSelectedMeetingId}
-        />
-        <AccountFileLibrary
-          disabled={workspace.isLoading}
-          files={workspace.accountFiles}
-          playbackUrl={workspace.filePlaybackUrl}
-          selectedFileId={workspace.selectedFileId}
-          onDelete={workspace.deleteLibraryFile}
-          onPlay={workspace.playLibraryFile}
-          onRefresh={workspace.refreshAccountFiles}
-          onUpload={workspace.uploadLibraryFile}
-        />
-      </aside>
-
       <div className="workspace-main">
         <MeetingActionPanel
           canProcess={workspace.canProcess}
           canUpload={workspace.canUpload}
+          canViewResult={workspace.selectedMeeting.status === "READY" && workspace.intelligenceResult !== null}
+          hasAsset={workspace.lastAsset !== null}
           disabled={workspace.isLoading}
-          hasLockedAsset={workspace.hasLockedAsset}
           isRecording={workspace.isRecording}
-          lastAsset={workspace.lastAsset}
-          latestJob={workspace.latestJob}
           selectedMeeting={workspace.selectedMeeting}
           onDeleteMeeting={workspace.deleteSelectedMeeting}
           onFileUpload={workspace.uploadFile}
+          onOpenPlayback={openPlaybackDrawer}
           onProcess={workspace.queueProcessing}
           onRefreshStatus={workspace.refreshStatus}
+          onRefreshHistory={workspace.refreshChatHistory}
+          onRenameMeeting={workspace.renameSelectedMeeting}
           onStartRecording={workspace.startRecording}
           onStopRecording={workspace.stopRecording}
+          onViewResult={openResultDrawer}
         />
 
-        {workspace.selectedMeeting?.status === "READY" ? (
-          <>
-            <MeetingAssetPlaybackPanel asset={workspace.lastAsset} playbackUrl={workspace.assetPlaybackUrl} />
-            <MeetingIntelligenceResultPanel result={workspace.intelligenceResult} />
-            <MeetingChatPanel
-              disabled={workspace.isLoading}
-              messages={workspace.chatMessages}
-              question={workspace.chatQuestion}
-              selectedMeeting={workspace.selectedMeeting}
-              onQuestionChange={workspace.setChatQuestion}
-              onRefreshHistory={workspace.refreshChatHistory}
-              onSubmitQuestion={workspace.submitChatQuestion}
-            />
-          </>
-        ) : null}
+        {workspace.selectedMeeting.status === "READY" ? (
+          <MeetingChatPanel
+            disabled={workspace.isLoading}
+            messages={workspace.chatMessages}
+            question={workspace.chatQuestion}
+          onQuestionChange={workspace.setChatQuestion}
+          typewriterMessageIds={workspace.typewriterMessageIds}
+          onTypewriterComplete={workspace.clearTypewriterId}
+          onSubmitQuestion={workspace.submitChatQuestion}
+          />
+        ) : (
+          <EmptyState message="Upload and process a meeting to start chatting." />
+        )}
 
-        <div className="event-strip" aria-live="polite">
-          <span className={workspace.error ? "event-strip__error" : ""}>
-            {workspace.error ?? workspace.notice ?? "Ready"}
-          </span>
-        </div>
+        <ResultDrawer
+          isOpen={isResultDrawerOpen}
+          result={workspace.intelligenceResult}
+          onClose={closeResultDrawer}
+        />
+        <PlaybackDrawer
+          isOpen={isPlaybackDrawerOpen}
+          asset={workspace.lastAsset}
+          playbackUrl={workspace.assetPlaybackUrl}
+          transcriptEntries={workspace.transcriptEntries}
+          onDownload={workspace.downloadAsset}
+          onClose={closePlaybackDrawer}
+        />
       </div>
     </div>
   );

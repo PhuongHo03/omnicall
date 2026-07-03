@@ -19,3 +19,5 @@ Project documentation rules:
 
 - `docs/rules/update-planning.md`
 - `docs/rules/update-explanation.md`
+
+- `docs/plans/10 - frontend backend resilience.md` - frontend request protection, backend rate limiting, concurrency guards, and circuit breakers.

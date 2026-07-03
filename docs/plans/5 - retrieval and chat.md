@@ -43,7 +43,7 @@
 - [x] Add chat session and message persistence.
 - [x] Add meeting permission checks for every chat request.
 - [x] Add DTOs for user question, cited answer, source citation, and chat history response.
-- [x] Normalize and validate question length and supported language at the backend boundary.
+- [x] Normalize and validate question length at the backend boundary.
 - [x] Use `LLMProvider` for answer generation with API/private endpoint priority and Ollama local fallback.
 - [x] Generate answers from structured processed JSON context first.
 - [x] Use transcript entries inside the JSON to verify or cite important claims.

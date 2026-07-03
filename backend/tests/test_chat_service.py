@@ -153,7 +153,6 @@ class ChatServiceTestCase(unittest.TestCase):
             meeting = meeting_repo.create(
                 user_id=self.user_id,
                 title="Chat service meeting",
-                language="vi",
             )
             meeting_repo.update_status(meeting, MeetingStatus.READY)
             job = job_repo.create(

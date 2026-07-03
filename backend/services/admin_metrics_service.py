@@ -43,13 +43,6 @@ METRIC_QUERIES = [
         "query": "sum by (status) (omnicall_meetings_total)",
     },
     {
-        "name": "processing_jobs_by_status",
-        "label": "Processing jobs by status",
-        "category": "worker",
-        "unit": "count",
-        "query": "sum by (status) (omnicall_processing_jobs_total)",
-    },
-    {
         "name": "chat_messages_by_role",
         "label": "Chat messages by role",
         "category": "application",

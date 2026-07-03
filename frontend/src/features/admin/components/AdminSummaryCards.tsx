@@ -1,4 +1,4 @@
-import { Activity, Database, RefreshCcw, Server } from "lucide-react";
+import { Activity, Database, RefreshCw, Server } from "lucide-react";
 
 import type { AdminMetrics } from "../types/adminTypes";
 
@@ -27,7 +27,7 @@ export function AdminSummaryCards({ metrics }: AdminSummaryCardsProps) {
         <strong>{metrics?.cache.hit ? "Hit" : "Fresh"}</strong>
       </article>
       <article className="admin-summary-card">
-        <RefreshCcw size={18} />
+        <RefreshCw size={18} />
         <span>TTL</span>
         <strong>{metrics ? `${metrics.cache.ttlSeconds}s` : "-"}</strong>
       </article>

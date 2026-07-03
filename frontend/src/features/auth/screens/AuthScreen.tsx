@@ -1,4 +1,7 @@
-import { LogIn, UserPlus } from "lucide-react";
+import { LogIn, Moon, Sun, UserPlus } from "lucide-react";
+import { IconButton } from "../../../shared/components/IconButton";
+import { IconOnlyButton } from "../../../shared/components/IconOnlyButton";
+import { useTheme } from "../../../shared/hooks/useTheme";
 
 import type { AuthMode } from "../types/authTypes";
 
@@ -33,8 +36,17 @@ export function AuthScreen({
   onSubmit,
   password
 }: AuthScreenProps) {
+  const { theme, toggleTheme } = useTheme();
+
   return (
     <main className="auth-screen">
+      <div className="auth-theme-toggle">
+        <IconOnlyButton
+          icon={theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+          label={theme === "light" ? "Dark mode" : "Light mode"}
+          onClick={toggleTheme}
+        />
+      </div>
       <section className="auth-panel-card">
         <div className="auth-brand">
           <strong>Omnicall</strong>
@@ -77,14 +89,13 @@ export function AuthScreen({
               <input value={confirmPassword} type="password" required disabled={isLoading} onChange={(event) => onConfirmPasswordChange(event.target.value)} />
             </label>
           ) : null}
-          <button
-            className="icon-button icon-button--primary"
+          <IconButton
+            icon={mode === "login" ? <LogIn size={16} /> : <UserPlus size={16} />}
+            label={mode === "login" ? "Login" : "Create account"}
+            variant="primary"
             disabled={isLoading || !email.trim() || !password || (mode === "register" && (!displayName.trim() || !confirmPassword))}
             type="submit"
-          >
-            {mode === "login" ? <LogIn size={16} /> : <UserPlus size={16} />}
-            {mode === "login" ? "Login" : "Create account"}
-          </button>
+          />
         </form>
         {error ? <div className="event-strip event-strip__error">{error}</div> : null}
       </section>

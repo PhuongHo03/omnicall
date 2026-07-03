@@ -1,10 +1,11 @@
-import { parseAdminAccount, parseAdminAccounts, parseAdminMetrics, parseAdminOperationalLogs } from "../dtos/adminDtos";
+import { parseAdminAccount, parseAdminAccounts, parseAdminMetrics, parseAdminOperationalLogs, parseAdminMeetingLogSummaries } from "../dtos/adminDtos";
 import type {
   AdminAccount,
   AdminAccountList,
   AdminAccountRole,
   AdminLogFlow,
   AdminLogLevel,
+  AdminMeetingLogSummary,
   AdminMetrics,
   AdminOperationalLogList
 } from "../types/adminTypes";
@@ -64,6 +65,14 @@ export async function deleteAdminAccount(token: string, userId: string): Promise
   await parseJsonResponse(response);
 }
 
+export async function getAdminMeetingLogs(token: string): Promise<AdminMeetingLogSummary[]> {
+  const response = await fetch(`${API_PREFIX}/admin/logs/meetings`, {
+    headers: authHeaders(token),
+    cache: "no-store"
+  });
+  return parseAdminMeetingLogSummaries(await parseJsonResponse(response));
+}
+
 export async function getAdminOperationalLogs(
   token: string,
   filters: {
@@ -71,6 +80,7 @@ export async function getAdminOperationalLogs(
     level: AdminLogLevel | "all";
     limit: number;
     search: string;
+    meetingId?: string;
   }
 ): Promise<AdminOperationalLogList> {
   const query = new URLSearchParams({
@@ -83,6 +93,9 @@ export async function getAdminOperationalLogs(
   if (filters.search.trim()) {
     query.set("search", filters.search.trim());
   }
+  if (filters.meetingId) {
+    query.set("meeting_id", filters.meetingId);
+  }
   const response = await fetch(`${API_PREFIX}/admin/logs?${query.toString()}`, {
     headers: authHeaders(token),
     cache: "no-store"
@@ -90,8 +103,9 @@ export async function getAdminOperationalLogs(
   return parseAdminOperationalLogs(await parseJsonResponse(response));
 }
 
-export async function clearAdminOperationalLogs(token: string): Promise<void> {
-  const response = await fetch(`${API_PREFIX}/admin/logs`, {
+export async function clearAdminOperationalLogs(token: string, meetingId?: string): Promise<void> {
+  const query = meetingId ? `?meeting_id=${encodeURIComponent(meetingId)}` : "";
+  const response = await fetch(`${API_PREFIX}/admin/logs${query}`, {
     method: "DELETE",
     headers: authHeaders(token)
   });

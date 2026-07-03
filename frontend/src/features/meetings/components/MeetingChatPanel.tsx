@@ -1,50 +1,48 @@
-import { MessageSquare, RefreshCw, Send } from "lucide-react";
+import { Send } from "lucide-react";
+import { EmptyState } from "../../../shared/components/EmptyState";
+import { useEffect, useRef, useState } from "react";
 
-import { IconButton } from "../../../shared/components/IconButton";
-import type { Meeting, MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
+import { useAutoScroll } from "../hooks/useAutoScroll";
+import { useFormattedTypewriter } from "../hooks/useFormattedTypewriter";
+import type { MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
 
 type MeetingChatPanelProps = {
   disabled: boolean;
   messages: MeetingChatMessage[];
   question: string;
-  selectedMeeting: Meeting | null;
   onQuestionChange: (question: string) => void;
-  onRefreshHistory: () => void;
   onSubmitQuestion: () => void;
+  typewriterMessageIds: Set<string>;
+  onTypewriterComplete: (id: string) => void;
 };
 
 export function MeetingChatPanel({
   disabled,
   messages,
   onQuestionChange,
-  onRefreshHistory,
   onSubmitQuestion,
   question,
-  selectedMeeting
+  typewriterMessageIds,
+  onTypewriterComplete,
 }: MeetingChatPanelProps) {
-  const canChat = Boolean(selectedMeeting) && selectedMeeting?.status === "READY" && !disabled;
+  const isWaitingForAnswer = messages.length > 0 && Boolean(messages[messages.length - 1].metadata?.pending);
+  const canChat = !isWaitingForAnswer;
+  const threadRef = useRef<HTMLDivElement>(null);
+  useAutoScroll(threadRef, [messages.length]);
 
   return (
-    <section className="detail-panel chat-panel">
-      <div className="detail-header chat-panel__header">
-        <div>
-          <h2>Meeting chat</h2>
-          <span>{selectedMeeting?.status === "READY" ? selectedMeeting.id : "Waiting for a ready meeting"}</span>
-        </div>
-        <IconButton
-          icon={<RefreshCw size={16} />}
-          label="Refresh"
-          disabled={!canChat}
-          onClick={onRefreshHistory}
-          variant="secondary"
-        />
+    <section className="chat-panel">
+      <div className="chat-panel__header">
+        <h2>Meeting chat</h2>
       </div>
 
-      <div className="chat-thread" aria-live="polite">
+      <div className="chat-thread" ref={threadRef} aria-live="polite">
         {messages.length === 0 ? (
-          <div className="empty-panel">No chat messages yet.</div>
+          <EmptyState message="No chat messages yet." />
         ) : (
-          messages.map((message) => <ChatMessageBubble key={message.id} message={message} />)
+          <>
+            {messages.map((message) => <ChatMessageBubble key={message.id} message={message} enableTypewriter={typewriterMessageIds.has(message.id)} onTypewriterComplete={onTypewriterComplete} threadRef={threadRef} />)}
+          </>
         )}
       </div>
 
@@ -55,48 +53,105 @@ export function MeetingChatPanel({
           onSubmitQuestion();
         }}
       >
-        <label>
-          <span>Question</span>
+        <div className="chat-composer__wrap">
           <textarea
+            className="chat-composer__input"
             value={question}
             disabled={!canChat}
             maxLength={2000}
-            rows={3}
+            rows={1}
+            placeholder={canChat ? "Ask about this meeting\u2026" : "Waiting for response\u2026"}
             onChange={(event) => onQuestionChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                onSubmitQuestion();
+              }
+            }}
           />
-        </label>
-        <IconButton
-          type="submit"
-          icon={canChat ? <Send size={16} /> : <MessageSquare size={16} />}
-          label="Ask"
-          disabled={!canChat || !question.trim()}
-          variant="primary"
-        />
+          <button
+            className="chat-composer__send"
+            type="submit"
+            disabled={!canChat || !question.trim()}
+            aria-label="Ask"
+          >
+            <Send size={15} />
+          </button>
+        </div>
       </form>
     </section>
   );
 }
 
-function ChatMessageBubble({ message }: { message: MeetingChatMessage }) {
+function ChatMessageBubble({ message, enableTypewriter, onTypewriterComplete, threadRef }: { message: MeetingChatMessage; enableTypewriter: boolean; onTypewriterComplete: (id: string) => void; threadRef: React.RefObject<HTMLDivElement | null> }) {
   const evidenceState = typeof message.metadata.evidenceState === "string" ? message.metadata.evidenceState : null;
-  const isStreaming = message.metadata.streaming === true || message.metadata.pending === true;
+  const isStreaming = message.metadata.streaming === true;
+  const isTyping = message.metadata.pending === true && !isStreaming;
+  const { displayed, isAnimating } = useFormattedTypewriter(
+    message.content,
+    enableTypewriter && !isTyping && !isStreaming && message.role === "assistant",
+  );
+
+  // Auto-scroll during typewriter
+  useAutoScroll(threadRef, isAnimating ? [displayed] : []);
+
+  // Complete callback + deferred scroll when typewriter finishes
+  useEffect(() => {
+    if (enableTypewriter && !isAnimating && message.role === "assistant") {
+      onTypewriterComplete(message.id);
+      requestAnimationFrame(() => {
+        if (threadRef.current) {
+          threadRef.current.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
+        }
+      });
+    }
+  }, [enableTypewriter, isAnimating, message.id, message.role, onTypewriterComplete, threadRef]);
 
   return (
-    <article className={`chat-message chat-message--${message.role}${isStreaming ? " chat-message--streaming" : ""}`}>
+    <article className={`chat-message chat-message--${message.role}${isStreaming ? " chat-message--streaming" : ""}${isTyping ? " chat-message--typing" : ""}${isAnimating ? " chat-message--streaming" : ""}`}>
       <div className="chat-message__meta">
         <strong>{message.role === "assistant" ? "Assistant" : "You"}</strong>
         {evidenceState ? <span className={`evidence-badge evidence-badge--${evidenceState}`}>{evidenceState}</span> : null}
       </div>
-      <p>{message.content}</p>
+      {isTyping ? (
+        <p>{message.content}<span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></p>
+      ) : isAnimating ? (
+        <div className="chat-message__body"><span dangerouslySetInnerHTML={{ __html: displayed }} /><span className="chat-caret" /></div>
+      ) : (
+        <div className="chat-message__body" dangerouslySetInnerHTML={{ __html: displayed }} />
+      )}
       {message.citations.length > 0 ? (
-        <section className="citation-list" aria-label="Sources">
-          <div className="citation-list__heading">Sources</div>
-          {message.citations.map((citation) => (
-            <CitationCard key={`${message.id}-${citation.chunkId}`} citation={citation} />
-          ))}
-        </section>
+        <SourcesBadge citations={message.citations} messageId={message.id} />
       ) : null}
     </article>
+  );
+}
+
+function SourcesBadge({ citations, messageId }: { citations: MeetingChatCitation[]; messageId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const sourcesRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen && sourcesRef.current) {
+      const bubble = sourcesRef.current.closest(".chat-message");
+      bubble?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [isOpen]);
+
+  return (
+    <div className="sources" ref={sourcesRef}>
+      <button className="sources__badge" type="button" onClick={() => setIsOpen(!isOpen)}>
+        <span>Sources ({citations.length})</span>
+        <span className={"sources__chevron" + (isOpen ? " sources__chevron--open" : "")}>&#9662;</span>
+      </button>
+      {isOpen ? (
+        <div className="sources__list">
+          {citations.map((citation) => (
+            <CitationCard key={messageId + "-" + citation.chunkId} citation={citation} />
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

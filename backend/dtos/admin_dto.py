@@ -76,7 +76,6 @@ class AdminOperationalLogEventResponse(BaseModel):
     workspaceId: str | None = None
     meetingId: str | None = None
     meetingName: str | None = None
-    language: str | None = None
     file: dict = Field(default_factory=dict)
     job: dict = Field(default_factory=dict)
     chat: dict = Field(default_factory=dict)
@@ -96,3 +95,16 @@ class AdminOperationalLogListResponse(BaseModel):
 
 class AdminOperationalLogClearResponse(BaseModel):
     cleared: bool
+
+
+class AdminMeetingLogSummary(BaseModel):
+    meetingId: str
+    meetingName: str | None = None
+    processingCount: int = 0
+    ragCount: int = 0
+    latestTimestamp: str | None = None
+    latestLevel: str | None = None
+
+
+class AdminMeetingLogListResponse(BaseModel):
+    items: list[AdminMeetingLogSummary]

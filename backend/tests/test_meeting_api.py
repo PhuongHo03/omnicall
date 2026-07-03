@@ -84,12 +84,22 @@ class MeetingApiTestCase(unittest.TestCase):
         create_response = self.client.post(
             "/api/meetings",
             headers=self.headers,
-            json={"title": "API schema meeting", "language": "vi"},
+            json={},
         )
         self.assertEqual(create_response.status_code, 201, create_response.text)
         meeting = create_response.json()
         self.assertEqual(meeting["status"], MeetingStatus.DRAFT)
+        self.assertEqual(meeting["title"], meeting["id"])
+        self.assertNotIn("language", meeting)
         self.assertNotIn("workspace_id", meeting)
+
+        rename_response = self.client.patch(
+            f"/api/meetings/{meeting['id']}",
+            headers=self.headers,
+            json={"title": "API schema meeting"},
+        )
+        self.assertEqual(rename_response.status_code, 200, rename_response.text)
+        self.assertEqual(rename_response.json()["title"], "API schema meeting")
 
         list_response = self.client.get("/api/meetings", headers=self.headers)
         self.assertEqual(list_response.status_code, 200, list_response.text)
@@ -98,6 +108,7 @@ class MeetingApiTestCase(unittest.TestCase):
         get_response = self.client.get(f"/api/meetings/{meeting['id']}", headers=self.headers)
         self.assertEqual(get_response.status_code, 200, get_response.text)
         self.assertEqual(get_response.json()["id"], meeting["id"])
+        self.assertEqual(get_response.json()["title"], "API schema meeting")
 
         upload_response = self.client.post(
             f"/api/meetings/{meeting['id']}/assets",
@@ -119,7 +130,7 @@ class MeetingApiTestCase(unittest.TestCase):
         create_response = self.client.post(
             "/api/meetings",
             headers=self.headers,
-            json={"title": "Private meeting", "language": "vi"},
+            json={"title": "Private meeting"},
         )
         meeting_id = create_response.json()["id"]
 
@@ -144,7 +155,7 @@ class MeetingApiTestCase(unittest.TestCase):
         create_response = self.client.post(
             "/api/meetings",
             headers=self.headers,
-            json={"title": "Owned deletion", "language": "vi"},
+            json={"title": "Owned deletion"},
         )
         self.assertEqual(create_response.status_code, 201, create_response.text)
         meeting_id = create_response.json()["id"]
@@ -169,7 +180,7 @@ class MeetingApiTestCase(unittest.TestCase):
         create_response = self.client.post(
             "/api/meetings",
             headers=self.headers,
-            json={"title": "Private deletion", "language": "vi"},
+            json={"title": "Private deletion"},
         )
         self.assertEqual(create_response.status_code, 201, create_response.text)
         meeting_id = create_response.json()["id"]

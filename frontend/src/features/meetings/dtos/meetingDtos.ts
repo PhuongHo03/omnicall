@@ -1,5 +1,4 @@
 import type {
-  AccountFile,
   Meeting,
   MeetingAsset,
   MeetingChatCitation,
@@ -7,18 +6,18 @@ import type {
   MeetingChatMessage,
   MeetingChatResponse,
   MeetingIntelligenceResult,
-  ProcessingJob,
-  ProcessingStatus
 } from "../types/meetingTypes";
 
 type RawMeeting = {
   id?: unknown;
   title?: unknown;
-  language?: unknown;
   status?: unknown;
   failure_reason?: unknown;
+  pending_chat_status?: unknown;
   created_at?: unknown;
   updated_at?: unknown;
+  latest_asset?: unknown;
+  retry_allowed?: unknown;
 };
 
 type RawAsset = {
@@ -31,26 +30,7 @@ type RawAsset = {
   created_at?: unknown;
 };
 
-type RawAccountFile = {
-  id?: unknown;
-  owner_user_id?: unknown;
-  meeting_id?: unknown;
-  file_name?: unknown;
-  content_type?: unknown;
-  size_bytes?: unknown;
-  linked_to_meeting?: unknown;
-  created_at?: unknown;
-};
 
-type RawJob = {
-  id?: unknown;
-  meeting_id?: unknown;
-  status?: unknown;
-  safe_failure_reason?: unknown;
-  retry_allowed?: unknown;
-  created_at?: unknown;
-  updated_at?: unknown;
-};
 
 type RawChatCitation = {
   chunk_id?: unknown;
@@ -109,25 +89,16 @@ function mapMeeting(raw: RawMeeting): Meeting {
   return {
     id: requireString(raw.id, "meeting.id"),
     title: requireString(raw.title, "meeting.title"),
-    language: raw.language === null ? null : requireString(raw.language, "meeting.language"),
     status: requireString(raw.status, "meeting.status") as Meeting["status"],
     failureReason: nullableString(raw.failure_reason, "meeting.failure_reason"),
+    pendingChatStatus: raw.pending_chat_status != null ? String(raw.pending_chat_status) : null,
     createdAt: requireString(raw.created_at, "meeting.created_at"),
-    updatedAt: requireString(raw.updated_at, "meeting.updated_at")
+    updatedAt: requireString(raw.updated_at, "meeting.updated_at"),
+    latestAsset: raw.latest_asset ? parseAsset(raw.latest_asset) : null,
+    retryAllowed: Boolean(raw.retry_allowed)
   };
 }
 
-function mapJob(raw: RawJob): ProcessingJob {
-  return {
-    id: requireString(raw.id, "job.id"),
-    meetingId: requireString(raw.meeting_id, "job.meeting_id"),
-    status: requireString(raw.status, "job.status") as ProcessingJob["status"],
-    safeFailureReason: nullableString(raw.safe_failure_reason, "job.safe_failure_reason"),
-    retryAllowed: Boolean(raw.retry_allowed),
-    createdAt: requireString(raw.created_at, "job.created_at"),
-    updatedAt: requireString(raw.updated_at, "job.updated_at")
-  };
-}
 
 export function parseMeeting(raw: unknown): Meeting {
   return mapMeeting(raw as RawMeeting);
@@ -158,30 +129,17 @@ export function parseAsset(raw: unknown): MeetingAsset {
   };
 }
 
-export function parseProcessingJob(raw: unknown): ProcessingJob {
-  return mapJob(raw as RawJob);
-}
 
-export function parseProcessingStatus(raw: unknown): ProcessingStatus {
-  const status = raw as { meeting?: unknown; latest_job?: unknown; latest_asset?: unknown };
+
+export function buildChatPayload(question: string) {
   return {
-    meeting: mapMeeting(status.meeting as RawMeeting),
-    latestJob: status.latest_job ? mapJob(status.latest_job as RawJob) : null,
-    latestAsset: status.latest_asset ? parseAsset(status.latest_asset) : null
+    question: question.trim()
   };
 }
 
-export function buildMeetingPayload(title: string, language: string) {
+export function buildMeetingTitlePayload(title: string) {
   return {
-    title: title.trim(),
-    language: language.trim() || null
-  };
-}
-
-export function buildChatPayload(question: string, language: string | null) {
-  return {
-    question: question.trim(),
-    language
+    title: title.trim()
   };
 }
 
@@ -263,27 +221,4 @@ export function parseMeetingIntelligenceResult(raw: unknown): MeetingIntelligenc
   return raw;
 }
 
-export function parseAccountFile(raw: unknown): AccountFile {
-  const file = raw as RawAccountFile;
-  if (typeof file.size_bytes !== "number") {
-    throw new Error("Invalid file.size_bytes.");
-  }
-  return {
-    id: requireString(file.id, "file.id"),
-    ownerUserId: requireString(file.owner_user_id, "file.owner_user_id"),
-    meetingId: file.meeting_id === null ? null : requireString(file.meeting_id, "file.meeting_id"),
-    fileName: requireString(file.file_name, "file.file_name"),
-    contentType: requireString(file.content_type, "file.content_type"),
-    sizeBytes: file.size_bytes,
-    linkedToMeeting: Boolean(file.linked_to_meeting),
-    createdAt: requireString(file.created_at, "file.created_at")
-  };
-}
 
-export function parseAccountFileList(raw: unknown): AccountFile[] {
-  const items = (raw as { items?: unknown }).items;
-  if (!Array.isArray(items)) {
-    throw new Error("Invalid file list.");
-  }
-  return items.map(parseAccountFile);
-}

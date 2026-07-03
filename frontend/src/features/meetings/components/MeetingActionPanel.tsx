@@ -1,193 +1,149 @@
-import { Mic, Pause, Play, RefreshCw, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useState } from "react";
+import { Braces, Check, Mic, Pause, Pencil, Play, RefreshCw, RotateCcw, Trash2, Upload, Volume2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { IconButton } from "../../../shared/components/IconButton";
-import type { Meeting, MeetingAsset, ProcessingJob } from "../types/meetingTypes";
+import { IconOnlyButton } from "../../../shared/components/IconOnlyButton";
+import type { Meeting } from "../types/meetingTypes";
 import { StatusPill } from "./StatusPill";
 
 type MeetingActionPanelProps = {
   canProcess: boolean;
   canUpload: boolean;
+  canViewResult: boolean;
+  hasAsset: boolean;
   disabled: boolean;
-  hasLockedAsset: boolean;
   isRecording: boolean;
-  lastAsset: MeetingAsset | null;
-  latestJob: ProcessingJob | null;
-  selectedMeeting: Meeting | null;
+  selectedMeeting: Meeting;
   onDeleteMeeting: () => void;
   onFileUpload: (file: File) => void;
   onProcess: () => void;
   onRefreshStatus: () => void;
+  onRefreshHistory: () => void;
+  onRenameMeeting: (title: string) => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
+  onOpenPlayback: () => void;
+  onViewResult: () => void;
 };
 
 export function MeetingActionPanel({
   canProcess,
   canUpload,
+  canViewResult,
+  hasAsset,
   disabled,
-  hasLockedAsset,
   isRecording,
-  lastAsset,
-  latestJob,
   onFileUpload,
   onDeleteMeeting,
   onProcess,
   onRefreshStatus,
+  onRefreshHistory,
+  onRenameMeeting,
   onStartRecording,
   onStopRecording,
-  selectedMeeting
+  onOpenPlayback,
+  selectedMeeting,
+  onViewResult
 }: MeetingActionPanelProps) {
   const canAct = Boolean(selectedMeeting) && !disabled;
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const isRetryAction = latestJob?.retryAllowed === true;
-  const statusHint = selectedMeeting ? meetingStatusHint(selectedMeeting) : "Select or create a meeting to begin.";
-  const shouldShowIntake = canAct && canUpload && !hasLockedAsset;
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const isRetryAction = selectedMeeting?.retryAllowed === true;
+  const isDraft = selectedMeeting?.status === "DRAFT";
+  const isProcessingLocked = selectedMeeting?.status === "PROCESSING";
+  const canSaveTitle =
+    Boolean(selectedMeeting) && draftTitle.trim().length > 0 && draftTitle.trim() !== selectedMeeting?.title.trim();
+
+  useEffect(() => {
+    setIsRenaming(false);
+    setDraftTitle(selectedMeeting?.title ?? "");
+  }, [selectedMeeting?.id]);
 
   return (
-    <section className="action-panel">
-      <div className="detail-header">
-        <div>
-          <h2>{selectedMeeting?.title ?? "Select a meeting"}</h2>
-          <span>{selectedMeeting?.id ?? "No active meeting"}</span>
-        </div>
-        {selectedMeeting ? <StatusPill status={selectedMeeting.status} /> : null}
-      </div>
-
-      {shouldShowIntake ? (
-        <div className="intake-box">
-          <label className={`file-drop ${canUpload ? "" : "file-drop--disabled"}`}>
-            <Upload size={22} />
-            <span>Upload</span>
+    <section className="action-bar">
+      {/* Left: meeting name + status */}
+      <div className="action-bar__left">
+        {isRenaming && selectedMeeting ? (
+          <div className="action-bar__rename">
             <input
-              type="file"
-              accept="audio/*,video/mp4,video/webm,.txt,.md,.vtt,.srt,text/plain,text/markdown,text/vtt,application/x-subrip"
-              disabled={!canUpload}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  onFileUpload(file);
-                  event.target.value = "";
+              autoFocus
+              maxLength={240}
+              value={draftTitle}
+              disabled={disabled}
+              aria-label="Meeting title"
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && canSaveTitle) {
+                  onRenameMeeting(draftTitle);
+                  setIsRenaming(false);
+                }
+                if (event.key === "Escape") {
+                  setIsRenaming(false);
+                  setDraftTitle(selectedMeeting.title);
                 }
               }}
             />
-          </label>
-
-          <div className="record-controls">
-            <IconButton
-              icon={<Mic size={16} />}
-              label="Record"
-              disabled={!canUpload || isRecording}
-              onClick={onStartRecording}
-              variant="secondary"
-            />
-            <IconButton
-              icon={<Pause size={16} />}
-              label="Stop"
-              disabled={!isRecording}
-              onClick={onStopRecording}
-              variant={isRecording ? "danger" : "secondary"}
-            />
+            <IconOnlyButton icon={<Check size={16} />} disabled={!canSaveTitle || disabled} label="Save name" onClick={() => { onRenameMeeting(draftTitle); setIsRenaming(false); }} />
+            <IconOnlyButton icon={<X size={16} />} disabled={disabled} label="Cancel rename" onClick={() => { setIsRenaming(false); setDraftTitle(selectedMeeting.title); }} />
           </div>
-        </div>
-      ) : null}
-
-      <div className="process-bar">
-        <IconButton
-          icon={isRetryAction ? <RotateCcw size={16} /> : <Play size={16} />}
-          label={isRetryAction ? "Retry" : "Process"}
-          disabled={!canAct || !canProcess}
-          onClick={onProcess}
-          variant="primary"
-        />
-        <IconButton
-          icon={<RefreshCw size={16} />}
-          label="Status"
-          disabled={!canAct}
-          onClick={onRefreshStatus}
-          variant="secondary"
-        />
-        <IconButton
-          icon={<Trash2 size={16} />}
-          label="Delete"
-          disabled={!canAct}
-          onClick={() => setIsDeleteDialogOpen(true)}
-          variant="danger"
-        />
+        ) : (
+          <div className="action-bar__title-row">
+            <h2 className="action-bar__title">{selectedMeeting.title}</h2>
+            {selectedMeeting && (
+              <IconOnlyButton icon={<Pencil size={16} />} disabled={disabled} label="Rename meeting" onClick={() => { setDraftTitle(selectedMeeting.title); setIsRenaming(true); }} />
+            )}
+            {selectedMeeting && <StatusPill status={selectedMeeting.status} />}
+          </div>
+        )}
       </div>
 
-      <ProcessingProgress meeting={selectedMeeting} asset={lastAsset} latestJob={latestJob} />
+      {/* Right: action buttons */}
+      {selectedMeeting && (
+        <div className="action-bar__right">
+          {isDraft ? (
+            <>
+              <IconButton icon={<Upload size={16} />} label="Upload" disabled={!canUpload} variant="primary" onClick={() => fileInputRef.current?.click()} />
+              <input ref={fileInputRef} type="file" hidden accept="audio/*,video/mp4,video/webm,.txt,.md,.vtt,.srt,text/plain,text/markdown,text/vtt,application/x-subrip" onChange={(event) => { const file = event.target.files?.[0]; if (file) { onFileUpload(file); event.target.value = ""; } }} />
+              <IconButton icon={isRecording ? <Pause size={16} /> : <Mic size={16} />} label={isRecording ? "Stop" : "Record"} disabled={!canUpload && !isRecording} onClick={isRecording ? onStopRecording : onStartRecording} variant={isRecording ? "danger" : "primary"} />
+            </>
+          ) : canViewResult ? (
+            <IconButton icon={<Braces size={16} />} label="Result" disabled={!canAct} onClick={onViewResult} variant="primary" />
+          ) : (
+            <IconButton
+              icon={isRetryAction ? <RotateCcw size={16} /> : <Play size={16} />}
+              label={isProcessingLocked ? "Processing" : isRetryAction ? "Retry" : "Process"}
+              disabled={!canAct || !canProcess || isProcessingLocked}
+              title={isProcessingLocked ? "Meeting is currently being processed" : isRetryAction ? "Retry processing" : "Process meeting"}
+              onClick={onProcess}
+              variant="primary"
+            />
+          )}
+          {hasAsset && (
+            <IconButton icon={<Volume2 size={16} />} label="Playback" disabled={!canAct} onClick={onOpenPlayback} variant="primary" />
+          )}
+          <IconButton
+            icon={<Trash2 size={16} />}
+            label="Delete"
+            disabled={!canAct || isProcessingLocked}
+            title={isProcessingLocked ? "Cannot delete while meeting is being processed" : "Delete"}
+            onClick={() => setIsDeleteDialogOpen(true)}
+            variant="danger"
+          />
+          <IconButton icon={<RefreshCw size={16} />} label="Refresh" disabled={!canAct} onClick={() => { onRefreshStatus(); onRefreshHistory(); }} variant="secondary" />
+        </div>
+      )}
 
-      <p className="safe-message">{statusHint}</p>
-      {latestJob?.safeFailureReason ? <p className="safe-message">{latestJob.safeFailureReason}</p> : null}
       <ConfirmDialog
         isOpen={isDeleteDialogOpen}
         title="Delete meeting session"
         message={`Delete ${selectedMeeting?.title ?? "this meeting"}? This will delete its uploaded file, processing result, chunks, and chat history.`}
         confirmLabel="Delete session"
         onCancel={() => setIsDeleteDialogOpen(false)}
-        onConfirm={() => {
-          setIsDeleteDialogOpen(false);
-          onDeleteMeeting();
-        }}
+        onConfirm={() => { setIsDeleteDialogOpen(false); onDeleteMeeting(); }}
       />
     </section>
-  );
-}
-
-function meetingStatusHint(meeting: Meeting) {
-  if (meeting.status === "DRAFT") {
-    return "Waiting for one meeting file.";
-  }
-  if (meeting.status === "UPLOADED") {
-    return "File is locked for this meeting.";
-  }
-  if (meeting.status === "FAILED") {
-    return "Processing failed. The uploaded file remains locked for retry.";
-  }
-  if (meeting.status === "QUEUED" || meeting.status === "PROCESSING") {
-    return "Processing is running.";
-  }
-  return "Result is ready.";
-}
-
-function ProcessingProgress({
-  asset,
-  latestJob,
-  meeting
-}: {
-  asset: MeetingAsset | null;
-  latestJob: ProcessingJob | null;
-  meeting: Meeting | null;
-}) {
-  const steps = [
-    { label: "File", done: Boolean(asset), active: meeting?.status === "UPLOADED" },
-    { label: "Queued", done: Boolean(latestJob), active: meeting?.status === "QUEUED" },
-    { label: "Processing", done: meeting?.status === "READY", active: meeting?.status === "PROCESSING" },
-    { label: "Result", done: meeting?.status === "READY", active: meeting?.status === "READY" }
-  ];
-
-  return (
-    <div className="progress-panel">
-      <div className="progress-panel__topline">
-        <strong>{latestJob ? <StatusPill status={latestJob.status} /> : <StatusPill status={meeting?.status ?? "DRAFT"} />}</strong>
-        <span>{asset ? asset.fileName : "No file"}</span>
-      </div>
-      <div className="progress-steps">
-        {steps.map((step) => (
-          <span
-            key={step.label}
-            className={[
-              "progress-step",
-              step.done ? "progress-step--done" : "",
-              step.active ? "progress-step--active" : ""
-            ].join(" ")}
-          >
-            {step.label}
-          </span>
-        ))}
-      </div>
-    </div>
   );
 }

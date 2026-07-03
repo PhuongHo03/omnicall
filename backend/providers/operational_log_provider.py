@@ -20,6 +20,9 @@ class OperationalLogProvider(Protocol):
     def clear(self) -> int:
         ...
 
+    def delete_events(self, event_ids: list[str]) -> int:
+        ...
+
 
 class RedisOperationalLogProvider:
     def __init__(self, settings: Settings) -> None:
@@ -76,6 +79,16 @@ class RedisOperationalLogProvider:
             return int(self.client.delete(self.settings.operational_log_stream_key))
         except RedisError as exc:
             raise OperationalLogProviderError("Redis operational log clear failed.") from exc
+
+    def delete_events(self, event_ids: list[str]) -> int:
+        deleted = 0
+        try:
+            for event_id in event_ids:
+                result = self.client.xdel(self.settings.operational_log_stream_key, event_id)
+                deleted += result
+        except RedisError as exc:
+            raise OperationalLogProviderError("Redis operational log event delete failed.") from exc
+        return deleted
 
 
 def get_operational_log_provider() -> OperationalLogProvider:

@@ -2,7 +2,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
+from backend.models.enums import MeetingStatus
 from backend.configs.settings import Settings, get_settings
 from backend.providers.analysis_provider import SCHEMA_VERSION, AnalysisProvider
 from backend.providers.guardrail_provider import GuardrailProvider, get_guardrail_provider, safe_guardrail_check
@@ -12,7 +12,6 @@ from backend.repositories.meeting_repository import (
     MeetingAssetRepository,
     MeetingIntelligenceResultRepository,
     MeetingRepository,
-    ProcessingJobRepository,
 )
 from backend.services.retrieval_index_service import RetrievalIndexService
 from backend.services.operational_log_service import OperationalLogService
@@ -38,12 +37,11 @@ class ProcessingPipelineService:
         self.guardrail_provider = guardrail_provider or get_guardrail_provider()
         self.meetings = MeetingRepository(session)
         self.assets = MeetingAssetRepository(session)
-        self.jobs = ProcessingJobRepository(session)
         self.results = MeetingIntelligenceResultRepository(session)
         self.retrieval_index = retrieval_index or RetrievalIndexService(session)
         self.operational_logs = operational_logs
 
-    def process_meeting(self, *, job_id: str, meeting_id: str) -> dict[str, str]:
+    def process_meeting(self, *, meeting_id: str) -> dict[str, str]:
         lock_key = f"lock:meeting-processing:{meeting_id}"
         lock_token = self.lock_provider.acquire(lock_key)
         if lock_token is None:
@@ -54,35 +52,32 @@ class ProcessingPipelineService:
                 status="skipped",
                 message="Processing skipped because the meeting lock is already held.",
                 meeting_id=meeting_id,
-                job={"id": job_id, "queue": "meeting-processing"},
                 provider="redis-lock",
             )
-            return {"job_id": job_id, "meeting_id": meeting_id, "status": "locked"}
+            return {"meeting_id": meeting_id, "status": "locked"}
 
         try:
-            return self._process_with_lock(job_id=job_id, meeting_id=meeting_id)
+            return self._process_with_lock(meeting_id=meeting_id)
         finally:
             self.lock_provider.release(lock_key, lock_token)
 
-    def _process_with_lock(self, *, job_id: str, meeting_id: str) -> dict[str, str]:
-        job = self.jobs.get(job_id)
-        if job is None or job.meeting_id != meeting_id:
+    def _process_with_lock(self, *, meeting_id: str) -> dict[str, str]:
+        meeting = self.meetings.get(meeting_id)
+        if meeting is None:
             self._emit(
                 level="error",
                 flow="processing",
                 stage="worker_received",
                 status="failed",
-                message="Worker received an unknown processing job.",
+                message="Worker received an unknown meeting.",
                 meeting_id=meeting_id,
-                job={"id": job_id, "queue": "meeting-processing"},
                 provider="celery",
-                error_type="MissingProcessingJob",
-                error_message="Processing job was not found or did not match the meeting.",
+                error_type="MissingMeeting",
+                error_message="Meeting was not found.",
             )
-            return {"job_id": job_id, "meeting_id": meeting_id, "status": "missing"}
+            return {"meeting_id": meeting_id, "status": "missing"}
 
-        meeting = self.meetings.get(meeting_id)
-        if job.status == ProcessingJobStatus.SUCCEEDED:
+        if meeting.status == MeetingStatus.READY:
             self._emit(
                 level="info",
                 flow="processing",
@@ -91,25 +86,17 @@ class ProcessingPipelineService:
                 message="Worker skipped an already completed processing job.",
                 workspace_id=meeting.owner_user_id if meeting else None,
                 meeting_id=meeting_id,
-                job=_job_log_context(job),
                 provider="celery",
             )
-            return {"job_id": job_id, "meeting_id": meeting_id, "status": "skipped"}
+            return {"meeting_id": meeting_id, "status": "skipped"}
 
-        if job.status in {ProcessingJobStatus.FAILED, ProcessingJobStatus.RETRYING}:
-            self.jobs.update_status(job, ProcessingJobStatus.RETRYING)
+        if meeting.status == MeetingStatus.FAILED:
+            self.meetings.update_status(meeting, MeetingStatus.QUEUED)
             self.session.commit()
 
         asset = self.assets.get_latest_for_meeting(meeting_id)
-        if meeting is None or asset is None:
-            self.jobs.update_status(
-                job,
-                ProcessingJobStatus.FAILED,
-                safe_failure_reason="Meeting or uploaded asset was not found.",
-                internal_error="missing_meeting_or_asset",
-            )
-            if meeting is not None:
-                self.meetings.update_status(meeting, MeetingStatus.FAILED, "Meeting or uploaded asset was not found.")
+        if asset is None:
+            self.meetings.update_status(meeting, MeetingStatus.FAILED, "Meeting or uploaded asset was not found.")
             self.session.commit()
             self._emit(
                 level="error",
@@ -120,14 +107,12 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id if meeting else None,
                 meeting_id=meeting_id,
                 meeting_name=meeting.title if meeting is not None else None,
-                language=meeting.language if meeting is not None else None,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider="celery",
                 error_type="MissingMeetingAsset",
                 error_message="Meeting or uploaded asset was not found.",
             )
-            return {"job_id": job_id, "meeting_id": meeting_id, "status": "failed"}
+            return {"meeting_id": meeting_id, "status": "failed"}
 
         self._emit(
             level="info",
@@ -138,13 +123,11 @@ class ProcessingPipelineService:
             workspace_id=meeting.owner_user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            language=meeting.language,
             file=_asset_log_context(asset),
-            job=_job_log_context(job),
             provider="celery",
         )
-        self.jobs.update_status(job, ProcessingJobStatus.RUNNING, increment_attempts=True)
         self.meetings.update_status(meeting, MeetingStatus.PROCESSING)
+        self.meetings.increment_attempts(meeting)
         self.session.commit()
         self._emit(
             level="info",
@@ -155,9 +138,7 @@ class ProcessingPipelineService:
             workspace_id=meeting.owner_user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            language=meeting.language,
             file=_asset_log_context(asset),
-            job=_job_log_context(job),
         )
 
         processing_started = time.perf_counter()
@@ -170,7 +151,6 @@ class ProcessingPipelineService:
                 message="Transcript extraction started.",
                 meeting=meeting,
                 asset=asset,
-                job=job,
                 provider=transcription_route["provider"],
                 model=transcription_route["model"],
                 details=transcription_route["details"],
@@ -186,9 +166,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider=self.transcription_provider.last_provider_name,
                 model=self.transcription_provider.last_provider_model,
                 duration_ms=transcription_duration_ms,
@@ -197,7 +175,6 @@ class ProcessingPipelineService:
             self._emit_voice_stage_results(
                 meeting=meeting,
                 asset=asset,
-                job=job,
                 transcript_segments=transcript_segments,
                 transcription_duration_ms=transcription_duration_ms,
             )
@@ -214,9 +191,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider=transcript_guardrail.get("provider") if transcript_guardrail else "disabled",
                 model=transcript_guardrail.get("model") if transcript_guardrail else None,
                 duration_ms=_elapsed_ms(stage_started),
@@ -232,7 +207,6 @@ class ProcessingPipelineService:
                 message="Meeting intelligence analysis started.",
                 meeting=meeting,
                 asset=asset,
-                job=job,
                 provider=self.analysis_provider.provider_name,
                 model=self.analysis_provider.provider_model,
             )
@@ -253,9 +227,7 @@ class ProcessingPipelineService:
                     workspace_id=meeting.owner_user_id,
                     meeting_id=meeting.id,
                     meeting_name=meeting.title,
-                    language=meeting.language,
                     file=_asset_log_context(asset),
-                    job=_job_log_context(job),
                     provider=getattr(primary, "provider_name", None),
                     model=getattr(primary, "model_name", None),
                     duration_ms=_elapsed_ms(stage_started),
@@ -273,9 +245,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider=runtime_provider,
                 model=runtime_model,
                 duration_ms=_elapsed_ms(stage_started),
@@ -306,9 +276,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 duration_ms=_elapsed_ms(stage_started),
                 details={"schemaVersion": SCHEMA_VERSION, "segmentCount": len(transcript_segments)},
             )
@@ -317,7 +285,7 @@ class ProcessingPipelineService:
             stage_started = time.perf_counter()
             result = self.results.upsert(
                 meeting_id=meeting.id,
-                processing_job_id=job.id,
+                
                 schema_version=SCHEMA_VERSION,
                 provider_name=self.analysis_provider.last_provider_name,
                 provider_model=self.analysis_provider.last_provider_model,
@@ -332,9 +300,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 duration_ms=_elapsed_ms(stage_started),
                 details={
                     "resultId": result.id,
@@ -355,9 +321,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider=index_metadata.get("embeddingProvider"),
                 model=index_metadata.get("embeddingModel"),
                 duration_ms=index_metadata.get("embeddingDurationMs"),
@@ -374,9 +338,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider=index_metadata.get("vectorProvider"),
                 model=self.settings.milvus_collection,
                 duration_ms=index_metadata.get("vectorDurationMs"),
@@ -384,25 +346,8 @@ class ProcessingPipelineService:
                 error_type="VectorProviderError" if vector_failed else None,
                 error_message=vector_metadata.get("error") if vector_failed else None,
             )
-            job.payload = {
-                **(job.payload or {}),
-                "providerMetadata": {
-                    "schemaVersion": SCHEMA_VERSION,
-                    "transcriptionProvider": self.transcription_provider.last_provider_name,
-                    "transcriptionModel": self.transcription_provider.last_provider_model,
-                    "voiceMetadata": getattr(self.transcription_provider, "last_voice_metadata", {}),
-                    "guardrails": {"transcript": transcript_guardrail} if transcript_guardrail else {},
-                    "analysisProvider": self.analysis_provider.last_provider_name,
-                    "analysisModel": self.analysis_provider.last_provider_model,
-                },
-                "retrievalMetadata": {
-                    "chunkCount": len(retrieval_chunks),
-                    "embeddingProvider": self.retrieval_index.embedding_provider.provider_name,
-                    "embeddingModel": self.retrieval_index.embedding_provider.model_name,
-                    "vectorIndex": self.retrieval_index.last_vector_metadata,
-                },
-            }
-            self.jobs.update_status(job, ProcessingJobStatus.SUCCEEDED)
+
+            self.meetings.update_status(meeting, MeetingStatus.READY)
             self.meetings.update_status(meeting, MeetingStatus.READY)
             self.session.commit()
             self._emit(
@@ -414,9 +359,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 duration_ms=_elapsed_ms(processing_started),
                 details={
                     "resultId": result.id,
@@ -425,22 +368,13 @@ class ProcessingPipelineService:
                     "chunkCount": len(retrieval_chunks),
                 },
             )
-            return {"job_id": job.id, "meeting_id": meeting.id, "status": "succeeded"}
+            return {"meeting_id": meeting.id, "status": "succeeded"}
         except Exception as exc:
             self.session.rollback()
-            job = self.jobs.get(job_id)
-            if job is None:
-                return {"job_id": job_id, "meeting_id": meeting_id, "status": "missing"}
             meeting = self.meetings.get(meeting_id)
             if meeting is None:
-                return {"job_id": job_id, "meeting_id": meeting_id, "status": "missing"}
+                return {"meeting_id": meeting_id, "status": "missing"}
             safe_reason = "Meeting processing failed. Please retry later."
-            self.jobs.update_status(
-                job,
-                ProcessingJobStatus.FAILED,
-                safe_failure_reason=safe_reason,
-                internal_error=repr(exc),
-            )
             self.meetings.update_status(meeting, MeetingStatus.FAILED, safe_reason)
             self.session.commit()
             failed_stage = self._transcription_failure_stage() if current_stage == "transcription" else current_stage
@@ -454,9 +388,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job=_job_log_context(job),
                 provider=provider,
                 model=model,
                 duration_ms=_elapsed_ms(stage_started),
@@ -464,7 +396,7 @@ class ProcessingPipelineService:
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
-            return {"job_id": job.id, "meeting_id": meeting.id, "status": "failed"}
+            return {"meeting_id": meeting.id, "status": "failed"}
 
     def _emit_stage_started(
         self,
@@ -473,7 +405,6 @@ class ProcessingPipelineService:
         message: str,
         meeting,
         asset,
-        job,
         provider: str,
         model: str,
         details: dict | None = None,
@@ -487,9 +418,7 @@ class ProcessingPipelineService:
             workspace_id=meeting.owner_user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            language=meeting.language,
             file=_asset_log_context(asset),
-            job=_job_log_context(job),
             provider=provider,
             model=model,
             details=details or {},
@@ -515,7 +444,6 @@ class ProcessingPipelineService:
         *,
         meeting,
         asset,
-        job,
         transcript_segments: list,
         transcription_duration_ms: int,
     ) -> None:
@@ -530,9 +458,7 @@ class ProcessingPipelineService:
             "workspace_id": meeting.owner_user_id,
             "meeting_id": meeting.id,
             "meeting_name": meeting.title,
-            "language": meeting.language,
             "file": _asset_log_context(asset),
-            "job": _job_log_context(job),
         }
         self._emit(
             **common,
@@ -797,13 +723,13 @@ def _asset_log_context(asset) -> dict:
     }
 
 
-def _job_log_context(job) -> dict:
+def _job_log_context(meeting) -> dict:
     return {
-        "id": job.id,
-        "attempt": job.attempts,
+        "id": meeting.id,
+        "attempt": meeting.attempts,
         "queue": "meeting-processing",
         "taskName": "omnicall.processing.process_meeting",
-        "status": str(job.status),
+        "status": str(meeting.status),
     }
 
 

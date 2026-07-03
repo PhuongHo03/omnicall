@@ -2,22 +2,30 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
+from backend.models.enums import MeetingStatus
 
 
 class MeetingCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=240)
+
+
+class MeetingUpdateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=240)
-    language: str | None = Field(default=None, max_length=16)
 
 
 class MeetingResponse(BaseModel):
     id: str
     title: str
-    language: str | None
     status: MeetingStatus
     failure_reason: str | None
+    pending_chat_status: str | None = None
     created_at: datetime
     updated_at: datetime
+    latest_asset: "MeetingAssetResponse | None" = None
+
+class MeetingDetailResponse(MeetingResponse):
+    latest_asset: "MeetingAssetResponse | None" = None
+    retry_allowed: bool = False
 
 
 class MeetingListResponse(BaseModel):
@@ -34,25 +42,8 @@ class MeetingAssetResponse(BaseModel):
     created_at: datetime
 
 
-class ProcessingJobResponse(BaseModel):
-    id: str
-    meeting_id: str
-    status: ProcessingJobStatus
-    safe_failure_reason: str | None
-    retry_allowed: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-class ProcessingStatusResponse(BaseModel):
-    meeting: MeetingResponse
-    latest_job: ProcessingJobResponse | None
-    latest_asset: MeetingAssetResponse | None
-
-
 class MeetingChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
-    language: str | None = Field(default=None, max_length=16)
 
 
 class MeetingChatCitationResponse(BaseModel):
@@ -82,6 +73,11 @@ class MeetingChatResponse(BaseModel):
     evidence_state: str
     citations: list[MeetingChatCitationResponse]
     message: MeetingChatMessageResponse
+
+
+class MeetingChatAcceptedResponse(BaseModel):
+    status: str = "processing"
+    message: str = "Question accepted. Answer is being generated."
 
 
 class MeetingChatHistoryResponse(BaseModel):

@@ -1,21 +1,16 @@
-import type { MeetingStatus, ProcessingJobStatus } from "../types/meetingTypes";
+import type { MeetingStatus } from "../types/meetingTypes";
 
 type StatusPillProps = {
-  status: MeetingStatus | ProcessingJobStatus;
+  status: MeetingStatus;
 };
 
 const statusTone: Record<string, string> = {
   DRAFT: "neutral",
-  UPLOADED: "teal",
-  QUEUED: "indigo",
+  QUEUED: "amber",
   PROCESSING: "amber",
   READY: "green",
-  FAILED: "red",
-  PENDING: "indigo",
-  RUNNING: "amber",
-  RETRYING: "amber",
-  SUCCEEDED: "green",
-  CANCELLED: "neutral"
+  UPLOADED: "blue",
+  FAILED: "red"
 };
 
 export function StatusPill({ status }: StatusPillProps) {

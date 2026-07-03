@@ -259,9 +259,9 @@ def _intent_section_types(query: str) -> list[str]:
     if _contains_any(normalized, ["mo hinh", "mô hình", "provider", "nguon", "nguồn", "tep", "tệp", "file nao", "file nào", "xu ly bang", "xử lý bằng", "phan tich bang", "phân tích bằng", "tao luc nao", "tạo lúc nào"]):
         return ["source.processing", "source.voiceMetadata", "source.guardrails", "meeting.metadata"]
 
-    if tokens.intersection({"title", "language", "duration", "started", "metadata"}):
+    if tokens.intersection({"title", "duration", "started", "metadata"}):
         return ["meeting.metadata", "transcript.coverage", "source.processing"]
-    if _contains_any(normalized, ["ten cuoc hop", "tên cuộc họp", "ngon ngu", "ngôn ngữ", "thoi luong", "thời lượng", "keo dai", "kéo dài", "bat dau", "bắt đầu"]):
+    if _contains_any(normalized, ["ten cuoc hop", "tên cuộc họp", "thoi luong", "thời lượng", "keo dai", "kéo dài", "bat dau", "bắt đầu"]):
         return ["meeting.metadata", "transcript.coverage", "source.processing"]
 
     if tokens.intersection({"empty", "missing", "unsupported", "unknown", "evidence"}):

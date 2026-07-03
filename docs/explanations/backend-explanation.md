@@ -135,9 +135,10 @@ Current public backend route:
 | `POST` | `/api/files` | Upload an account-scoped file |
 | `GET` | `/api/files/{fileId}/content` | Authorized account file bytes for playback/download |
 | `DELETE` | `/api/files/{fileId}` | Delete an owned unlinked account file |
-| `POST` | `/api/meetings` | Created meeting shell |
+| `POST` | `/api/meetings` | Created meeting shell with generated ID as the default title |
 | `GET` | `/api/meetings` | Meetings owned by the current account |
 | `GET` | `/api/meetings/{meetingId}` | Meeting detail and status |
+| `PATCH` | `/api/meetings/{meetingId}` | Rename an owned meeting |
 | `DELETE` | `/api/meetings/{meetingId}` | Delete an owned meeting session with cascading cleanup |
 | `POST` | `/api/meetings/{meetingId}/assets` | Uploaded audio/video/text asset metadata; one asset per meeting |
 | `GET` | `/api/meetings/{meetingId}/assets/{assetId}/content` | Authorized uploaded asset bytes for browser playback or download |
@@ -255,7 +256,7 @@ Alembic migration `0001_initial_schema` is the consolidated local-dev baseline. 
 | `users` | Local account identity, password hash, display name, and authoritative `Admin`/`User` role |
 | `account_sessions` | Hashed bearer sessions with expiry and revocation |
 | `audit_events` | Durable security/audit trail for auth, file, metrics, upload, and deletion flows |
-| `meetings` | Main meeting aggregate, owner, language, status, and safe failure reason |
+| `meetings` | Main meeting aggregate, owner, title, status, and safe failure reason |
 | `meeting_assets` | MinIO object metadata for both meeting-linked uploads and standalone account file-library uploads |
 | `processing_jobs` | Async processing state, idempotency key, retry/failure metadata, and provider payload metadata |
 | `meeting_intelligence_results` | Versioned processed transcript JSON stored as PostgreSQL JSONB; this is the authoritative product artifact |
@@ -415,7 +416,7 @@ POST /api/meetings/{meetingId}/chat
 -> return answer, evidence state, and source citations
 ```
 
-Retrieval search prefers Milvus when available, then reloads the returned `chunk_id` values from PostgreSQL within the authorized meeting. If Milvus is unavailable, empty, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`, combining lexical overlap, model embedding similarity, and structured-section priority. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: participant/count/role questions pin participant chunks; quality/confidence/warning questions pin quality, transcript coverage, voice metadata, and guardrail metadata; source/model/file questions pin source metadata; meeting-title/language/duration questions pin meeting metadata; missing-evidence questions pin `analysis.emptySections`; metric/entity/glossary questions pin those analysis sections; overview/key-point questions pin executive summary, detailed summary, key points, and topics; reason/cause questions pin detailed summary, requirements, constraints, blockers, and key points; return/refund/process questions pin detailed summary, requirements, constraints, blockers, follow-ups, and key points; action questions pin action items/follow-ups/decisions; risk questions pin risks/blockers/open questions; decision/outcome questions pin decisions/outcomes; and timeline questions pin timeline/follow-up sections. This prevents broad Vietnamese questions from being answered only from semantically noisy transcript snippets.
+Retrieval search prefers Milvus when available, then reloads the returned `chunk_id` values from PostgreSQL within the authorized meeting. If Milvus is unavailable, empty, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`, combining lexical overlap, model embedding similarity, and structured-section priority. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: participant/count/role questions pin participant chunks; quality/confidence/warning questions pin quality, transcript coverage, voice metadata, and guardrail metadata; source/model/file questions pin source metadata; meeting-title/duration questions pin meeting metadata; missing-evidence questions pin `analysis.emptySections`; metric/entity/glossary questions pin those analysis sections; overview/key-point questions pin executive summary, detailed summary, key points, and topics; reason/cause questions pin detailed summary, requirements, constraints, blockers, and key points; return/refund/process questions pin detailed summary, requirements, constraints, blockers, follow-ups, and key points; action questions pin action items/follow-ups/decisions; risk questions pin risks/blockers/open questions; decision/outcome questions pin decisions/outcomes; and timeline questions pin timeline/follow-up sections. This prevents broad Vietnamese questions from being answered only from semantically noisy transcript snippets.
 
 If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. If input guardrails block the user question, the service stores a safe placeholder user message and a safe assistant refusal without calling retrieval or the answer LLM. If retrieved context is suspicious because it has prompt-injection, jailbreak, system-prompt, exfiltration, or bypass categories, answer generation is skipped. In non-strict local mode, provider timeouts/outages and other retrieved-context block decisions from the local guardrail model are downgraded to auditable warnings so normal customer-support, refund, order, or contact-detail meeting context does not overblock answers. These fail-open provider warnings are emitted to operational logs as `info` events with `warned` status instead of red failure events because the answer flow continues and persists normally. If output guardrails block an unsupported answer, the assistant response is downgraded to `not_enough_evidence`. Provider prompts and raw provider responses are not saved in chat history.
 
@@ -564,7 +565,7 @@ curl -X POST http://127.0.0.1:8080/api/meetings \
   -H "X-User-ID: 11111111-1111-4111-8111-111111111111" \
   -H "X-Workspace-ID: 22222222-2222-4222-8222-222222222222" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Example meeting","language":"vi"}'
+  -d '{}'
 ```
 
 Read the processed result after the meeting reaches `READY`:
@@ -614,4 +615,4 @@ Phase 8 operational-log verification on 2026-06-19 confirmed:
 | Admin account deletion and cleanup tests | Passed |
 | Account deletion processing-lock, queued-job revoke, and metrics-cache invalidation tests | Passed |
 
-*Document reflects project state after Phase 9 full JSON RAG coverage and LLM operational-log model labeling updates on **2026-06-25**. Backend behavior includes repository-owned ASR/diarization/rerank runtime contracts, operator-facing model tuning through `.env`, Admin-only temporary Redis Stream logs, and the previously verified auth, storage, deletion, metrics, processing, retrieval, guardrail, and chat behavior.*
+*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-26**. Backend behavior includes meeting creation with generated-ID default titles, owner-scoped meeting rename, ASR auto-detected speech language, repository-owned ASR/diarization/rerank runtime contracts, operator-facing model tuning through `.env`, Admin-only temporary Redis Stream logs, and the previously verified auth, storage, deletion, metrics, processing, retrieval, guardrail, and chat behavior.*

@@ -3,28 +3,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   askMeetingChat,
   createMeeting,
-  deleteAccountFile,
   deleteMeetingSession,
-  downloadAccountFile,
   downloadMeetingAsset,
   getMeetingIntelligenceResult,
   getMeetingChatHistory,
-  getProcessingStatus,
-  listAccountFiles,
+  getMeeting,
   listMeetings,
   queueMeetingProcessing,
-  uploadAccountFile,
+  streamChatEvents,
+  updateMeetingTitle,
   uploadMeetingAsset
 } from "../api/meetingApi";
+import type { ChatStreamEvent } from "../api/meetingApi";
 import type {
-  AccountFile,
   Meeting,
   MeetingAsset,
   MeetingChatMessage,
-  MeetingDraft,
   MeetingIntelligenceResult,
-  ProcessingJob
 } from "../types/meetingTypes";
+import type { TranscriptEntry } from "../types/meetingTypes";
 import { createClientId } from "../../../shared/utils/id";
 
 function requestKey(prefix: string) {
@@ -50,11 +47,6 @@ function isAudioAsset(asset: MeetingAsset | null) {
   return asset?.contentType.startsWith("audio/") === true;
 }
 
-const CHAT_RECOVERY_ATTEMPTS = 10;
-const CHAT_RECOVERY_DELAY_MS = 3000;
-const CHAT_STREAM_MAX_STEPS = 160;
-const CHAT_STREAM_STEP_MS = 35;
-const CHAT_THINKING_TEXT = "Đang tra cứu...";
 
 function normalizeChatContent(value: string) {
   return value.trim().replace(/\s+/g, " ");
@@ -123,28 +115,14 @@ function createOptimisticChatMessage(role: "user" | "assistant", content: string
   };
 }
 
-function buildStreamChunks(content: string) {
-  const tokens = content.match(/\S+\s*/g) ?? [content];
-  const groupSize = Math.max(1, Math.ceil(tokens.length / CHAT_STREAM_MAX_STEPS));
-  const chunks: string[] = [];
-  for (let index = 0; index < tokens.length; index += groupSize) {
-    chunks.push(tokens.slice(index, index + groupSize).join(""));
-  }
-  return chunks;
-}
 
 export function useMeetingWorkspace(
   token: string,
   requestedMeetingId: string | null,
   onSelectedMeetingChange: (meetingId: string | null) => void
 ) {
-  const [draft, setDraft] = useState<MeetingDraft>({ title: "", language: "vi" });
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [accountFiles, setAccountFiles] = useState<AccountFile[]>([]);
-  const [filePlaybackUrl, setFilePlaybackUrl] = useState<string | null>(null);
-  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(requestedMeetingId);
-  const [latestJob, setLatestJob] = useState<ProcessingJob | null>(null);
   const [lastAsset, setLastAsset] = useState<MeetingAsset | null>(null);
   const [assetPlaybackUrl, setAssetPlaybackUrl] = useState<string | null>(null);
   const [intelligenceResult, setIntelligenceResult] = useState<MeetingIntelligenceResult | null>(null);
@@ -153,11 +131,15 @@ export function useMeetingWorkspace(
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoadedMeetings, setHasLoadedMeetings] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [typewriterMessageIds, setTypewriterMessageIds] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
+  const currentMeetingIdRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<BlobPart[]>([]);
-  const chatStreamGenerationRef = useRef(0);
+  const chatPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseCloseRef = useRef<(() => void) | null>(null);
+  const prevSelectedStatusRef = useRef<string | null>(null);
 
   const selectedMeeting = useMemo(
     () => meetings.find((meeting) => meeting.id === selectedMeetingId) ?? null,
@@ -191,14 +173,6 @@ export function useMeetingWorkspace(
     setHasLoadedMeetings(true);
   }, [token]);
 
-  const refreshAccountFiles = useCallback(async () => {
-    setAccountFiles(await listAccountFiles(token));
-  }, [token]);
-
-  useEffect(() => {
-    void run(refreshMeetings);
-    void run(refreshAccountFiles);
-  }, [refreshAccountFiles, refreshMeetings, run]);
 
   useEffect(() => {
     if (!hasLoadedMeetings) {
@@ -217,17 +191,16 @@ export function useMeetingWorkspace(
   }, [hasLoadedMeetings, meetings, onSelectedMeetingChange, requestedMeetingId]);
 
   useEffect(() => {
-    chatStreamGenerationRef.current += 1;
-    setChatQuestion("");
+    currentMeetingIdRef.current = selectedMeetingId;
+      setChatQuestion("");
     setChatMessages([]);
-    setLatestJob(null);
     setLastAsset(null);
     setAssetPlaybackUrl(null);
     setIntelligenceResult(null);
   }, [selectedMeetingId]);
 
   useEffect(() => {
-    if (!selectedMeeting || !lastAsset || !isAudioAsset(lastAsset)) {
+    if (!selectedMeeting || !lastAsset || !isAudioAsset(lastAsset) || lastAsset.meetingId !== selectedMeeting.id) {
       setAssetPlaybackUrl(null);
       return;
     }
@@ -257,95 +230,241 @@ export function useMeetingWorkspace(
     };
   }, [lastAsset?.id, selectedMeeting?.id, token]);
 
+  const startChatWatch = useCallback((meetingId: string, options?: { statusMessageId?: string }) => {
+    const statusMessageId = options?.statusMessageId ?? null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT = 3;
+    const RECONNECT_DELAY_MS = 2000;
+
+    const cleanup = () => {
+      if (sseCloseRef.current) {
+        sseCloseRef.current();
+        sseCloseRef.current = null;
+      }
+      if (chatPollingRef.current) {
+        clearInterval(chatPollingRef.current);
+        chatPollingRef.current = null;
+      }
+    };
+
+    cleanup();
+
+    const connectSse = () => {
+      if (currentMeetingIdRef.current !== meetingId) return;
+
+      const closeSse = streamChatEvents(token, meetingId, (event: ChatStreamEvent) => {
+        if (currentMeetingIdRef.current !== meetingId) return;
+        reconnectAttempts = 0; // Reset on successful event
+        if (event.type === "status" && statusMessageId) {
+          setChatMessages((current) =>
+            current.map((item) =>
+              item.id === statusMessageId
+                ? { ...item, content: event.message }
+                : item
+            )
+          );
+        } else if (event.type === "done" || event.type === "blocked") {
+          cleanup();
+          void getMeetingChatHistory(token, meetingId).then((history) => {
+            setChatMessages(history.messages);
+            const lastMsg = history.messages[history.messages.length - 1];
+            if (lastMsg && lastMsg.role === "assistant") {
+              setTypewriterMessageIds((prev) => new Set(prev).add(lastMsg.id));
+            }
+          });
+        }
+      }, undefined, () => {
+        // SSE ended — try reconnect if still waiting
+        sseCloseRef.current = null;
+        if (currentMeetingIdRef.current !== meetingId) return;
+        if (chatPollingRef.current && reconnectAttempts < MAX_RECONNECT) {
+          reconnectAttempts += 1;
+          setTimeout(connectSse, RECONNECT_DELAY_MS);
+        }
+      });
+      sseCloseRef.current = closeSse;
+    };
+
+    connectSse();
+
+    // Polling for reliable answer detection
+    chatPollingRef.current = setInterval(() => {
+      if (currentMeetingIdRef.current !== meetingId) {
+        cleanup();
+        return;
+      }
+      void getMeetingChatHistory(token, meetingId).then((history) => {
+        const lastMsg = history.messages[history.messages.length - 1];
+        if (lastMsg && lastMsg.role === "assistant" && !lastMsg.metadata.pending) {
+          cleanup();
+          setChatMessages(history.messages);
+          setTypewriterMessageIds((prev) => new Set(prev).add(lastMsg.id));
+        }
+      });
+    }, 3000);
+  }, [token]);
+
+  const stopChatWatch = useCallback(() => {
+    if (sseCloseRef.current) {
+      sseCloseRef.current();
+      sseCloseRef.current = null;
+    }
+    if (chatPollingRef.current) {
+      clearInterval(chatPollingRef.current);
+      chatPollingRef.current = null;
+    }
+  }, []);
+
+  const checkPendingAnswer = useCallback(async (
+    meetingId: string,
+    messages: MeetingChatMessage[],
+    pendingChatStatus?: string | null,
+  ): Promise<void> => {
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage || lastMessage.role !== "user") {
+      return;
+    }
+    // Guard: don't create duplicate optimistic messages
+    stopChatWatch();
+    let ragStatus = pendingChatStatus;
+    if (ragStatus === undefined) {
+      try {
+        const detail = await getMeeting(token, meetingId);
+        ragStatus = detail.pendingChatStatus;
+      } catch {
+        ragStatus = "started";
+      }
+    }
+    if (!ragStatus) {
+      // RAG task is not pending — don't create optimistic message
+      return;
+    }
+    const initialMessage = ragStatus === "queued" ? "Đang chờ xử lý..." : "Đang xử lý...";
+    const optimisticAssistant = createOptimisticChatMessage("assistant", initialMessage);
+    setChatMessages((current) => [...current, optimisticAssistant]);
+    startChatWatch(meetingId, { statusMessageId: optimisticAssistant.id });
+  }, [startChatWatch, stopChatWatch, token]);
+  const pollMeetings = useCallback(async () => {
+    const nextMeetings = await listMeetings(token);
+    const selectedId = currentMeetingIdRef.current;
+    const nextSelected = selectedId ? nextMeetings.find((m) => m.id === selectedId) ?? null : null;
+    const prevStatus = prevSelectedStatusRef.current;
+    const nextStatus = nextSelected?.status ?? null;
+
+    setMeetings(nextMeetings);
+    setHasLoadedMeetings(true);
+
+    if (selectedId && nextSelected && ((prevStatus && prevStatus !== nextStatus) || (!prevStatus && (nextStatus === "QUEUED" || nextStatus === "PROCESSING")))) {
+      if (nextStatus === "READY") {
+        const [intelligenceResult, chatHistory] = await Promise.all([
+          getMeetingIntelligenceResult(token, selectedId),
+          getMeetingChatHistory(token, selectedId),
+        ]);
+        if (currentMeetingIdRef.current !== selectedId) return;
+        setIntelligenceResult(intelligenceResult);
+        setChatMessages(chatHistory.messages);
+        setLastAsset(nextSelected.latestAsset);
+        checkPendingAnswer(selectedId, chatHistory.messages, nextSelected?.pendingChatStatus);
+      } else if (nextStatus !== "QUEUED" && nextStatus !== "PROCESSING") {
+        if (currentMeetingIdRef.current !== selectedId) return;
+        setIntelligenceResult(null);
+        setChatMessages([]);
+      } else {
+        // QUEUED or PROCESSING on first load — start watching for answer
+        const chatHistory = await getMeetingChatHistory(token, selectedId);
+        if (currentMeetingIdRef.current !== selectedId) return;
+        setChatMessages(chatHistory.messages);
+        setLastAsset(nextSelected.latestAsset);
+        checkPendingAnswer(selectedId, chatHistory.messages, nextSelected?.pendingChatStatus);
+      }
+    }
+    if (nextSelected) {
+      prevSelectedStatusRef.current = nextStatus;
+    }
+  }, [token, checkPendingAnswer]);
+
+
   const refreshSelectedMeetingState = useCallback(
     async (meeting: Meeting) => {
-      const status = await getProcessingStatus(token, meeting.id);
-      setMeetings((current) => current.map((item) => (item.id === status.meeting.id ? status.meeting : item)));
-      setLatestJob(status.latestJob);
-      setLastAsset(status.latestAsset);
-      if (status.meeting.status === "READY") {
-        setIntelligenceResult(await getMeetingIntelligenceResult(token, meeting.id));
-        const chatHistory = await getMeetingChatHistory(token, meeting.id);
+      const detail = await getMeeting(token, meeting.id);
+      if (currentMeetingIdRef.current !== meeting.id) {
+        return;
+      }
+      setMeetings((current) => current.map((item) => (item.id === detail.id ? detail : item)));
+      setLastAsset(detail.latestAsset);
+      if (detail.status === "READY") {
+        const [intelligenceResult, chatHistory] = await Promise.all([
+          getMeetingIntelligenceResult(token, meeting.id),
+          getMeetingChatHistory(token, meeting.id),
+        ]);
+        if (currentMeetingIdRef.current !== meeting.id) {
+          return;
+        }
+        setIntelligenceResult(intelligenceResult);
         setChatMessages(chatHistory.messages);
+        checkPendingAnswer(meeting.id, chatHistory.messages, detail.pendingChatStatus);
+      } else if (detail.status === "QUEUED" || detail.status === "PROCESSING") {
+        const chatHistory = await getMeetingChatHistory(token, meeting.id);
+        if (currentMeetingIdRef.current !== meeting.id) {
+          return;
+        }
+        setIntelligenceResult(null);
+        setChatMessages(chatHistory.messages);
+        checkPendingAnswer(meeting.id, chatHistory.messages, detail.pendingChatStatus);
       } else {
         setIntelligenceResult(null);
         setChatMessages([]);
       }
     },
-    [token]
+    [token, checkPendingAnswer]
   );
-
-  const streamAssistantMessage = useCallback(async (placeholderId: string, message: MeetingChatMessage) => {
-    const generation = chatStreamGenerationRef.current;
-    const chunks = buildStreamChunks(message.content);
-    let streamedContent = "";
-
-    setChatMessages((current) =>
-      current.map((item) =>
-        item.id === placeholderId
-          ? {
-              ...message,
-              id: placeholderId,
-              content: "",
-              citations: [],
-              metadata: { ...message.metadata, local: true, streaming: true }
-            }
-          : item
-      )
-    );
-
-    for (const chunk of chunks) {
-      if (chatStreamGenerationRef.current !== generation) {
-        return false;
-      }
-      streamedContent += chunk;
-      setChatMessages((current) =>
-        current.map((item) => (item.id === placeholderId ? { ...item, content: streamedContent } : item))
-      );
-      await wait(CHAT_STREAM_STEP_MS);
-    }
-
-    if (chatStreamGenerationRef.current !== generation) {
-      return false;
-    }
-
-    setChatMessages((current) => current.map((item) => (item.id === placeholderId ? message : item)));
-    return true;
-  }, []);
 
   useEffect(() => {
     if (!selectedMeeting) {
+      prevSelectedStatusRef.current = null;
       return;
     }
-    const meeting = selectedMeeting;
+    prevSelectedStatusRef.current = selectedMeeting.status;
     void run(async () => {
-      await refreshSelectedMeetingState(meeting);
+      await refreshSelectedMeetingState(selectedMeeting);
     });
   }, [refreshSelectedMeetingState, run, selectedMeeting?.id]);
 
   useEffect(() => {
-    if (!selectedMeeting || !isProcessingMeeting(selectedMeeting)) {
-      return;
-    }
-    const meeting = selectedMeeting;
+    void pollMeetings();
+    const anyProcessing = meetings.some((m) => isProcessingMeeting(m));
+    const intervalMs = anyProcessing ? 1000 : 5000;
     const interval = window.setInterval(() => {
-      void refreshSelectedMeetingState(meeting);
-    }, 3000);
+      void pollMeetings();
+    }, intervalMs);
     return () => window.clearInterval(interval);
-  }, [refreshSelectedMeetingState, selectedMeeting?.id, selectedMeeting?.status]);
+  }, [pollMeetings, meetings.some((m) => isProcessingMeeting(m))]);
 
-  const submitMeeting = useCallback(() => {
+  const createNewMeeting = useCallback(() => {
     void run(async () => {
-      const created = await createMeeting(token, draft.title, draft.language);
-      setDraft({ title: "", language: draft.language });
+      const created = await createMeeting(token);
       setMeetings((current) => [created, ...current]);
       selectMeeting(created.id);
-      setLatestJob(null);
-      setLastAsset(null);
+        setLastAsset(null);
       setIntelligenceResult(null);
       setNotice("Meeting created.");
     });
-  }, [draft, run, selectMeeting, token]);
+  }, [run, selectMeeting, token]);
+
+  const renameSelectedMeeting = useCallback(
+    (title: string) => {
+      if (!selectedMeeting) {
+        setError("Select a meeting first.");
+        return;
+      }
+      void run(async () => {
+        const updated = await updateMeetingTitle(token, selectedMeeting.id, title);
+        setMeetings((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+        setNotice("Meeting renamed.");
+      });
+    },
+    [run, selectedMeeting, token]
+  );
 
   const uploadFile = useCallback(
     (file: File) => {
@@ -362,54 +481,13 @@ export function useMeetingWorkspace(
         setLastAsset(asset);
         setNotice("Upload completed.");
         await refreshMeetings();
-        await refreshAccountFiles();
       });
     },
-    [lastAsset, refreshAccountFiles, refreshMeetings, run, selectedMeeting, token]
+    [lastAsset, refreshMeetings, run, selectedMeeting, token]
   );
 
-  const uploadLibraryFile = useCallback(
-    (file: File) => {
-      void run(async () => {
-        await uploadAccountFile(token, file);
-        await refreshAccountFiles();
-        setNotice("File stored.");
-      });
-    },
-    [refreshAccountFiles, run, token]
-  );
 
-  const playLibraryFile = useCallback(
-    (fileId: string) => {
-      void run(async () => {
-        const blob = await downloadAccountFile(token, fileId);
-        setSelectedFileId(fileId);
-        setFilePlaybackUrl((current) => {
-          if (current) {
-            URL.revokeObjectURL(current);
-          }
-          return URL.createObjectURL(blob);
-        });
-      });
-    },
-    [run, token]
-  );
 
-  const deleteLibraryFile = useCallback(
-    (fileId: string) => {
-      void run(async () => {
-        await deleteAccountFile(token, fileId);
-        if (selectedFileId === fileId && filePlaybackUrl) {
-          URL.revokeObjectURL(filePlaybackUrl);
-          setFilePlaybackUrl(null);
-          setSelectedFileId(null);
-        }
-        await refreshAccountFiles();
-        setNotice("File deleted.");
-      });
-    },
-    [filePlaybackUrl, refreshAccountFiles, run, selectedFileId, token]
-  );
 
   const queueProcessing = useCallback(() => {
     if (!selectedMeeting) {
@@ -421,12 +499,11 @@ export function useMeetingWorkspace(
       return;
     }
     void run(async () => {
-      const job = await queueMeetingProcessing(token, selectedMeeting.id, requestKey("process"));
-      setLatestJob(job);
-      setNotice(job.status === "FAILED" ? "Processing could not be queued." : "Processing queued.");
-      await refreshMeetings();
+      const meeting = await queueMeetingProcessing(token, selectedMeeting.id, requestKey("process"));
+      setMeetings((current) => current.map((item) => (item.id === meeting.id ? meeting : item)));
+      setNotice(meeting.status === "FAILED" ? "Processing could not be queued." : "Processing queued.");
     });
-  }, [lastAsset, refreshMeetings, run, selectedMeeting, token]);
+  }, [lastAsset, run, selectedMeeting, token]);
 
   const refreshStatus = useCallback(() => {
     if (!selectedMeeting) {
@@ -454,73 +531,30 @@ export function useMeetingWorkspace(
       return;
     }
     const optimisticQuestion = createOptimisticChatMessage("user", question);
-    const optimisticAnswer = createOptimisticChatMessage("assistant", CHAT_THINKING_TEXT);
-    const submittedAfterMs = Date.now() - 10000;
     setChatQuestion("");
-    setChatMessages((current) => [...current, optimisticQuestion, optimisticAnswer]);
+    setChatMessages((current) => [...current, optimisticQuestion]);
 
     void run(async () => {
-      let response;
       try {
-        response = await askMeetingChat(
-          token,
-          selectedMeeting.id,
-          question,
-          selectedMeeting.language
-        );
+        await askMeetingChat(token, selectedMeeting.id, question);
       } catch (caught) {
         if (!isNetworkLikeError(caught)) {
-          setChatMessages((current) =>
-            current.filter((item) => item.id !== optimisticQuestion.id && item.id !== optimisticAnswer.id)
-          );
+          const history = await getMeetingChatHistory(token, selectedMeeting.id);
+          setChatMessages(history.messages);
           throw caught;
         }
-
-        let latestMessages: MeetingChatMessage[] = [];
-        for (let attempt = 0; attempt < CHAT_RECOVERY_ATTEMPTS; attempt += 1) {
-          if (attempt > 0) {
-            await wait(CHAT_RECOVERY_DELAY_MS);
-          }
-          const history = await getMeetingChatHistory(token, selectedMeeting.id);
-          latestMessages = history.messages;
-          const recoveredAnswer = findAssistantAnswerAfterQuestion(history.messages, question, submittedAfterMs);
-          if (recoveredAnswer) {
-            const streamed = await streamAssistantMessage(optimisticAnswer.id, recoveredAnswer);
-            if (streamed) {
-              const latestHistory = await getMeetingChatHistory(token, selectedMeeting.id);
-              setChatMessages(latestHistory.messages);
-            }
-            setNotice("Answer generated.");
-            return;
-          }
-        }
-
-        if (findQuestionMessageIndex(latestMessages, question, submittedAfterMs) >= 0) {
-          setChatMessages((current) =>
-            current.map((item) =>
-              item.id === optimisticAnswer.id
-                ? { ...item, content: "Câu hỏi đã được lưu. Câu trả lời vẫn đang được tạo, hãy refresh chat sau ít giây." }
-                : item
-            )
-          );
-          setNotice("Question saved. The answer is still generating; refresh chat in a moment.");
-          return;
-        }
-
         setChatMessages((current) =>
-          current.filter((item) => item.id !== optimisticQuestion.id && item.id !== optimisticAnswer.id)
+          current.filter((item) => item.id !== optimisticQuestion.id)
         );
         throw caught;
       }
-      const streamed = await streamAssistantMessage(optimisticAnswer.id, response.message);
-      if (!streamed) {
-        return;
-      }
-      const history = await getMeetingChatHistory(token, selectedMeeting.id);
-      setChatMessages(history.messages);
-      setNotice(response.evidenceState === "not_enough_evidence" ? "No supported answer found." : "Answer generated.");
     });
-  }, [chatQuestion, run, selectedMeeting, streamAssistantMessage, token]);
+
+    stopChatWatch();
+    const optimisticAssistant = createOptimisticChatMessage("assistant", "Đang chờ xử lý...");
+    setChatMessages((current) => [...current, optimisticAssistant]);
+    startChatWatch(selectedMeeting.id, { statusMessageId: optimisticAssistant.id });
+  }, [chatQuestion, run, selectedMeeting, token]);
 
   const refreshChatHistory = useCallback(() => {
     if (!selectedMeeting) {
@@ -529,6 +563,7 @@ export function useMeetingWorkspace(
     void run(async () => {
       const history = await getMeetingChatHistory(token, selectedMeeting.id);
       setChatMessages(history.messages);
+      checkPendingAnswer(selectedMeeting.id, history.messages, selectedMeeting.pendingChatStatus);
       setNotice("Chat refreshed.");
     });
   }, [run, selectedMeeting, token]);
@@ -543,12 +578,10 @@ export function useMeetingWorkspace(
       setMeetings((current) => current.filter((item) => item.id !== selectedMeeting.id));
       selectMeeting(null);
       setLastAsset(null);
-      setLatestJob(null);
-      setIntelligenceResult(null);
-      await refreshAccountFiles();
+        setIntelligenceResult(null);
       setNotice("Meeting session deleted.");
     });
-  }, [refreshAccountFiles, run, selectMeeting, selectedMeeting, token]);
+  }, [run, selectMeeting, selectedMeeting, token]);
 
   const startRecording = useCallback(() => {
     if (!selectedMeeting) {
@@ -590,55 +623,86 @@ export function useMeetingWorkspace(
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (filePlaybackUrl) {
-        URL.revokeObjectURL(filePlaybackUrl);
-      }
-    };
-  }, [filePlaybackUrl]);
+
+  // Extract transcript entries from intelligence result
+  const transcriptEntries = useMemo<TranscriptEntry[]>(() => {
+    if (!intelligenceResult || typeof intelligenceResult !== "object") return [];
+    const transcript = (intelligenceResult as Record<string, unknown>).transcript;
+    if (!transcript || typeof transcript !== "object") return [];
+    const segments = (transcript as Record<string, unknown>).segments;
+    if (!Array.isArray(segments)) return [];
+    return segments
+      .map((seg: unknown) => {
+        const s = seg as Record<string, unknown>;
+        return {
+          id: String(s.id ?? ""),
+          speaker: String(s.speaker ?? "Unknown"),
+          startMs: typeof s.startMs === "number" ? s.startMs : 0,
+          endMs: typeof s.endMs === "number" ? s.endMs : 0,
+          text: String(s.text ?? ""),
+        };
+      })
+      .filter((entry) => entry.id && entry.text);
+  }, [intelligenceResult]);
+
+  const downloadAsset = useCallback(() => {
+    if (!selectedMeeting || !lastAsset) return;
+    void run(async () => {
+      const blob = await downloadMeetingAsset(token, selectedMeeting.id, lastAsset.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = lastAsset.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    });
+  }, [run, selectedMeeting, lastAsset, token]);
+
 
   const canUpload = selectedMeeting ? isUploadableMeeting(selectedMeeting, lastAsset) : false;
   const canProcess = selectedMeeting ? isProcessableMeeting(selectedMeeting, lastAsset) : false;
   const hasLockedAsset = Boolean(lastAsset);
 
   return {
-    accountFiles,
     assetPlaybackUrl,
     canProcess,
     canUpload,
+    downloadAsset,
+    transcriptEntries,
     chatMessages,
     chatQuestion,
-    draft,
     error,
-    filePlaybackUrl,
     hasLockedAsset,
     intelligenceResult,
     isLoading,
     isRecording,
     lastAsset,
-    latestJob,
     meetings,
     notice,
     selectedMeeting,
     selectedMeetingId,
-    selectedFileId,
+    createNewMeeting,
     queueProcessing,
-    deleteLibraryFile,
     deleteSelectedMeeting,
-    playLibraryFile,
     refreshChatHistory,
-    refreshAccountFiles: () => void run(refreshAccountFiles),
     refreshMeetings: () => void run(refreshMeetings),
     refreshStatus,
     setChatQuestion,
-    setDraft,
     setSelectedMeetingId: selectMeeting,
     startRecording,
     stopRecording,
-    submitMeeting,
     submitChatQuestion,
+    renameSelectedMeeting,
     uploadFile,
-    uploadLibraryFile
+    typewriterMessageIds,
+    clearTypewriterId: (id: string) => {
+      setTypewriterMessageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    },
   };
 }

@@ -18,7 +18,8 @@ frontend/
     ├── shared/
     │   ├── components/
     │   │   ├── ConfirmDialog.tsx
-    │   │   └── IconButton.tsx
+    │   │   ├── IconButton.tsx
+    │   │   └── IconOnlyButton.tsx
     │   ├── layouts/
     │   │   └── AppShell.tsx
     │   └── styles/
@@ -74,7 +75,6 @@ frontend/
                 ├── MeetingActionPanel.tsx
                 ├── MeetingAssetPlaybackPanel.tsx
                 ├── MeetingChatPanel.tsx
-                ├── MeetingCreateForm.tsx
                 ├── MeetingIntelligenceResultPanel.tsx
                 ├── MeetingList.tsx
                 └── StatusPill.tsx
@@ -129,15 +129,15 @@ Implemented frontend routes:
 | Area | Component | Purpose |
 |---|---|---|
 | Account storage | `AccountFileLibrary` | Lists files uploaded by the authenticated account, supports authorized playback, blocks deleting linked meeting files, and deletes unlinked files |
-| Meeting creation | `MeetingCreateForm` | Creates a meeting shell |
-| Left sidebar | `MeetingList`, `MeetingCreateForm`, `AccountFileLibrary` | Lists meetings, creates a new analysis, and manages account-scoped uploaded files |
-| Meeting actions | `MeetingActionPanel` | Shows the selected meeting, one-file upload/record controls, process/retry button, processing progress, and delete action for the selected owned meeting |
+| Meeting list and creation | `MeetingList` | Lists meetings, creates a new analysis from the header Create button, and refreshes the owned meeting list |
+| Left sidebar | `MeetingList`, `AccountFileLibrary` | Lists meetings, creates a new analysis, and manages account-scoped uploaded files |
+| Meeting actions | `MeetingActionPanel` | Shows the selected meeting, inline rename control, one-file upload/record controls, process/retry button, processing progress, and delete action for the selected owned meeting |
 | Audio playback | `MeetingAssetPlaybackPanel` | Shows the uploaded audio asset in a browser audio player above the processed JSON when the ready meeting has an audio file |
 | Processed JSON result | `MeetingIntelligenceResultPanel` | Renders the complete `meeting-intelligence-result.v1` as readable collapsible sections and remembers each section's open/closed UI preference in browser storage |
 | Meeting chat | `MeetingChatPanel` | Sits below the processed result, asks questions against a ready meeting, renders immediate user bubbles, pending assistant state, streamed answer text, saved evidence state, and citations |
 | Status display | `StatusPill` | Displays meeting and job state |
 
-Meeting selection is URL-backed. `/meetings` is the authenticated landing page and intentionally keeps no meeting selected. Opening `/meetings/:meetingId` selects that meeting after the authorized meeting list loads. Selecting or creating a meeting updates the URL, deleting the selected meeting returns to `/meetings`, and clicking the navbar Meetings button always returns to `/meetings`. This supports refresh, browser back/forward navigation, bookmarks, and direct links without moving business authorization into the frontend.
+Meeting selection is URL-backed. `/meetings` is the authenticated landing page and intentionally keeps no meeting selected. Opening `/meetings/:meetingId` selects that meeting after the authorized meeting list loads. Selecting or creating a meeting updates the URL, deleting the selected meeting returns to `/meetings`, and clicking the navbar Meetings button always returns to `/meetings`. The Meetings panel creates a backend-owned meeting shell immediately; the backend names the shell with its generated meeting ID until the user renames it from the selected meeting header. This supports refresh, browser back/forward navigation, bookmarks, and direct links without moving business authorization into the frontend.
 
 ## Admin Portal UI
 
@@ -199,7 +199,7 @@ Assistant messages display the backend evidence state and citations. During the 
 
 For selected meetings, the hook loads `GET /api/meetings/{meetingId}/processing-status` to retrieve the latest job and latest asset, then loads `GET /api/meetings/{meetingId}/intelligence-result` when the meeting is `READY`. When the latest asset is an audio file, the hook fetches `GET /api/meetings/{meetingId}/assets/{assetId}/content` with the bearer token, creates a temporary browser Blob URL, and revokes it when the selected meeting or asset changes. While a meeting is `QUEUED` or `PROCESSING`, the hook polls processing status every 3 seconds. The frontend does not parse or recompute intelligence sections; it renders the JSON returned by the backend.
 
-The account file library calls `/api/files` through the meetings feature API layer. It can upload account files, fetch authorized file bytes into a temporary Blob URL for playback/download, and ask the backend to delete unlinked files. Files linked to an existing meeting session show disabled delete behavior in the UI, but backend conflict responses remain authoritative.
+The account file library calls `/api/files` through the meetings feature API layer. It can upload account files from the Files panel header, fetch authorized file bytes into a temporary Blob URL for playback/download, and ask the backend to delete unlinked files. Files linked to an existing meeting session show disabled delete behavior in the UI, but backend conflict responses remain authoritative.
 
 Meeting deletion is exposed in `MeetingActionPanel` for authenticated `User` and `Admin` accounts. It asks for in-app confirmation before calling owner-scoped `DELETE /api/meetings/{meetingId}` through the meeting API wrapper with the current bearer token, then reloads meeting and file-library state. The backend remains authoritative and returns `404` if a direct request targets another account's meeting.
 
@@ -251,4 +251,4 @@ Earlier phase screenshots were generated under ignored `tmp/screenshots/`.
 
 Playwright screenshot re-verification was attempted on 2026-06-17, but the local Playwright package could not install Chromium because the current environment reports `ubuntu26.04-x64`, which Playwright did not support for that browser build. The verified fallback for this UI pass is TypeScript/Vite build plus gateway HTTP smoke.
 
-*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-25**. Frontend routes include Admin-only metrics, accounts, and realtime processing/RAG logs, while meeting chat citations now label metadata/structured JSON evidence beyond transcript time ranges. Backend authorization remains authoritative.*
+*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-26**. Frontend routes include Admin-only metrics, accounts, and realtime processing/RAG logs, while meeting creation lives in the Meetings panel header, selected meetings can be renamed inline, and speech language is auto-detected during backend transcription. Backend authorization remains authoritative.*

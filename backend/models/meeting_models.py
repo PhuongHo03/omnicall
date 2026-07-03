@@ -7,7 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.configs.database import Base
 from backend.models.core_models import utcnow
-from backend.models.enums import MeetingAssetKind, MeetingStatus, ProcessingJobStatus, ProcessingJobType
+from backend.models.enums import MeetingAssetKind, MeetingStatus
 
 
 class Meeting(Base):
@@ -27,8 +27,9 @@ class Meeting(Base):
         default=MeetingStatus.DRAFT,
         index=True,
     )
-    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pending_chat_status: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -38,7 +39,6 @@ class Meeting(Base):
     )
 
     assets: Mapped[list["MeetingAsset"]] = relationship(back_populates="meeting")
-    processing_jobs: Mapped[list["ProcessingJob"]] = relationship(back_populates="meeting")
 
 
 class MeetingAsset(Base):
@@ -76,46 +76,6 @@ class MeetingAsset(Base):
     meeting: Mapped[Meeting | None] = relationship(back_populates="assets")
 
 
-class ProcessingJob(Base):
-    __tablename__ = "processing_jobs"
-    __table_args__ = (
-        UniqueConstraint("meeting_id", "idempotency_key", name="uq_processing_jobs_meeting_idempotency"),
-    )
-
-    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
-    meeting_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("meetings.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    type: Mapped[ProcessingJobType] = mapped_column(
-        Enum(ProcessingJobType, name="processing_job_type"),
-        nullable=False,
-        default=ProcessingJobType.MEETING_PROCESSING,
-    )
-    status: Mapped[ProcessingJobStatus] = mapped_column(
-        Enum(ProcessingJobStatus, name="processing_job_status"),
-        nullable=False,
-        default=ProcessingJobStatus.PENDING,
-        index=True,
-    )
-    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    safe_failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    internal_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=utcnow,
-        onupdate=utcnow,
-    )
-
-    meeting: Mapped[Meeting] = relationship(back_populates="processing_jobs")
-
-
 class MeetingIntelligenceResult(Base):
     __tablename__ = "meeting_intelligence_results"
     __table_args__ = (
@@ -126,12 +86,6 @@ class MeetingIntelligenceResult(Base):
     meeting_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         ForeignKey("meetings.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    processing_job_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("processing_jobs.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

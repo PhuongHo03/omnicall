@@ -2,7 +2,7 @@
 
 Revision ID: 0001_initial_schema
 Revises:
-Create Date: 2026-06-19
+Create Date: 2026-06-26
 """
 
 from collections.abc import Sequence
@@ -25,11 +25,6 @@ def upgrade() -> None:
     meeting_asset_kind = sa.Enum(
         "UPLOAD", "RECORDING", "TRANSCRIPT", "EXPORT",
         name="meeting_asset_kind",
-    )
-    processing_job_type = sa.Enum("MEETING_PROCESSING", name="processing_job_type")
-    processing_job_status = sa.Enum(
-        "PENDING", "RUNNING", "RETRYING", "SUCCEEDED", "FAILED", "CANCELLED",
-        name="processing_job_status",
     )
 
     op.create_table(
@@ -85,8 +80,9 @@ def upgrade() -> None:
         sa.Column("owner_user_id", postgresql.UUID(as_uuid=False), nullable=False),
         sa.Column("title", sa.String(length=240), nullable=False),
         sa.Column("status", meeting_status, nullable=False),
-        sa.Column("language", sa.String(length=16), nullable=True),
         sa.Column("failure_reason", sa.Text(), nullable=True),
+        sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("pending_chat_status", sa.String(length=32), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
@@ -107,52 +103,29 @@ def upgrade() -> None:
         sa.Column("size_bytes", sa.Integer(), nullable=False),
         sa.Column("idempotency_key", sa.String(length=160), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("meeting_id", "idempotency_key", name="uq_meeting_assets_meeting_idempotency"),
         sa.UniqueConstraint("object_key", name="uq_meeting_assets_object_key"),
+        sa.UniqueConstraint("meeting_id", "idempotency_key", name="uq_meeting_assets_meeting_idempotency"),
     )
     op.create_index("ix_meeting_assets_owner_user_id", "meeting_assets", ["owner_user_id"])
     op.create_index("ix_meeting_assets_meeting_id", "meeting_assets", ["meeting_id"])
 
     op.create_table(
-        "processing_jobs",
-        sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column("meeting_id", postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column("type", processing_job_type, nullable=False),
-        sa.Column("status", processing_job_status, nullable=False),
-        sa.Column("idempotency_key", sa.String(length=160), nullable=False),
-        sa.Column("payload", postgresql.JSONB(), nullable=False),
-        sa.Column("safe_failure_reason", sa.Text(), nullable=True),
-        sa.Column("internal_error", sa.Text(), nullable=True),
-        sa.Column("attempts", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("meeting_id", "idempotency_key", name="uq_processing_jobs_meeting_idempotency"),
-    )
-    op.create_index("ix_processing_jobs_meeting_id", "processing_jobs", ["meeting_id"])
-    op.create_index("ix_processing_jobs_status", "processing_jobs", ["status"])
-
-    op.create_table(
         "meeting_intelligence_results",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False),
         sa.Column("meeting_id", postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column("processing_job_id", postgresql.UUID(as_uuid=False), nullable=False),
         sa.Column("schema_version", sa.String(length=80), nullable=False),
         sa.Column("provider_name", sa.String(length=120), nullable=False),
         sa.Column("provider_model", sa.String(length=180), nullable=False),
         sa.Column("result_json", postgresql.JSONB(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["processing_job_id"], ["processing_jobs.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("meeting_id", "schema_version", name="uq_meeting_intelligence_result_version"),
     )
     op.create_index("ix_meeting_intelligence_results_meeting_id", "meeting_intelligence_results", ["meeting_id"])
-    op.create_index("ix_meeting_intelligence_results_processing_job_id", "meeting_intelligence_results", ["processing_job_id"])
 
     op.create_table(
         "meeting_chunks",
@@ -205,14 +178,11 @@ def downgrade() -> None:
     op.drop_table("chat_messages")
     op.drop_table("meeting_chunks")
     op.drop_table("meeting_intelligence_results")
-    op.drop_table("processing_jobs")
     op.drop_table("meeting_assets")
     op.drop_table("meetings")
     op.drop_table("audit_events")
     op.drop_table("account_sessions")
     op.drop_table("users")
 
-    op.execute("DROP TYPE IF EXISTS processing_job_status")
-    op.execute("DROP TYPE IF EXISTS processing_job_type")
     op.execute("DROP TYPE IF EXISTS meeting_asset_kind")
     op.execute("DROP TYPE IF EXISTS meeting_status")

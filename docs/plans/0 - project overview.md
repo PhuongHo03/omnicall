@@ -189,7 +189,6 @@ Processed JSON draft:
   "meeting": {
     "id": "meeting-id",
     "title": "Meeting title",
-    "language": "vi",
     "startedAt": "2026-06-12T09:00:00Z",
     "durationSeconds": 3600
   },
@@ -378,9 +377,10 @@ Backend endpoints:
 | `POST` | `/api/auth/register` | Implemented | Create a local account |
 | `POST` | `/api/auth/logout` | Implemented | End session |
 | `GET` | `/api/me` | Implemented | Read current user/session context |
-| `POST` | `/api/meetings` | Implemented | Create a meeting shell |
+| `POST` | `/api/meetings` | Implemented | Create a meeting shell named with its generated ID |
 | `GET` | `/api/meetings` | Implemented | List meetings visible to the user |
 | `GET` | `/api/meetings/{meetingId}` | Implemented | Read meeting detail and status |
+| `PATCH` | `/api/meetings/{meetingId}` | Implemented | Rename an owned meeting |
 | `POST` | `/api/meetings/{meetingId}/assets` | Implemented | Upload meeting file/recording asset, transcript, or notes text |
 | `POST` | `/api/meetings/{meetingId}/process` | Implemented | Queue processing |
 | `GET` | `/api/meetings/{meetingId}/processing-status` | Implemented | Read meeting/job progress |
@@ -547,3 +547,4 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 7 | Hardening | Done |
 | 8 | Operational logs | Done |
 | 9 | Full JSON RAG coverage | Done |
+| 10 | Frontend and backend resilience | Pending |

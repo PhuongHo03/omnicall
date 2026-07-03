@@ -116,7 +116,6 @@ class AnalysisProviderTestCase(unittest.TestCase):
             id="11111111-1111-4111-8111-111111111111",
             owner_user_id="33333333-3333-4333-8333-333333333333",
             title="Analysis provider test",
-            language="vi",
         )
 
     def make_asset(self) -> MeetingAsset:

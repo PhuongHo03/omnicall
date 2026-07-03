@@ -10,19 +10,17 @@ from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.meeting_dto import (
     MeetingAssetResponse,
     MeetingCreateRequest,
+    MeetingDetailResponse,
     MeetingResponse,
-    ProcessingJobResponse,
-    ProcessingStatusResponse,
 )
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
-from backend.models.meeting_models import Meeting, MeetingAsset, ProcessingJob
+from backend.models.enums import MeetingStatus
+from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.providers.queue_provider import ProcessingQueueProvider
 from backend.providers.storage_provider import ObjectStorageProvider
 from backend.repositories.auth_repository import AuditEventRepository
 from backend.repositories.meeting_repository import (
     MeetingAssetRepository,
     MeetingRepository,
-    ProcessingJobRepository,
 )
 from backend.services.operational_log_service import OperationalLogService
 from backend.utils.exceptions import ApplicationError
@@ -47,7 +45,6 @@ class MeetingService:
         self.session = session
         self.meetings = MeetingRepository(session)
         self.assets = MeetingAssetRepository(session)
-        self.jobs = ProcessingJobRepository(session)
         self.audit = AuditEventRepository(session)
         self.storage_provider = storage_provider
         self.queue_provider = queue_provider
@@ -57,20 +54,29 @@ class MeetingService:
     def create_meeting(self, context: CurrentUserContext, request: MeetingCreateRequest) -> MeetingResponse:
         meeting = self.meetings.create(
             user_id=context.user_id,
-            title=request.title.strip(),
-            language=request.language,
+            title=request.title,
         )
         self.session.commit()
         self.session.refresh(meeting)
         return self._meeting_response(meeting)
 
+    def update_meeting_title(self, context: CurrentUserContext, meeting_id: str, title: str) -> MeetingResponse:
+        if not title.strip():
+            raise ApplicationError(400, "empty_meeting_title", "Meeting title must not be empty.")
+        meeting = self._get_authorized_meeting(context, meeting_id)
+        updated = self.meetings.update_title(meeting, title)
+        self.session.commit()
+        self.session.refresh(updated)
+        return self._meeting_response(updated, self.assets.get_latest_for_meeting(updated.id))
+
     def list_meetings(self, context: CurrentUserContext, limit: int, offset: int) -> list[MeetingResponse]:
         meetings = self.meetings.list_for_owner(context.user_id, limit=limit, offset=offset)
-        return [self._meeting_response(meeting) for meeting in meetings]
+        return [self._meeting_response(m, self.assets.get_latest_for_meeting(m.id)) for m in meetings]
 
-    def get_meeting(self, context: CurrentUserContext, meeting_id: str) -> MeetingResponse:
+    def get_meeting(self, context: CurrentUserContext, meeting_id: str) -> MeetingDetailResponse:
         meeting = self._get_authorized_meeting(context, meeting_id)
-        return self._meeting_response(meeting)
+        latest_asset = self.assets.get_latest_for_meeting(meeting.id)
+        return self._meeting_detail_response(meeting, latest_asset)
 
     def upload_asset(
         self,
@@ -91,7 +97,7 @@ class MeetingService:
                 "This meeting already has an uploaded file. Create a new meeting for another analysis.",
             )
 
-        if meeting.status in {MeetingStatus.QUEUED, MeetingStatus.PROCESSING, MeetingStatus.READY, MeetingStatus.FAILED}:
+        if meeting.status in {MeetingStatus.UPLOADED, MeetingStatus.QUEUED, MeetingStatus.PROCESSING, MeetingStatus.READY, MeetingStatus.FAILED}:
             raise ApplicationError(
                 409,
                 "meeting_not_uploadable",
@@ -127,7 +133,6 @@ class MeetingService:
             size_bytes=size_bytes,
             idempotency_key=idempotency_key,
         )
-        self.meetings.update_status(meeting, MeetingStatus.UPLOADED)
         self.audit.create(
             event_type="meeting.upload",
             outcome="success",
@@ -136,6 +141,7 @@ class MeetingService:
             resource_id=meeting.id,
             metadata={"assetId": asset.id, "sizeBytes": size_bytes},
         )
+        self.meetings.update_status(meeting, MeetingStatus.UPLOADED)
         self.session.commit()
         self.session.refresh(asset)
         self._emit(
@@ -147,7 +153,6 @@ class MeetingService:
             workspace_id=context.user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            language=meeting.language,
             file=_asset_log_context(asset),
             details={"source": "browser_upload"},
         )
@@ -158,14 +163,13 @@ class MeetingService:
         context: CurrentUserContext,
         meeting_id: str,
         idempotency_key: str,
-    ) -> ProcessingJobResponse:
+    ) -> MeetingDetailResponse:
         meeting = self._get_authorized_meeting(context, meeting_id)
 
-        existing = self.jobs.get_by_idempotency_key(meeting.id, idempotency_key)
-        if existing is not None:
-            return self._job_response(existing)
-
         if meeting.status in {MeetingStatus.QUEUED, MeetingStatus.PROCESSING, MeetingStatus.READY}:
+            return self._meeting_detail_response(meeting, self.assets.get_latest_for_meeting(meeting.id))
+
+        if meeting.status not in {MeetingStatus.UPLOADED, MeetingStatus.FAILED}:
             raise ApplicationError(
                 409,
                 "meeting_not_processable",
@@ -179,42 +183,28 @@ class MeetingService:
                 "Upload a meeting file before starting processing.",
             )
 
-        job = self.jobs.create(
-            meeting_id=meeting.id,
-            idempotency_key=idempotency_key,
-            payload={"meetingId": meeting.id},
-        )
         self.meetings.update_status(meeting, MeetingStatus.QUEUED)
         self.session.commit()
-        self.session.refresh(job)
 
         try:
-            self.queue_provider.enqueue_meeting_processing(job_id=job.id, meeting_id=meeting.id)
+            self.queue_provider.enqueue_meeting_processing(meeting_id=meeting.id)
             asset = self.assets.get_latest_for_meeting(meeting.id)
             self._emit(
                 level="info",
                 flow="processing",
                 stage="queued",
                 status="succeeded",
-                message="Meeting processing job queued.",
+                message="Meeting processing queued.",
                 workspace_id=context.user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job={
-                    "id": job.id,
-                    "attempt": job.attempts,
-                    "queue": "meeting-processing",
-                    "taskName": getattr(self.queue_provider, "task_name", "omnicall.processing.process_meeting"),
-                },
             )
         except Exception as exc:
             safe_reason = "Processing queue is unavailable. Please retry later."
-            self.jobs.mark_failed(job, safe_reason, repr(exc))
             self.meetings.update_status(meeting, MeetingStatus.FAILED, safe_reason)
             self.session.commit()
-            self.session.refresh(job)
+            self.session.refresh(meeting)
             asset = self.assets.get_latest_for_meeting(meeting.id)
             self._emit(
                 level="error",
@@ -225,29 +215,13 @@ class MeetingService:
                 workspace_id=context.user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                language=meeting.language,
                 file=_asset_log_context(asset),
-                job={
-                    "id": job.id,
-                    "attempt": job.attempts,
-                    "queue": "meeting-processing",
-                    "taskName": getattr(self.queue_provider, "task_name", "omnicall.processing.process_meeting"),
-                },
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
 
-        return self._job_response(job)
+        return self._meeting_detail_response(meeting, self.assets.get_latest_for_meeting(meeting.id))
 
-    def get_processing_status(self, context: CurrentUserContext, meeting_id: str) -> ProcessingStatusResponse:
-        meeting = self._get_authorized_meeting(context, meeting_id)
-        latest_job = self.jobs.get_latest_for_meeting(meeting.id)
-        latest_asset = self.assets.get_latest_for_meeting(meeting.id)
-        return ProcessingStatusResponse(
-            meeting=self._meeting_response(meeting),
-            latest_job=self._job_response(latest_job) if latest_job else None,
-            latest_asset=self._asset_response(latest_asset) if latest_asset else None,
-        )
 
     def get_asset_content(self, context: CurrentUserContext, meeting_id: str, asset_id: str) -> MeetingAssetContent:
         meeting = self._get_authorized_meeting(context, meeting_id)
@@ -289,15 +263,33 @@ class MeetingService:
         return size_bytes
 
     @staticmethod
-    def _meeting_response(meeting: Meeting) -> MeetingResponse:
+    def _meeting_response(meeting: Meeting, latest_asset: MeetingAsset | None = None) -> MeetingResponse:
         return MeetingResponse(
             id=meeting.id,
             title=meeting.title,
-            language=meeting.language,
             status=meeting.status,
             failure_reason=meeting.failure_reason,
+            pending_chat_status=meeting.pending_chat_status,
+            created_at=meeting.created_at,
+            latest_asset=MeetingService._asset_response(latest_asset) if latest_asset else None,
+            updated_at=meeting.updated_at,
+        )
+
+    @staticmethod
+    def _meeting_detail_response(
+        meeting: Meeting,
+        latest_asset: MeetingAsset | None,
+    ) -> MeetingDetailResponse:
+        return MeetingDetailResponse(
+            id=meeting.id,
+            title=meeting.title,
+            status=meeting.status,
+            failure_reason=meeting.failure_reason,
+            pending_chat_status=meeting.pending_chat_status,
             created_at=meeting.created_at,
             updated_at=meeting.updated_at,
+            latest_asset=MeetingService._asset_response(latest_asset) if latest_asset else None,
+            retry_allowed=meeting.status == MeetingStatus.FAILED,
         )
 
     @staticmethod
@@ -312,17 +304,6 @@ class MeetingService:
             created_at=asset.created_at,
         )
 
-    @staticmethod
-    def _job_response(job: ProcessingJob) -> ProcessingJobResponse:
-        return ProcessingJobResponse(
-            id=job.id,
-            meeting_id=job.meeting_id,
-            status=job.status,
-            safe_failure_reason=job.safe_failure_reason,
-            retry_allowed=job.status in {ProcessingJobStatus.FAILED, ProcessingJobStatus.CANCELLED},
-            created_at=job.created_at,
-            updated_at=job.updated_at,
-        )
 
 
 def get_meeting_service(
@@ -343,3 +324,4 @@ def _asset_log_context(asset: MeetingAsset | None) -> dict:
         "sizeBytes": asset.size_bytes,
         "objectKey": asset.object_key,
     }
+

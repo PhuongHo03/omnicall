@@ -1,4 +1,5 @@
 import type { AdminMetric } from "../types/adminTypes";
+import { EmptyState } from "../../../shared/components/EmptyState";
 
 type AdminMetricsGroupProps = {
   category: string;
@@ -25,7 +26,7 @@ export function AdminMetricsGroup({ category, metrics }: AdminMetricsGroupProps)
                   <strong>{formatValue(series.value, metric.unit)}</strong>
                 </div>
               ))}
-              {metric.series.length === 0 ? <div className="metric-row metric-row--empty">No data</div> : null}
+              {metric.series.length === 0 ? <EmptyState message="No data." /> : null}
             </div>
           </article>
         ))}

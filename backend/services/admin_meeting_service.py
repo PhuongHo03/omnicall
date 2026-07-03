@@ -2,14 +2,13 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from backend.dependencies.auth import CurrentUserContext
-from backend.dtos.file_dto import DeleteResponse
+from backend.dtos.error_dto import DeleteResponse
 from backend.configs.settings import Settings, get_settings
 from backend.models.meeting_models import (
     ChatMessage,
     Meeting,
     MeetingChunkRecord,
     MeetingIntelligenceResult,
-    ProcessingJob,
 )
 from backend.providers.cache_provider import CacheProviderError, JsonCacheProvider, get_json_cache_provider
 from backend.providers.lock_provider import RedisLockProvider, get_redis_lock_provider
@@ -94,14 +93,12 @@ class AdminMeetingService:
             self.session.commit()
             raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
 
-        job_ids = [job.id for job in meeting.processing_jobs]
-        queue_metadata = self.queue_provider.revoke_meeting_processing(job_ids=job_ids)
+        queue_metadata = self.queue_provider.revoke_meeting_processing(meeting_ids=[meeting.id])
         object_keys = [asset.object_key for asset in meeting.assets]
         self._delete_vectors(meeting.owner_user_id, meeting.id)
         self.session.execute(delete(ChatMessage).where(ChatMessage.meeting_id == meeting.id))
         self.session.execute(delete(MeetingChunkRecord).where(MeetingChunkRecord.meeting_id == meeting.id))
         self.session.execute(delete(MeetingIntelligenceResult).where(MeetingIntelligenceResult.meeting_id == meeting.id))
-        self.session.execute(delete(ProcessingJob).where(ProcessingJob.meeting_id == meeting.id))
         for asset in list(meeting.assets):
             self.session.delete(asset)
         self.session.delete(meeting)
@@ -117,7 +114,7 @@ class AdminMeetingService:
             resource_id=meeting.id,
             metadata={
                 "objectCount": len(set(object_keys)),
-                "jobCount": len(job_ids),
+                
                 "queue": queue_metadata,
             },
         )

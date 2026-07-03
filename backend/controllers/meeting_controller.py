@@ -2,24 +2,26 @@ from uuid import uuid4
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Header, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from backend.configs.database import get_db_session
 from backend.configs.settings import get_settings
 from backend.dependencies.auth import CurrentUserContext, get_current_context
 from backend.dtos.meeting_dto import (
+    MeetingChatAcceptedResponse,
     MeetingChatHistoryResponse,
     MeetingChatRequest,
-    MeetingChatResponse,
     MeetingAssetResponse,
     MeetingCreateRequest,
+    MeetingDetailResponse,
     MeetingListResponse,
     MeetingResponse,
-    ProcessingJobResponse,
-    ProcessingStatusResponse,
+    MeetingUpdateRequest,
 )
-from backend.dtos.file_dto import DeleteResponse
+from backend.dtos.error_dto import DeleteResponse
 from backend.providers.cache_provider import JsonCacheProvider, get_json_cache_provider
+from backend.providers.chat_event_provider import ChatEventProvider, get_chat_event_provider
 from backend.providers.lock_provider import RedisLockProvider, get_redis_lock_provider
 from backend.providers.queue_provider import ProcessingQueueProvider, get_processing_queue_provider
 from backend.providers.storage_provider import ObjectStorageProvider, get_object_storage_provider
@@ -58,6 +60,10 @@ def get_chat_service(
     operational_logs: OperationalLogService = Depends(get_operational_log_service),
 ) -> MeetingChatService:
     return MeetingChatService(session, operational_logs=operational_logs)
+
+
+def _get_chat_event_provider() -> ChatEventProvider:
+    return get_chat_event_provider()
 
 
 def get_meeting_deletion_service(
@@ -104,13 +110,23 @@ def list_meetings(
     return MeetingListResponse(items=meeting_service.list_meetings(context, limit=limit, offset=offset))
 
 
-@router.get("/{meeting_id}", response_model=MeetingResponse)
+@router.get("/{meeting_id}", response_model=MeetingDetailResponse)
 def get_meeting(
     meeting_id: str,
     context: CurrentUserContext = Depends(get_current_context),
     meeting_service: MeetingService = Depends(get_meeting_service),
-) -> MeetingResponse:
+) -> MeetingDetailResponse:
     return meeting_service.get_meeting(context, meeting_id)
+
+
+@router.patch("/{meeting_id}", response_model=MeetingResponse)
+def update_meeting(
+    meeting_id: str,
+    request: MeetingUpdateRequest,
+    context: CurrentUserContext = Depends(get_current_context),
+    meeting_service: MeetingService = Depends(get_meeting_service),
+) -> MeetingResponse:
+    return meeting_service.update_meeting_title(context, meeting_id, request.title)
 
 
 @router.delete("/{meeting_id}", response_model=DeleteResponse)
@@ -134,25 +150,15 @@ def upload_meeting_asset(
     return meeting_service.upload_asset(context, meeting_id, file, key)
 
 
-@router.post("/{meeting_id}/process", response_model=ProcessingJobResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{meeting_id}/process", response_model=MeetingDetailResponse, status_code=status.HTTP_202_ACCEPTED)
 def process_meeting(
     meeting_id: str,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     context: CurrentUserContext = Depends(get_current_context),
     meeting_service: MeetingService = Depends(get_meeting_service),
-) -> ProcessingJobResponse:
+) -> MeetingDetailResponse:
     key = normalize_idempotency_key(idempotency_key, fallback=f"process:{meeting_id}")
     return meeting_service.queue_processing(context, meeting_id, key)
-
-
-@router.get("/{meeting_id}/processing-status", response_model=ProcessingStatusResponse)
-def get_processing_status(
-    meeting_id: str,
-    context: CurrentUserContext = Depends(get_current_context),
-    meeting_service: MeetingService = Depends(get_meeting_service),
-) -> ProcessingStatusResponse:
-    return meeting_service.get_processing_status(context, meeting_id)
-
 
 @router.get("/{meeting_id}/assets/{asset_id}/content")
 def get_meeting_asset_content(
@@ -179,14 +185,20 @@ def get_meeting_intelligence_result(
     return intelligence_service.get_result(context, meeting_id)
 
 
-@router.post("/{meeting_id}/chat", response_model=MeetingChatResponse)
+@router.post("/{meeting_id}/chat", response_model=MeetingChatAcceptedResponse)
 def ask_meeting_chat(
     meeting_id: str,
     request: MeetingChatRequest,
     context: CurrentUserContext = Depends(get_current_context),
     chat_service: MeetingChatService = Depends(get_chat_service),
-) -> MeetingChatResponse:
-    return chat_service.ask(context, meeting_id, request)
+    event_provider: ChatEventProvider = Depends(_get_chat_event_provider),
+) -> MeetingChatAcceptedResponse:
+    result = chat_service.ask(context, meeting_id, request)
+    event_provider.publish(
+        f"chat:{meeting_id}",
+        {"type": "status", "stage": "queued", "message": "Đang chờ xử lý..."},
+    )
+    return result
 
 
 @router.get("/{meeting_id}/chat", response_model=MeetingChatHistoryResponse)
@@ -196,3 +208,46 @@ def get_meeting_chat_history(
     chat_service: MeetingChatService = Depends(get_chat_service),
 ) -> MeetingChatHistoryResponse:
     return chat_service.get_history(context, meeting_id)
+
+
+@router.get("/{meeting_id}/chat/stream")
+def stream_chat_events(
+    meeting_id: str,
+    context: CurrentUserContext = Depends(get_current_context),
+    chat_service: MeetingChatService = Depends(get_chat_service),
+    event_provider: ChatEventProvider = Depends(_get_chat_event_provider),
+):
+    meeting = chat_service.meetings.get_for_owner(meeting_id, context.user_id)
+    if meeting is None:
+        raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
+
+    import json as _json
+
+    channel = f"chat:{meeting_id}"
+    pubsub = event_provider.subscribe(channel)
+
+    def event_stream():
+        try:
+            yield 'event: connected\ndata: {"status": "connected"}\n\n'
+            for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                data = message["data"]
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8")
+                yield f"data: {data}\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            pubsub.unsubscribe(channel)
+            pubsub.close()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

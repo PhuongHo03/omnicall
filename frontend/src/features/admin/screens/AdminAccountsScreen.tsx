@@ -1,3 +1,5 @@
+import { AdminNavbar } from "../components/AdminNavbar";
+import { PageHeader } from "../../../shared/components/PageHeader";
 import { AdminAccountsTable } from "../components/AdminAccountsTable";
 import { useAdminAccounts } from "../hooks/useAdminAccounts";
 
@@ -10,12 +12,8 @@ export function AdminAccountsScreen({ token }: AdminAccountsScreenProps) {
 
   return (
     <div className="admin-screen">
-      <section className="admin-hero">
-        <div>
-          <h1>Account Management</h1>
-          <span>Manage local Omnicall accounts and product roles.</span>
-        </div>
-      </section>
+      <AdminNavbar />
+      <PageHeader title="Account Management" subtitle="Manage local Omnicall accounts and product roles." />
 
       <AdminAccountsTable
         accounts={accounts.accounts}
@@ -27,11 +25,6 @@ export function AdminAccountsScreen({ token }: AdminAccountsScreenProps) {
         onRoleChange={(userId, role) => void accounts.updateAccountRole(userId, role)}
       />
 
-      <div className="event-strip" aria-live="polite">
-        <span className={accounts.error ? "event-strip__error" : ""}>
-          {accounts.error ?? accounts.notice ?? "Ready"}
-        </span>
-      </div>
     </div>
   );
 }

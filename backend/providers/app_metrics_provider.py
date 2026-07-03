@@ -8,7 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from backend.models.meeting_models import ChatMessage, Meeting, ProcessingJob
+from backend.models.meeting_models import ChatMessage, Meeting
 
 
 HTTP_REQUESTS_TOTAL = Counter(
@@ -24,11 +24,6 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
 MEETINGS_TOTAL = Gauge(
     "omnicall_meetings_total",
     "Meetings grouped by lifecycle status.",
-    ["status"],
-)
-PROCESSING_JOBS_TOTAL = Gauge(
-    "omnicall_processing_jobs_total",
-    "Processing jobs grouped by lifecycle status.",
     ["status"],
 )
 CHAT_MESSAGES_TOTAL = Gauge(
@@ -59,8 +54,6 @@ def render_metrics(session: Session) -> Response:
 def update_domain_metrics(session: Session) -> None:
     for status, count in session.execute(select(Meeting.status, func.count()).group_by(Meeting.status)).all():
         MEETINGS_TOTAL.labels(str(status)).set(count)
-    for status, count in session.execute(select(ProcessingJob.status, func.count()).group_by(ProcessingJob.status)).all():
-        PROCESSING_JOBS_TOTAL.labels(str(status)).set(count)
     for role, count in session.execute(select(ChatMessage.role, func.count()).group_by(ChatMessage.role)).all():
         CHAT_MESSAGES_TOTAL.labels(str(role)).set(count)
 

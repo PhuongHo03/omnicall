@@ -1,15 +1,15 @@
 export type MeetingStatus = "DRAFT" | "UPLOADED" | "QUEUED" | "PROCESSING" | "READY" | "FAILED";
 
-export type ProcessingJobStatus = "PENDING" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
-
 export type Meeting = {
   id: string;
   title: string;
-  language: string | null;
   status: MeetingStatus;
   failureReason: string | null;
+  pendingChatStatus: string | null;
   createdAt: string;
   updatedAt: string;
+  latestAsset: MeetingAsset | null;
+  retryAllowed: boolean;
 };
 
 export type MeetingAsset = {
@@ -20,27 +20,6 @@ export type MeetingAsset = {
   contentType: string;
   sizeBytes: number;
   createdAt: string;
-};
-
-export type ProcessingJob = {
-  id: string;
-  meetingId: string;
-  status: ProcessingJobStatus;
-  safeFailureReason: string | null;
-  retryAllowed: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ProcessingStatus = {
-  meeting: Meeting;
-  latestJob: ProcessingJob | null;
-  latestAsset: MeetingAsset | null;
-};
-
-export type MeetingDraft = {
-  title: string;
-  language: string;
 };
 
 export type MeetingChatCitation = {
@@ -80,13 +59,42 @@ export type MeetingChatHistory = {
 
 export type MeetingIntelligenceResult = Record<string, unknown>;
 
-export type AccountFile = {
+// ── Asset playback types ──
+
+export type TranscriptEntry = {
   id: string;
-  ownerUserId: string;
-  meetingId: string | null;
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-  linkedToMeeting: boolean;
-  createdAt: string;
+  speaker: string;
+  startMs: number;
+  endMs: number;
+  text: string;
 };
+
+export type MediaKind = "audio" | "video";
+
+export function resolveMediaKind(asset: MeetingAsset): MediaKind {
+  if (asset.contentType.startsWith("video/")) return "video";
+  return "audio";
+}
+
+export function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+}
+
+export function formatFileSize(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}

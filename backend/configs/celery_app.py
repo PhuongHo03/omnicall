@@ -20,15 +20,25 @@ celery_app.conf.task_queues = (
         routing_key="processing-maintenance",
         durable=True,
     ),
+    Queue(
+        "chat-processing",
+        exchange=Exchange("chat-processing", type="direct", durable=True),
+        routing_key="chat-processing",
+        durable=True,
+    ),
 )
 celery_app.conf.task_routes = {
     "omnicall.processing.process_meeting": {
         "queue": "meeting-processing",
         "routing_key": "meeting-processing",
     },
-    "omnicall.processing.reconcile_pending_jobs": {
+    "omnicall.processing.reconcile_pending_meetings": {
         "queue": "processing-maintenance",
         "routing_key": "processing-maintenance",
+    },
+    "omnicall.chat.generate_answer": {
+        "queue": "chat-processing",
+        "routing_key": "chat-processing",
     },
 }
 celery_app.conf.task_default_delivery_mode = "persistent"
@@ -36,11 +46,12 @@ celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.imports = (
     "backend.tasks.processing_tasks",
     "backend.tasks.maintenance_tasks",
+    "backend.tasks.chat_tasks",
 )
 celery_app.conf.worker_enable_remote_control = True
 celery_app.conf.beat_schedule = {
-    "reconcile-stale-pending-processing-jobs": {
-        "task": "omnicall.processing.reconcile_pending_jobs",
+    "reconcile-stale-queued-meetings": {
+        "task": "omnicall.processing.reconcile_pending_meetings",
         "schedule": settings.processing_reconciliation_interval_seconds,
         "options": {
             "queue": "processing-maintenance",

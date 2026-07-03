@@ -38,9 +38,7 @@ class OperationalLogService:
         workspace_id: str | None = None,
         meeting_id: str | None = None,
         meeting_name: str | None = None,
-        language: str | None = None,
         file: dict[str, Any] | None = None,
-        job: dict[str, Any] | None = None,
         chat: dict[str, Any] | None = None,
         provider: str | None = None,
         model: str | None = None,
@@ -63,9 +61,7 @@ class OperationalLogService:
             "workspaceId": workspace_id,
             "meetingId": meeting_id,
             "meetingName": meeting_name,
-            "language": language,
             "file": file or {},
-            "job": job or {},
             "chat": chat or {},
             "provider": provider,
             "model": model,
@@ -86,17 +82,21 @@ class OperationalLogService:
         flow: str | None = None,
         level: str | None = None,
         search: str | None = None,
+        meeting_id: str | None = None,
     ) -> list[dict[str, Any]]:
         scan_limit = self.settings.operational_log_max_length
         events = self.provider.tail(scan_limit)
         normalized_flow = flow.strip().lower() if flow else None
         normalized_level = level.strip().lower() if level else None
         search_term = search.strip().lower() if search else None
+        normalized_meeting_id = meeting_id.strip() if meeting_id else None
         filtered = []
         for event in events:
             if normalized_flow and event.get("flow") != normalized_flow:
                 continue
             if normalized_level and event.get("level") != normalized_level:
+                continue
+            if normalized_meeting_id and event.get("meetingId") != normalized_meeting_id:
                 continue
             if search_term and search_term not in json_search_text(event):
                 continue
@@ -105,8 +105,49 @@ class OperationalLogService:
                 break
         return filtered
 
+    def tail_meetings(self) -> list[dict[str, Any]]:
+        scan_limit = self.settings.operational_log_max_length
+        events = self.provider.tail(scan_limit)
+        meetings: dict[str, dict[str, Any]] = {}
+        for event in events:
+            mid = event.get("meetingId")
+            if not mid:
+                continue
+            if mid not in meetings:
+                meetings[mid] = {
+                    "meetingId": mid,
+                    "meetingName": event.get("meetingName"),
+                    "processingCount": 0,
+                    "ragCount": 0,
+                    "latestTimestamp": event.get("timestamp"),
+                    "latestLevel": event.get("level"),
+                }
+            entry = meetings[mid]
+            if event.get("flow") == "processing":
+                entry["processingCount"] += 1
+            elif event.get("flow") == "rag":
+                entry["ragCount"] += 1
+            if event.get("timestamp", "") >= (entry["latestTimestamp"] or ""):
+                entry["latestTimestamp"] = event.get("timestamp")
+                entry["latestLevel"] = event.get("level")
+                entry["meetingName"] = event.get("meetingName")
+        result = sorted(meetings.values(), key=lambda m: m.get("latestTimestamp") or "", reverse=True)
+        return result
+
     def clear(self) -> int:
         return self.provider.clear()
+
+    def clear_by_meeting(self, meeting_id: str) -> int:
+        scan_limit = self.settings.operational_log_max_length
+        events = self.provider.tail(scan_limit)
+        ids_to_delete = [
+            event["id"]
+            for event in events
+            if event.get("meetingId") == meeting_id and "id" in event
+        ]
+        if not ids_to_delete:
+            return 0
+        return self.provider.delete_events(ids_to_delete)
 
 
 def get_operational_log_service() -> OperationalLogService:

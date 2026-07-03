@@ -12,7 +12,7 @@ from backend.services.operational_log_service import get_operational_log_service
     acks_late=True,
     reject_on_worker_lost=True,
 )
-def process_meeting(job_id: str, meeting_id: str) -> dict[str, str]:
+def process_meeting(meeting_id: str) -> dict[str, str]:
     with SessionLocal() as session:
         service = ProcessingPipelineService(
             session=session,
@@ -21,4 +21,4 @@ def process_meeting(job_id: str, meeting_id: str) -> dict[str, str]:
             analysis_provider=get_analysis_provider(),
             operational_logs=get_operational_log_service(),
         )
-        return service.process_meeting(job_id=job_id, meeting_id=meeting_id)
+        return service.process_meeting(meeting_id=meeting_id)

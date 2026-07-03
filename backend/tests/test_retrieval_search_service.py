@@ -74,7 +74,6 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             meeting = meeting_repo.create(
                 user_id=self.user_id,
                 title="Retrieval search meeting",
-                language="vi",
             )
             meeting_repo.update_status(meeting, MeetingStatus.READY)
             job = job_repo.create(
@@ -102,7 +101,7 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             risk_text = "Risk is low quality audio reducing answer confidence."
             participant_overview_text = "Participants overview. participant Count: 2. participants: Alice, Bob"
             participant_text = "name: Alice. role: Product owner. details: Alice led the meeting."
-            meeting_text = "Meeting metadata. title: Retrieval search meeting. language: vi. duration Seconds: 120"
+            meeting_text = "Meeting metadata. title: Retrieval search meeting. duration Seconds: 120"
             quality_text = "Quality overview. coverage: partial. confidence: 0.74"
             quality_warning_text = "Quality warning: low volume audio may reduce transcript confidence"
             source_text = "Processing source. analysis Provider: llm-analysis. analysis Model: test-analysis-model. llm Provider: test-llm"

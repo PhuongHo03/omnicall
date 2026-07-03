@@ -54,7 +54,7 @@ class FakeAnalysisProvider:
         return {
             "schemaVersion": SCHEMA_VERSION,
             "source": {"analysisProvider": self.provider_name},
-            "meeting": {"id": meeting.id, "title": meeting.title, "language": meeting.language},
+            "meeting": {"id": meeting.id, "title": meeting.title},
             "transcript": {
                 "segments": [
                     {
@@ -136,7 +136,7 @@ class ProcessingPipelineServiceTestCase(unittest.TestCase):
 
     def _create_uploaded_meeting_and_job(self) -> tuple[str, str]:
         with SessionLocal() as session:
-            meeting = MeetingRepository(session).create(user_id=self.user_id, title="Pipeline test", language="vi")
+            meeting = MeetingRepository(session).create(user_id=self.user_id, title="Pipeline test")
             MeetingAssetRepository(session).create(
                 meeting_id=meeting.id,
                 user_id=self.user_id,

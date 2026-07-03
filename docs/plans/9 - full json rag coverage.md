@@ -30,7 +30,7 @@
 
 ### Former Gaps Closed
 
-- [x] `meeting`: title, language, started time, duration.
+- [x] `meeting`: title, started time, duration.
 - [x] `source`: asset IDs, object keys, generated time, transcription provider/model, analysis provider/model, LLM provider/model, voice metadata, transcript guardrail metadata.
 - [x] `participants`: names, speaker labels, roles, details, confidence, referenced segments, participant count.
 - [x] `transcript.coverage`: coverage status and covered asset IDs.
@@ -53,7 +53,7 @@
 
 ### Chunk Builder
 
-- [x] Add `meeting.metadata` chunks for title, language, duration, and started time.
+- [x] Add `meeting.metadata` chunks for title, duration, and started time.
 - [x] Add `source.processing` chunks for provider/model/generated-at metadata.
 - [x] Add `source.voiceMetadata` chunks for audio duration, preprocessing, VAD, ASR, diarization, warning, and model context.
 - [x] Add `source.guardrails` chunks for transcript guardrail action, categories, warnings, and strict/non-strict behavior.
@@ -78,7 +78,7 @@
 ### Retrieval And Intent Pinning
 
 - [x] Add people/participant intents for Vietnamese and English questions: who joined, how many people, attendee list, speaker roles.
-- [x] Add meeting metadata intents: meeting title, language, duration, start time.
+- [x] Add meeting metadata intents: meeting title, duration, start time.
 - [x] Add quality intents: confidence, warnings, low-quality audio, transcript coverage, ASR/diarization issues.
 - [x] Add source/model intents: which model/provider processed the meeting, when analysis was generated, which asset was used.
 - [x] Add missing-evidence intents: which sections are empty, what the system could not determine.

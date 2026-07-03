@@ -11,7 +11,6 @@ class RetrievalIndexServiceTestCase(unittest.TestCase):
             "meeting": {
                 "id": "meeting-001",
                 "title": "Retrieval planning call",
-                "language": "vi",
                 "durationSeconds": 120,
             },
             "source": {

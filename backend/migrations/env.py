@@ -12,7 +12,6 @@ from backend.models import (
     MeetingAsset,
     MeetingChunkRecord,
     MeetingIntelligenceResult,
-    ProcessingJob,
     User,
 )
 

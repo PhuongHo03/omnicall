@@ -68,9 +68,7 @@ export type AdminOperationalLog = {
   workspaceId: string | null;
   meetingId: string | null;
   meetingName: string | null;
-  language: string | null;
   file: Record<string, unknown>;
-  job: Record<string, unknown>;
   chat: Record<string, unknown>;
   provider: string | null;
   model: string | null;
@@ -84,4 +82,13 @@ export type AdminOperationalLogList = {
   items: AdminOperationalLog[];
   limit: number;
   retainedLimit: number;
+};
+
+export type AdminMeetingLogSummary = {
+  meetingId: string;
+  meetingName: string | null;
+  processingCount: number;
+  ragCount: number;
+  latestTimestamp: string | null;
+  latestLevel: string | null;
 };

@@ -151,9 +151,9 @@ def safe_guardrail_check(
             provider=getattr(provider, "provider_name", "unknown-guardrail"),
             model=getattr(provider, "model_name", "unknown"),
             safe_message=(
-                "Guardrail model unavailable; strict mode blocked the request."
+                "Mô hình guardrail không khả dụng; chế độ strict đã chặn yêu cầu."
                 if strict_mode
-                else "Guardrail model unavailable; continuing with a warning."
+                else "Mô hình guardrail không khả dụng; tiếp tục với cảnh báo."
             ),
             latency_ms=_elapsed_ms(started),
         )
@@ -174,7 +174,7 @@ def _build_llama_guard_prompt(*, kind: GuardrailKind, text: str, metadata: dict[
         "Allow: normal business meetings mentioning risks, deadlines, disputes, or customer issues.",
         f"kind={kind}",
     ]
-    safe_metadata = {k: v for k, v in metadata.items() if k in {"meetingId", "language", "evidenceState"}}
+    safe_metadata = {k: v for k, v in metadata.items() if k in {"meetingId", "evidenceState"}}
     if safe_metadata:
         context_lines.append(f"metadata={json.dumps(safe_metadata, ensure_ascii=False)}")
 
@@ -265,7 +265,7 @@ def _parse_llama_guard_response(
             confidence=0.95,
             provider=provider,
             model=model,
-            safe_message="Content was classified as unsafe by the guardrail model.",
+            safe_message="",
             latency_ms=latency_ms,
         )
 
@@ -276,7 +276,7 @@ def _parse_llama_guard_response(
         confidence=0.4,
         provider=provider,
         model=model,
-        safe_message=f"Guardrail model returned unexpected response: {raw[:80]}",
+        safe_message=f"Mô hình guardrail trả về phản hồi không mong đợi: {raw[:80]}",
         latency_ms=latency_ms,
     )
 

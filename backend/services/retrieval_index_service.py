@@ -135,7 +135,6 @@ def _meeting_chunks(result_json: dict, embedding_provider: TextEmbeddingProvider
     text = _metadata_text(
         {
             "title": meeting.get("title"),
-            "language": meeting.get("language"),
             "startedAt": meeting.get("startedAt"),
             "durationSeconds": meeting.get("durationSeconds"),
             "meetingId": meeting.get("id"),

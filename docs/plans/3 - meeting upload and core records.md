@@ -25,7 +25,7 @@
 - [x] Add database constraints for meeting ownership, workspace membership, asset uniqueness, and job idempotency.
 - [x] Add meeting, asset, and processing job models separate from DTOs.
 - [x] Add repositories for meeting, asset, and job persistence.
-- [x] Add DTOs for meeting creation, asset upload, processing trigger, and status responses.
+- [x] Add DTOs for meeting creation, meeting rename, asset upload, processing trigger, and status responses.
 - [x] Add backend upload validation for content type, extension, size, and meeting state.
 - [x] Add backend authorization checks for meeting creation, read, upload, process, and retry.
 
@@ -52,6 +52,7 @@
 - [x] Implement `POST /api/meetings`.
 - [x] Implement `GET /api/meetings`.
 - [x] Implement `GET /api/meetings/{meetingId}`.
+- [x] Implement `PATCH /api/meetings/{meetingId}`.
 - [x] Implement `POST /api/meetings/{meetingId}/assets`.
 - [x] Implement `POST /api/meetings/{meetingId}/process`.
 - [x] Implement `GET /api/meetings/{meetingId}/processing-status`.
