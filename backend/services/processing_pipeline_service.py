@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from backend.models.enums import MeetingStatus
 from backend.configs.settings import Settings, get_settings
 from backend.providers.analysis_provider import SCHEMA_VERSION, AnalysisProvider
-from backend.providers.guardrail_provider import GuardrailProvider, get_guardrail_provider, safe_guardrail_check
 from backend.providers.lock_provider import RedisLockProvider
 from backend.providers.transcription_provider import LocalTranscriptionProvider
 from backend.repositories.meeting_repository import (
@@ -24,7 +23,6 @@ class ProcessingPipelineService:
         lock_provider: RedisLockProvider,
         transcription_provider: LocalTranscriptionProvider,
         analysis_provider: AnalysisProvider,
-        guardrail_provider: GuardrailProvider | None = None,
         retrieval_index: RetrievalIndexService | None = None,
         settings: Settings | None = None,
         operational_logs: OperationalLogService | None = None,
@@ -34,7 +32,6 @@ class ProcessingPipelineService:
         self.lock_provider = lock_provider
         self.transcription_provider = transcription_provider
         self.analysis_provider = analysis_provider
-        self.guardrail_provider = guardrail_provider or get_guardrail_provider()
         self.meetings = MeetingRepository(session)
         self.assets = MeetingAssetRepository(session)
         self.results = MeetingIntelligenceResultRepository(session)
@@ -156,6 +153,7 @@ class ProcessingPipelineService:
                 details=transcription_route["details"],
             )
             transcript_segments = self.transcription_provider.transcribe(meeting, asset)
+            detected_language = self.transcription_provider.last_voice_metadata.get("detectedLanguage")
             transcription_duration_ms = _elapsed_ms(stage_started)
             self._emit(
                 level="info",
@@ -179,27 +177,6 @@ class ProcessingPipelineService:
                 transcription_duration_ms=transcription_duration_ms,
             )
 
-            current_stage = "transcript_guardrail"
-            stage_started = time.perf_counter()
-            transcript_guardrail = self._check_transcript_guardrail(meeting_id=meeting.id, transcript_segments=transcript_segments)
-            self._emit(
-                level="info",
-                flow="processing",
-                stage=current_stage,
-                status="succeeded",
-                message="Transcript guardrail check completed.",
-                workspace_id=meeting.owner_user_id,
-                meeting_id=meeting.id,
-                meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                provider=transcript_guardrail.get("provider") if transcript_guardrail else "disabled",
-                model=transcript_guardrail.get("model") if transcript_guardrail else None,
-                duration_ms=_elapsed_ms(stage_started),
-                details=transcript_guardrail or {"enabled": False},
-            )
-            if transcript_guardrail.get("action") == "block":
-                raise ValueError("transcript_guardrail_blocked")
-
             current_stage = "analysis"
             stage_started = time.perf_counter()
             self._emit_stage_started(
@@ -214,6 +191,7 @@ class ProcessingPipelineService:
                 meeting=meeting,
                 asset=asset,
                 transcript_segments=transcript_segments,
+                detected_language=detected_language,
             )
             analysis_llm = getattr(self.analysis_provider, "llm_provider", None)
             if getattr(analysis_llm, "last_fallback_used", False):
@@ -261,9 +239,6 @@ class ProcessingPipelineService:
             if getattr(self.transcription_provider, "last_voice_metadata", None):
                 result_json["source"]["voiceMetadata"] = self.transcription_provider.last_voice_metadata
                 _append_voice_quality_warnings(result_json, self.transcription_provider.last_voice_metadata)
-            if transcript_guardrail:
-                _append_guardrail_metadata(result_json, "transcript", transcript_guardrail)
-
             current_stage = "result_validation"
             stage_started = time.perf_counter()
             self._validate_result_json(result_json)
@@ -348,7 +323,6 @@ class ProcessingPipelineService:
             )
 
             self.meetings.update_status(meeting, MeetingStatus.READY)
-            self.meetings.update_status(meeting, MeetingStatus.READY)
             self.session.commit()
             self._emit(
                 level="info",
@@ -425,14 +399,6 @@ class ProcessingPipelineService:
         )
 
     def _transcription_route(self, asset) -> dict:
-        route_resolver = getattr(self.transcription_provider, "route_metadata", None)
-        if callable(route_resolver):
-            metadata = route_resolver(asset)
-            return {
-                "provider": metadata.get("provider") or self.transcription_provider.provider_name,
-                "model": metadata.get("model") or self.transcription_provider.provider_model,
-                "details": metadata,
-            }
         return {
             "provider": self.transcription_provider.provider_name,
             "model": self.transcription_provider.provider_model,
@@ -528,11 +494,6 @@ class ProcessingPipelineService:
                 getattr(self.transcription_provider, "last_provider_name", self.transcription_provider.provider_name),
                 getattr(self.transcription_provider, "last_provider_model", self.transcription_provider.provider_model),
             )
-        if stage == "transcript_guardrail":
-            return (
-                getattr(self.guardrail_provider, "provider_name", None),
-                getattr(self.guardrail_provider, "model_name", None),
-            )
         if stage == "analysis":
             return (
                 getattr(self.analysis_provider, "last_provider_name", self.analysis_provider.provider_name),
@@ -559,27 +520,6 @@ class ProcessingPipelineService:
     def _emit(self, **event) -> None:
         if self.operational_logs is not None:
             self.operational_logs.emit(**event)
-
-    def _check_transcript_guardrail(self, *, meeting_id: str, transcript_segments: list) -> dict:
-        if not self.settings.guardrail_transcript_enabled:
-            return {}
-        transcript_text = "\n".join(
-            segment.text
-            for segment in transcript_segments
-            if getattr(segment, "text", "").strip()
-        )
-        result = safe_guardrail_check(
-            self.guardrail_provider,
-            kind="transcript",
-            text=transcript_text,
-            strict_mode=self.settings.guardrail_strict_mode,
-            metadata={"meetingId": meeting_id, "source": "transcript"},
-        )
-        metadata = result.to_metadata()
-        if result.action == "block" and not self.settings.guardrail_strict_mode:
-            metadata["action"] = "warn"
-            metadata["categories"] = list(dict.fromkeys([*metadata.get("categories", []), "non_strict_block_downgraded"]))
-        return metadata
 
     @staticmethod
     def _validate_result_json(result_json: dict) -> None:
@@ -691,23 +631,6 @@ def _append_voice_quality_warnings(result_json: dict, voice_metadata: dict) -> N
     warning = voice_metadata.get("warning")
     if isinstance(warning, str) and warning:
         warnings.append(warning)
-    quality["warnings"] = list(dict.fromkeys(warnings))
-
-
-def _append_guardrail_metadata(result_json: dict, scope: str, guardrail_metadata: dict) -> None:
-    source = result_json.setdefault("source", {})
-    guardrails = source.setdefault("guardrails", {})
-    guardrails[scope] = guardrail_metadata
-
-    quality = result_json.setdefault("quality", {})
-    warnings = quality.setdefault("warnings", [])
-    if not isinstance(warnings, list):
-        warnings = []
-    action = guardrail_metadata.get("action")
-    categories = guardrail_metadata.get("categories", [])
-    if action in {"warn", "redact", "block"}:
-        category_text = ", ".join(categories) if categories else "uncategorized"
-        warnings.append(f"Guardrail {scope} check returned {action}: {category_text}.")
     quality["warnings"] = list(dict.fromkeys(warnings))
 
 

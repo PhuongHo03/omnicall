@@ -70,7 +70,9 @@ export function MeetingsScreen({
           canUpload={workspace.canUpload}
           canViewResult={workspace.selectedMeeting.status === "READY" && workspace.intelligenceResult !== null}
           hasAsset={workspace.lastAsset !== null}
-          disabled={workspace.isLoading}
+          isProcessing={workspace.isLoading}
+          isRefreshingStatus={false}
+          isUploading={workspace.isLoading}
           isRecording={workspace.isRecording}
           selectedMeeting={workspace.selectedMeeting}
           onDeleteMeeting={workspace.deleteSelectedMeeting}

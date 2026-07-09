@@ -208,10 +208,12 @@ Notable local defaults:
 | `GUARDRAIL_TIMEOUT_SECONDS` | `20` | Local Ollama guardrail request timeout |
 | `GUARDRAIL_MAX_RETRIES` | `0` | Local guardrail retry count |
 | `GUARDRAIL_INPUT_ENABLED` | `true` | Enables chat input guardrail |
-| `GUARDRAIL_TRANSCRIPT_ENABLED` | `true` | Enables worker transcript guardrail |
-| `GUARDRAIL_CONTEXT_ENABLED` | `true` | Enables retrieved context guardrail |
 | `GUARDRAIL_OUTPUT_ENABLED` | `true` | Enables assistant output guardrail |
-| `GUARDRAIL_STRICT_MODE` | `false` | Keeps local development fail-open with warnings when Ollama is unavailable |
+| `GUARDRAIL_STRICT_MODE` | `false` | Fail closed on provider errors when true; otherwise fail open (`allowed` + `provider_error`) |
+| `GUARDRAIL_INPUT_STRICT_MODE` | `` | Per-layer strict mode for input guardrail |
+| `GUARDRAIL_OUTPUT_STRICT_MODE` | `` | Per-layer strict mode for output guardrail |
+| `GUARDRAIL_LATENCY_BUDGET_MS` | `8000` | Cumulative guardrail latency budget in ms |
+| `GUARDRAIL_PII_REDACTION_ENABLED` | `true` | Redact PII before output guardrail check |
 | `MILVUS_HOST` | `milvus` | Internal Milvus REST host |
 | `MILVUS_PORT` | `19530` | Internal Milvus REST port |
 | `MILVUS_COLLECTION` | `meeting_chunks` | Milvus collection for derived meeting chunk vectors |
@@ -258,7 +260,7 @@ Default specialized local models are stored in the `model_cache` named volume:
 
 | Path in container | Default source | Used by |
 |---|---|---|
-| `/models/asr` | `Systran/faster-whisper-small` | `backend.model_runners.asr` |
+| `/models/asr` | `Systran/faster-whisper-medium` | `backend.model_runners.asr` |
 | `/models/diarization` | `Wespeaker/wespeaker-voxceleb-resnet34-LM` | `backend.model_runners.diarization` |
 | `/models/rerank` | `BAAI/bge-reranker-v2-m3` | `backend.model_runners.rerank` |
 | `/models/.hf-cache` | Hugging Face cache files | Snapshot reuse across bootstrap runs |
@@ -392,7 +394,7 @@ Phase 5.6 guardrail verification also confirmed:
 |---|---|
 | Compose config after guardrail env wiring | Passed |
 | Backend and worker images rebuilt after guardrail provider/service changes | Passed |
-| Targeted guardrail provider, chat guardrail, and transcript guardrail tests | Passed |
+| Targeted guardrail provider and chat guardrail tests | Passed |
 | Compose Ollama runtime check | Service healthy on `127.0.0.1:11434` and internal `ollama:11434` |
 | `model-init` dry-run without downloads | Passed |
 | `ollama-init` dry-run without model list | Passed |
@@ -408,7 +410,7 @@ Phase 5.5 and 5.6 end-to-end voice/RAG verification also confirmed:
 | WeSpeaker diarization runner smoke test over normalized WAV | Produced speaker assignments |
 | Rerank runner smoke test | Returned ranked chunk IDs |
 | Voice MP3 upload through gateway | Meeting processed to `READY`, job `SUCCEEDED` |
-| Processed JSON source metadata | Recorded local ASR, WeSpeaker diarization, ffmpeg preprocessing, transcript guardrail warning, and voice metadata |
+| Processed JSON source metadata | Recorded local ASR, WeSpeaker diarization, ffmpeg preprocessing, and voice metadata |
 | Milvus collection dimension mismatch handling | Dropped/recreated incompatible collection and upserted 3 chunks |
 | Chat over the processed voice meeting | HTTP `200`, grounded answer, citations, rerank metadata, and input/context/output guardrail `allow` metadata |
 | Current Compose service health | Backend, worker, gateway, PostgreSQL, Redis, RabbitMQ, MinIO, Milvus, Ollama, and admin UIs healthy |
@@ -467,4 +469,4 @@ python -m backend.scripts.rebuild_retrieval_index --clear-chat
 
 The command reuses backend settings, reads stored `meeting_intelligence_results`, replaces PostgreSQL `meeting_chunks`, upserts fresh Milvus vectors, and optionally clears chat messages that may cite stale chunk IDs. Use `--meeting-id <id>` to rebuild one meeting. When preserving local data is not useful, `docker compose down -v` followed by stack startup, migrations, and reprocessing remains the clean-slate path; it deletes local PostgreSQL, Redis, RabbitMQ, MinIO, Milvus, and model/runtime volumes.
 
-*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-25**. Compose now exposes only operator-facing model controls; specialized model sources, runner commands, and internal model paths are repository-owned runtime contracts. The gateway keeps `/api/` connections open long enough for long RAG chat answers, and the previously documented monitoring, operational-log, and local retrieval rebuild flows remain available.*
+*Document reflects project state after Phase 15 guardrail simplification on **2026-07-06**. Compose now exposes only operator-facing model controls; specialized model sources, runner commands, and internal model paths are repository-owned runtime contracts. The gateway keeps `/api/` connections open long enough for long RAG chat answers, and the previously documented monitoring, operational-log, and local retrieval rebuild flows remain available.*

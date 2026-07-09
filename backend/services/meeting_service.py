@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.configs.settings import Settings, get_settings
@@ -166,7 +167,14 @@ class MeetingService:
     ) -> MeetingDetailResponse:
         meeting = self._get_authorized_meeting(context, meeting_id)
 
-        if meeting.status in {MeetingStatus.QUEUED, MeetingStatus.PROCESSING, MeetingStatus.READY}:
+        if meeting.status in {MeetingStatus.QUEUED, MeetingStatus.PROCESSING}:
+            raise ApplicationError(
+                409,
+                "meeting_task_already_pending",
+                "This meeting already has a pending processing task. Please wait for it to complete.",
+            )
+
+        if meeting.status == MeetingStatus.READY:
             return self._meeting_detail_response(meeting, self.assets.get_latest_for_meeting(meeting.id))
 
         if meeting.status not in {MeetingStatus.UPLOADED, MeetingStatus.FAILED}:
@@ -181,6 +189,19 @@ class MeetingService:
                 409,
                 "meeting_has_no_asset",
                 "Upload a meeting file before starting processing.",
+            )
+
+        active_task_count = self.session.scalar(
+            select(func.count()).select_from(Meeting).where(
+                Meeting.owner_user_id == context.user_id,
+                Meeting.status.in_({MeetingStatus.QUEUED, MeetingStatus.PROCESSING}),
+            )
+        )
+        if active_task_count >= self.settings.task_limit_per_user:
+            raise ApplicationError(
+                429,
+                "task_limit_exceeded",
+                "Too many tasks pending. Please wait for current processing to complete.",
             )
 
         self.meetings.update_status(meeting, MeetingStatus.QUEUED)
@@ -324,4 +345,3 @@ def _asset_log_context(asset: MeetingAsset | None) -> dict:
         "sizeBytes": asset.size_bytes,
         "objectKey": asset.object_key,
     }
-

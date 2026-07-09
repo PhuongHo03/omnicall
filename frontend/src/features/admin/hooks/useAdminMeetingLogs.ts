@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { usePollingEffect } from "../../../shared/hooks/usePollingEffect";
 import { listMeetings } from "../../meetings/api/meetingApi";
 import { clearAdminOperationalLogs, getAdminMeetingLogs } from "../api/adminApi";
 import type { AdminMeetingLogSummary } from "../types/adminTypes";
@@ -47,13 +48,7 @@ export function useAdminMeetingLogs(token: string) {
     void refreshMeetings();
   }, [refreshMeetings]);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = window.setInterval(() => {
-      void refreshMeetings(true);
-    }, 2000);
-    return () => window.clearInterval(interval);
-  }, [autoRefresh, refreshMeetings]);
+  usePollingEffect(() => void refreshMeetings(true), 2000, autoRefresh);
 
   const clearAllLogs = useCallback(async () => {
     setIsClearing(true);

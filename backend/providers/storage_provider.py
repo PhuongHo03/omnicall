@@ -4,6 +4,10 @@ from minio import Minio
 from minio.error import S3Error
 
 from backend.configs.settings import Settings, get_settings
+from backend.providers.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from backend.utils.exceptions import ApplicationError
+
+_storage_breaker = CircuitBreaker("minio", failure_threshold=5, recovery_seconds=30)
 
 
 class ObjectStorageProvider:
@@ -27,16 +31,23 @@ class ObjectStorageProvider:
         if not self.client.bucket_exists(self.settings.minio_bucket):
             self.client.make_bucket(self.settings.minio_bucket)
 
-        self.client.put_object(
-            self.settings.minio_bucket,
-            object_key,
-            data,
-            length=size_bytes,
-            content_type=content_type,
-        )
+        try:
+            _storage_breaker.call(
+                self.client.put_object,
+                self.settings.minio_bucket,
+                object_key,
+                data,
+                length=size_bytes,
+                content_type=content_type,
+            )
+        except CircuitBreakerOpenError as exc:
+            raise ApplicationError(503, "service_unavailable", "Object storage is temporarily unavailable.") from exc
 
     def get_object_bytes(self, *, object_key: str) -> bytes:
-        response = self.client.get_object(self.settings.minio_bucket, object_key)
+        try:
+            response = _storage_breaker.call(self.client.get_object, self.settings.minio_bucket, object_key)
+        except CircuitBreakerOpenError as exc:
+            raise ApplicationError(503, "service_unavailable", "Object storage is temporarily unavailable.") from exc
         try:
             return response.read()
         finally:

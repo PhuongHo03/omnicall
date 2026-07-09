@@ -10,7 +10,10 @@ from backend.controllers.meeting_controller import router as meeting_router
 from backend.controllers.metrics_controller import router as metrics_router
 from backend.dtos.error_dto import ErrorResponse
 from backend.providers.app_metrics_provider import MetricsMiddleware
+from backend.providers.circuit_breaker import CircuitBreakerOpenError
+from backend.middlewares.concurrency_middleware import ConcurrencyMiddleware
 from backend.middlewares.request_id_middleware import RequestIdMiddleware
+from backend.middlewares.rate_limit_middleware import RateLimitMiddleware
 from backend.utils.exceptions import ApplicationError
 
 
@@ -20,6 +23,8 @@ def create_app() -> FastAPI:
 
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(MetricsMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(ConcurrencyMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -33,6 +38,14 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content=ErrorResponse(code=exc.code, message=exc.message).model_dump(),
+        )
+
+    @app.exception_handler(CircuitBreakerOpenError)
+    async def circuit_breaker_handler(_, exc: CircuitBreakerOpenError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"code": "service_unavailable", "message": str(exc)},
+            headers={"Retry-After": str(int(exc.remaining_seconds) + 1)},
         )
 
     app.include_router(health_router, prefix=settings.api_prefix)

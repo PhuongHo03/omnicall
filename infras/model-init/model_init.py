@@ -6,7 +6,7 @@ from huggingface_hub import snapshot_download
 
 
 MODEL_SPECS = (
-    ("ASR", "asr", "Systran/faster-whisper-small", "main"),
+    ("ASR", "asr", "Systran/faster-whisper-medium", "main"),
     ("DIARIZATION", "diarization", "Wespeaker/wespeaker-voxceleb-resnet34-LM", "main"),
     ("RERANK", "rerank", "BAAI/bge-reranker-v2-m3", "main"),
 )

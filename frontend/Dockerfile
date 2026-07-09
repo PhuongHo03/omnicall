@@ -1,5 +1,7 @@
 FROM node:22-alpine
 
+RUN apk add --no-cache wget
+
 WORKDIR /app/frontend
 
 COPY frontend/package.json frontend/package-lock.json /app/frontend/

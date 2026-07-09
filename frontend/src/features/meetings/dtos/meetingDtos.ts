@@ -179,14 +179,25 @@ function mapChatMessage(raw: RawChatMessage): MeetingChatMessage {
   if (role !== "user" && role !== "assistant") {
     throw new Error("Invalid chat_message.role.");
   }
+  const metadata = isRecord(raw.metadata) ? raw.metadata : {};
+  
+  // Map agentMetadata from backend agentToolCalls
+  const agentToolCalls = Array.isArray((metadata as Record<string, unknown>).agentToolCalls) 
+    ? (metadata as Record<string, unknown>).agentToolCalls as Array<{tool: string}>
+    : undefined;
+  const agentMetadata = agentToolCalls && agentToolCalls.length > 0
+    ? { toolCalls: agentToolCalls.map(tc => tc.tool) }
+    : undefined;
+  
   return {
     id: requireString(raw.id, "chat_message.id"),
     role,
     content: requireString(raw.content, "chat_message.content"),
     retrievedChunkIds: stringList(raw.retrieved_chunk_ids, "chat_message.retrieved_chunk_ids"),
     citations: mapCitations(raw.citations),
-    metadata: isRecord(raw.metadata) ? raw.metadata : {},
-    createdAt: requireString(raw.created_at, "chat_message.created_at")
+    metadata,
+    createdAt: requireString(raw.created_at, "chat_message.created_at"),
+    agentMetadata,
   };
 }
 

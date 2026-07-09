@@ -31,6 +31,7 @@ class AnalysisProvider(Protocol):
         meeting: Meeting,
         asset: MeetingAsset,
         transcript_segments: list[TranscriptSegment],
+        detected_language: str | None = None,
     ) -> dict:
         ...
 
@@ -50,6 +51,7 @@ class LLMAnalysisProvider:
         meeting: Meeting,
         asset: MeetingAsset,
         transcript_segments: list[TranscriptSegment],
+        detected_language: str | None = None,
     ) -> dict:
         baseline = _build_base_result(
             meeting=meeting,
@@ -68,6 +70,7 @@ class LLMAnalysisProvider:
                     asset=asset,
                     transcript_segments=transcript_segments,
                     invalid_response=generated,
+                    detected_language=detected_language,
                 ),
             )
         result = _merge_llm_result(
@@ -195,16 +198,18 @@ def _build_repair_prompt(
     asset: MeetingAsset,
     transcript_segments: list[TranscriptSegment],
     invalid_response: dict,
+    detected_language: str | None = None,
 ) -> str:
     transcript = _build_prompt_transcript(transcript_segments)
     payload = _prompt_payload(meeting=meeting, asset=asset)
     invalid_keys = list(invalid_response.keys())[:12]
+    language_name = _language_code_to_name(detected_language or "vi")
     return (
         "Your previous JSON was invalid for Omnicall because it did not contain real meeting intelligence. "
         f"It had these top-level keys: {json.dumps(invalid_keys, ensure_ascii=False)}.\n"
         "Return a corrected JSON object only. Do not echo the input.\n"
         "The corrected JSON must contain exactly these top-level sections: participants, summary, analysis, citations, quality.\n"
-        "summary.executive must be a concise non-empty Vietnamese executive summary of the meeting.\n"
+        f"summary.executive must be a concise non-empty {language_name} executive summary of the meeting.\n"
         "Extract decisions, actionItems, timeline, risks, dependencies, openQuestions, and keyPoints from the transcript.\n"
         "Use transcript segment IDs in citationIds when evidence exists.\n"
         f"Meeting metadata JSON: {json.dumps(payload, ensure_ascii=False)}\n"
@@ -238,6 +243,26 @@ def _sanitize_transcript_field(value: str | None) -> str:
     return re.sub(r"\s+", " ", str(value or "")).replace("|", "/").strip()
 
 
+def _language_code_to_name(language_code: str | None) -> str:
+    """Convert ISO language code to English name."""
+    if not language_code:
+        return "Vietnamese"
+    mapping = {
+        "vi": "Vietnamese",
+        "en": "English",
+        "ja": "Japanese",
+        "zh": "Chinese",
+        "ko": "Korean",
+        "fr": "French",
+        "es": "Spanish",
+        "de": "German",
+        "pt": "Portuguese",
+        "ru": "Russian",
+        "th": "Thai",
+    }
+    return mapping.get(language_code.lower(), "English")
+
+
 def _has_meeting_intelligence(generated: dict) -> bool:
     summary = generated.get("summary")
     analysis = generated.get("analysis")
@@ -252,7 +277,8 @@ def _has_meeting_intelligence(generated: dict) -> bool:
     ) or bool(summary.get("keyPoints"))
 
 
-def _normalize_citation_ids(data: Any, segment_to_cite: dict[str, str], valid_cite_ids: set[str]) -> None:
+def _normalize_citation_ids(data: Any, segment_to_cite: dict[str, str], valid_cite_ids: set[str]) -> set[str]:
+    dropped: set[str] = set()
     if isinstance(data, dict):
         if "citationIds" in data and isinstance(data["citationIds"], list):
             normalized = []
@@ -264,12 +290,15 @@ def _normalize_citation_ids(data: Any, segment_to_cite: dict[str, str], valid_ci
                         normalized.append(segment_to_cite[cid])
                     elif cid.replace("seg-", "cite-") in valid_cite_ids:
                         normalized.append(cid.replace("seg-", "cite-"))
+                    else:
+                        dropped.add(cid)
             data["citationIds"] = normalized
         for val in data.values():
-            _normalize_citation_ids(val, segment_to_cite, valid_cite_ids)
+            dropped.update(_normalize_citation_ids(val, segment_to_cite, valid_cite_ids))
     elif isinstance(data, list):
         for val in data:
-            _normalize_citation_ids(val, segment_to_cite, valid_cite_ids)
+            dropped.update(_normalize_citation_ids(val, segment_to_cite, valid_cite_ids))
+    return dropped
 
 
 def _merge_llm_result(*, baseline: dict, generated: dict, llm_provider: LLMProvider) -> dict:
@@ -303,7 +332,17 @@ def _merge_llm_result(*, baseline: dict, generated: dict, llm_provider: LLMProvi
             for seg_id in citation.get("segmentIds", []):
                 segment_to_cite[seg_id] = cite_id
 
-    _normalize_citation_ids(result, segment_to_cite, valid_cite_ids)
+    dropped_citations = _normalize_citation_ids(result, segment_to_cite, valid_cite_ids)
+    if dropped_citations:
+        quality = result.get("quality", {})
+        if not isinstance(quality, dict):
+            quality = {}
+            result["quality"] = quality
+        warnings = quality.get("warnings", [])
+        if not isinstance(warnings, list):
+            warnings = []
+        warnings.append(f"LLM cited {len(dropped_citations)} non-existent citation(s): {', '.join(sorted(dropped_citations))}")
+        quality["warnings"] = warnings
 
     return result
 

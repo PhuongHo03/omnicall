@@ -5,11 +5,11 @@ from sqlalchemy import delete
 
 from backend.configs.database import SessionLocal
 from backend.models.core_models import User
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
+from backend.models.enums import MeetingStatus
 from backend.providers.analysis_provider import SCHEMA_VERSION
 from backend.providers.vector_provider import VectorProviderError, VectorSearchHit
 from backend.repositories.auth_repository import AuthRepository
-from backend.repositories.meeting_repository import MeetingIntelligenceResultRepository, MeetingRepository, ProcessingJobRepository
+from backend.repositories.meeting_repository import MeetingIntelligenceResultRepository, MeetingRepository
 from backend.repositories.retrieval_repository import MeetingChunkRepository
 from backend.services.retrieval_search_service import RetrievalSearchService
 from backend.tests.fakes import TestEmbeddingProvider
@@ -69,22 +69,14 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
     def create_meeting_chunks(self) -> str:
         with SessionLocal() as session:
             meeting_repo = MeetingRepository(session)
-            job_repo = ProcessingJobRepository(session)
             result_repo = MeetingIntelligenceResultRepository(session)
             meeting = meeting_repo.create(
                 user_id=self.user_id,
                 title="Retrieval search meeting",
             )
             meeting_repo.update_status(meeting, MeetingStatus.READY)
-            job = job_repo.create(
-                meeting_id=meeting.id,
-                idempotency_key=f"retrieval-search-{uuid4()}",
-                payload={"meetingId": meeting.id},
-                status=ProcessingJobStatus.SUCCEEDED,
-            )
             result = result_repo.upsert(
                 meeting_id=meeting.id,
-                processing_job_id=job.id,
                 schema_version=SCHEMA_VERSION,
                 provider_name="test",
                 provider_model="test",

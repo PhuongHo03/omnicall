@@ -9,7 +9,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run local faster-whisper ASR and emit Omnicall JSON segments.")
     parser.add_argument("--audio-path", required=True)
     parser.add_argument("--model-dir", default="")
-    parser.add_argument("--model-name", default="small")
+    parser.add_argument("--model-name", default="medium")
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--language", default="auto")
     parser.add_argument("--beam-size", type=int, default=5)

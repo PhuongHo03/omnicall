@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { EmptyState } from "../../../shared/components/EmptyState";
 
 import type { TranscriptEntry } from "../types/meetingTypes";
-import { formatTime } from "../types/meetingTypes";
+import { formatTime } from "../utils/meetingFormatters";
 
 type TranscriptTrackProps = {
   entries: TranscriptEntry[];

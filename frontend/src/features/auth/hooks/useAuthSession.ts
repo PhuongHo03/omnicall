@@ -5,6 +5,14 @@ import type { Account, AuthMode } from "../types/authTypes";
 
 const TOKEN_KEY = "omnicall.sessionToken";
 
+function isNetworkError(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (err instanceof Error && /network|fetch|load failed|failed to fetch|connection/i.test(err.message)) {
+    return true;
+  }
+  return false;
+}
+
 export function useAuthSession() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [account, setAccount] = useState<Account | null>(null);
@@ -16,6 +24,7 @@ export function useAuthSession() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSessionChecking, setIsSessionChecking] = useState(Boolean(token));
   const [error, setError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   const persistSession = useCallback((nextToken: string, nextAccount: Account) => {
     localStorage.setItem(TOKEN_KEY, nextToken);
@@ -30,12 +39,21 @@ export function useAuthSession() {
       return;
     }
     setIsSessionChecking(true);
+    setSessionError(null);
     try {
       setAccount(await getCurrentAccount(token));
-    } catch {
-      localStorage.removeItem(TOKEN_KEY);
-      setToken(null);
-      setAccount(null);
+    } catch (caught) {
+      if (isNetworkError(caught)) {
+        // Transient network failure – keep the token so the user
+        // can retry without logging in again.
+        setAccount(null);
+        setSessionError("Unable to reach the server. Please check your connection.");
+      } else {
+        // Server explicitly rejected the session (e.g. 401).
+        localStorage.removeItem(TOKEN_KEY);
+        setToken(null);
+        setAccount(null);
+      }
     } finally {
       setIsSessionChecking(false);
     }
@@ -44,6 +62,14 @@ export function useAuthSession() {
   useEffect(() => {
     void refreshAccount();
   }, [refreshAccount]);
+
+  useEffect(() => {
+    if (!sessionError || !token) return;
+    const timer = setTimeout(() => {
+      void refreshAccount();
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [sessionError, token, refreshAccount]);
 
   const submit = useCallback(() => {
     const validationError = validateAuthInput({ confirmPassword, displayName, email, mode, password });
@@ -90,6 +116,8 @@ export function useAuthSession() {
     isSessionChecking,
     mode,
     password,
+    refreshAccount,
+    sessionError,
     token,
     logout,
     setConfirmPassword,

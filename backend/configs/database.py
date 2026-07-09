@@ -4,6 +4,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.configs.settings import get_settings
+from backend.providers.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from backend.utils.exceptions import ApplicationError
 
 
 class Base(DeclarativeBase):
@@ -14,9 +16,14 @@ settings = get_settings()
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
+_db_breaker = CircuitBreaker("postgres", failure_threshold=5, recovery_seconds=30)
+
 
 def get_db_session() -> Generator[Session, None, None]:
-    session = SessionLocal()
+    try:
+        session = _db_breaker.call(SessionLocal)
+    except CircuitBreakerOpenError as exc:
+        raise ApplicationError(503, "service_unavailable", "Database is temporarily unavailable. Please try again later.") from exc
     try:
         yield session
     finally:

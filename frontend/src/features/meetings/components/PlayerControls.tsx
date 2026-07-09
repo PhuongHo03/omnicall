@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 
 import { IconOnlyButton } from "../../../shared/components/IconOnlyButton";
-import { formatTime } from "../types/meetingTypes";
+import { formatTime } from "../utils/meetingFormatters";
 
 type PlayerControlsProps = {
   isPlaying: boolean;

@@ -1,0 +1,323 @@
+.result-panel {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.result-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.result-panel__version {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-faint);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-family: var(--font-mono);
+}
+
+.json-section-list {
+  display: grid;
+  gap: 8px;
+}
+
+/* ── Section card ── */
+
+.json-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.json-section__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  padding: 10px 12px;
+  color: var(--color-text);
+  background: transparent;
+  font-size: var(--text-base);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.json-section__toggle:hover {
+  background: var(--color-faint);
+}
+
+.json-section__toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.json-section__icon {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.json-section__title {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.json-section__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.json-section__chevron {
+  color: var(--color-muted);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.json-section__chevron--open {
+  transform: rotate(90deg);
+}
+
+.json-section__body {
+  border-top: 1px solid var(--color-border);
+  padding: 12px;
+  background: var(--color-surface-raised);
+}
+
+/* ── Key-value map ── */
+
+.json-map {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.json-map--nested {
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border);
+}
+
+.json-map__row {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.3fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.json-map dt {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-top: 1px;
+}
+
+.json-map dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-base);
+  line-height: var(--line-height-relaxed);
+}
+
+/* ── Value types ── */
+
+.json-string {
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--line-height-relaxed);
+}
+
+.json-text-block {
+  display: block;
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--line-height-reading);
+  white-space: pre-wrap;
+  padding: 8px 10px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  outline: 1px solid var(--color-border);
+}
+
+.json-number {
+  color: var(--color-accent);
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.json-bool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.json-bool--true {
+  background: var(--color-success-alpha);
+  color: var(--color-success);
+}
+
+.json-bool--false {
+  background: var(--color-danger-alpha);
+  color: var(--color-danger);
+}
+
+.json-null {
+  color: var(--color-muted);
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-style: italic;
+}
+
+.json-empty {
+  color: var(--color-muted);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.json-scalar {
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--line-height-relaxed);
+  white-space: pre-wrap;
+}
+
+/* ── Tag list (array of primitives) ── */
+
+.json-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.json-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-faint);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+/* ── Card list (array of objects) ── */
+
+.json-card-list {
+  display: grid;
+  gap: 6px;
+}
+
+.json-card {
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  outline: 1px solid var(--color-border);
+}
+
+[data-theme="dark"] .json-section {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+[data-theme="dark"] .json-section__toggle {
+  color: var(--color-text);
+}
+
+[data-theme="dark"] .json-section__body {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+}
+
+[data-theme="dark"] .json-section__badge {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+[data-theme="dark"] .json-map--nested {
+  border-color: var(--color-border);
+}
+
+[data-theme="dark"] .json-map__row dt {
+  color: var(--color-muted);
+}
+
+[data-theme="dark"] .json-map__row dd {
+  color: var(--color-text);
+}
+
+[data-theme="dark"] .json-string,
+[data-theme="dark"] .json-scalar {
+  color: var(--color-text);
+}
+
+[data-theme="dark"] .json-text-block {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+[data-theme="dark"] .json-number {
+  color: var(--color-accent);
+}
+
+[data-theme="dark"] .json-bool--true {
+  background: var(--color-success-alpha);
+  color: var(--color-success);
+}
+
+[data-theme="dark"] .json-bool--false {
+  background: var(--color-danger-alpha);
+  color: var(--color-danger);
+}
+
+[data-theme="dark"] .json-null,
+[data-theme="dark"] .json-empty {
+  color: var(--color-muted);
+}
+
+[data-theme="dark"] .json-tag {
+  background: var(--color-faint);
+  color: var(--color-text);
+}
+
+[data-theme="dark"] .json-card {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+

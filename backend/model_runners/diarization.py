@@ -93,10 +93,12 @@ def _normalize_turns(raw_turns: Any) -> list[dict]:
             start = _seconds(item.get("start", item.get("startMs", 0)))
             end = _seconds(item.get("end", item.get("endMs", start)))
             label = item.get("speaker", item.get("label", index))
+            raw_confidence = item.get("confidence")
         elif isinstance(item, (list, tuple)) and len(item) >= 4:
             _, start, end, label = item[:4]
             start = float(start)
             end = float(end)
+            raw_confidence = None
         else:
             continue
         if end <= start:
@@ -107,7 +109,7 @@ def _normalize_turns(raw_turns: Any) -> list[dict]:
                 "speaker": f"Speaker {speaker_index}" if isinstance(speaker_index, int) else str(speaker_index),
                 "startMs": int(start * 1000),
                 "endMs": int(end * 1000),
-                "confidence": 0.82,
+                "confidence": max(0.1, min(0.99, float(raw_confidence))) if raw_confidence is not None else 0.85,
             }
         )
     return turns
@@ -118,28 +120,61 @@ def _assign_segments(segments: list, turns: list[dict]) -> list[dict]:
     for segment in segments:
         if not isinstance(segment, dict):
             continue
-        turn = _best_turn(segment, turns)
-        assigned.append(
-            {
-                "id": segment.get("id"),
-                "speaker": turn.get("speaker", segment.get("speaker", "unknown")),
-                "confidence": turn.get("confidence", segment.get("confidence", 0.8)),
-            }
-        )
+        seg_start = int(segment.get("startMs") or 0)
+        seg_end = int(segment.get("endMs") or seg_start)
+        seg_duration = max(1, seg_end - seg_start)
+        turn, overlap_ratio = _best_turn(segment, turns)
+        if turn and overlap_ratio >= _min_overlap_threshold(seg_duration):
+            confidence = _dynamic_confidence(turn.get("confidence", 0.85), overlap_ratio)
+            assigned.append(
+                {
+                    "id": segment.get("id"),
+                    "speaker": turn["speaker"],
+                    "confidence": confidence,
+                }
+            )
+        else:
+            assigned.append(
+                {
+                    "id": segment.get("id"),
+                    "speaker": segment.get("speaker", "unknown"),
+                    "confidence": segment.get("confidence", 0.5),
+                }
+            )
     return assigned
 
 
-def _best_turn(segment: dict, turns: list[dict]) -> dict:
+def _best_turn(segment: dict, turns: list[dict]) -> tuple[dict, float]:
     best: dict = {}
-    best_overlap = -1
+    best_score = -1.0
+    best_ratio = 0.0
     start = int(segment.get("startMs") or 0)
     end = int(segment.get("endMs") or start)
+    seg_duration = max(1, end - start)
     for turn in turns:
-        overlap = max(0, min(end, int(turn["endMs"])) - max(start, int(turn["startMs"])))
-        if overlap > best_overlap:
+        t_start = int(turn["startMs"])
+        t_end = int(turn["endMs"])
+        overlap = max(0, min(end, t_end) - max(start, t_start))
+        if overlap <= 0:
+            continue
+        overlap_ratio = overlap / seg_duration
+        turn_confidence = turn.get("confidence", 0.85)
+        score = overlap_ratio * 0.7 + turn_confidence * 0.3
+        if score > best_score:
             best = turn
-            best_overlap = overlap
-    return best
+            best_score = score
+            best_ratio = overlap_ratio
+    return best, best_ratio
+
+
+def _min_overlap_threshold(seg_duration_ms: int) -> float:
+    if seg_duration_ms < 500:
+        return 0.05
+    return 0.10
+
+
+def _dynamic_confidence(turn_confidence: float, overlap_ratio: float) -> float:
+    return max(0.1, min(0.99, turn_confidence * overlap_ratio))
 
 
 def _seconds(value: Any) -> float:

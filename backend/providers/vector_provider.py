@@ -7,6 +7,7 @@ from urllib.request import Request, urlopen
 
 from backend.configs.settings import Settings, get_settings
 from backend.models.meeting_models import MeetingChunkRecord
+from backend.providers.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 
 
 class VectorProviderError(RuntimeError):
@@ -59,6 +60,9 @@ class NoopVectorProvider:
 
     def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
         return {"provider": self.provider_name, "status": "skipped"}
+
+
+_milvus_breaker = CircuitBreaker("milvus", failure_threshold=5, recovery_seconds=30)
 
 
 class MilvusVectorProvider:
@@ -225,8 +229,10 @@ class MilvusVectorProvider:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=5) as response:
+            with _milvus_breaker.call(urlopen, request, timeout=5) as response:
                 body = json.loads(response.read().decode("utf-8"))
+        except CircuitBreakerOpenError as exc:
+            raise VectorProviderError(f"Milvus circuit breaker open: {exc}") from exc
         except HTTPError as exc:
             raise VectorProviderError(f"Milvus request failed: HTTP {exc.code}") from exc
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:

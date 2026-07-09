@@ -63,8 +63,16 @@ export function WaveformDisplay({ peaks, progress, isAnalyzing, onSeek }: Wavefo
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, width, height);
 
-    const activeColor = readCssVar(container, "--apb-waveform-active", "#0d9488");
-    const bgColor = readCssVar(container, "--apb-waveform-bg", "#d1d5db");
+    const activeColor = readCssVar(
+      container,
+      "--apb-waveform-active",
+      readCssVar(container, "--color-primary", "currentColor")
+    );
+    const bgColor = readCssVar(
+      container,
+      "--apb-waveform-bg",
+      readCssVar(container, "--color-border-strong", "ButtonBorder")
+    );
 
     const totalBarWidth = BAR_WIDTH + BAR_GAP;
     const barCount = Math.floor(width / totalBarWidth);

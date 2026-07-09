@@ -1,8 +1,8 @@
 import { Download, FileAudio, FileVideo, FileText } from "lucide-react";
 
 import { IconOnlyButton } from "../../../shared/components/IconOnlyButton";
-import type { MeetingAsset } from "../types/meetingTypes";
-import { formatFileSize, type MediaKind } from "../types/meetingTypes";
+import type { MeetingAsset, MediaKind } from "../types/meetingTypes";
+import { formatFileSize } from "../utils/meetingFormatters";
 
 type AssetMetadataBarProps = {
   asset: MeetingAsset;

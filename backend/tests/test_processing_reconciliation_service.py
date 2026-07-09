@@ -12,6 +12,15 @@ class FakeSession:
     def commit(self) -> None:
         self.commits += 1
 
+    def query(self, model):
+        return self
+
+    def filter(self, *criteria):
+        return self
+
+    def all(self):
+        return []
+
 
 class FakeLockProvider:
     def __init__(self, *, available: bool = True) -> None:
@@ -28,26 +37,26 @@ class FakeLockProvider:
 
 
 class FakeQueueProvider:
-    def __init__(self, *, failing_job_id: str | None = None) -> None:
-        self.failing_job_id = failing_job_id
-        self.enqueued: list[tuple[str, str]] = []
+    def __init__(self, *, failing_meeting_id: str | None = None) -> None:
+        self.failing_meeting_id = failing_meeting_id
+        self.enqueued: list[str] = []
 
-    def enqueue_meeting_processing(self, *, job_id: str, meeting_id: str) -> None:
-        if job_id == self.failing_job_id:
+    def enqueue_meeting_processing(self, *, meeting_id: str) -> None:
+        if meeting_id == self.failing_meeting_id:
             raise RuntimeError("broker unavailable")
-        self.enqueued.append((job_id, meeting_id))
+        self.enqueued.append(meeting_id)
 
 
-class FakeJobRepository:
-    def __init__(self, jobs: list[SimpleNamespace]) -> None:
-        self.jobs = jobs
+class FakeMeetingRepository:
+    def __init__(self, meetings: list[SimpleNamespace]) -> None:
+        self.meetings = meetings
         self.updated_before = None
         self.limit = None
 
-    def list_stale_pending(self, *, updated_before, limit: int):
+    def list_stale_queued(self, *, updated_before, limit: int):
         self.updated_before = updated_before
         self.limit = limit
-        return self.jobs
+        return self.meetings
 
 
 class ProcessingReconciliationServiceTestCase(unittest.TestCase):
@@ -59,28 +68,29 @@ class ProcessingReconciliationServiceTestCase(unittest.TestCase):
             PROCESSING_RECONCILIATION_BATCH_SIZE=25,
         )
 
-    def test_republishes_stale_pending_jobs_and_records_cooldown_metadata(self) -> None:
-        job = SimpleNamespace(id="job-1", meeting_id="meeting-1", payload={"meetingId": "meeting-1"})
+    def test_republishes_stale_queued_meetings(self) -> None:
+        meeting = SimpleNamespace(id="meeting-1")
         session = FakeSession()
         locks = FakeLockProvider()
         queue = FakeQueueProvider()
-        jobs = FakeJobRepository([job])
+        meetings = FakeMeetingRepository([meeting])
         service = ProcessingReconciliationService(
             session=session,
             settings=self.make_settings(),
             lock_provider=locks,
             queue_provider=queue,
-            jobs=jobs,
+            meetings=meetings,
         )
 
         result = service.reconcile()
 
-        self.assertEqual(result, {"status": "completed", "scanned": 1, "republished": 1, "failed": 0})
-        self.assertEqual(queue.enqueued, [("job-1", "meeting-1")])
-        self.assertEqual(job.payload["reconciliation"]["republishCount"], 1)
-        self.assertTrue(job.payload["reconciliation"]["lastRepublishedAt"])
-        self.assertEqual(jobs.limit, 25)
-        self.assertEqual(session.commits, 1)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["scanned"], 1)
+        self.assertEqual(result["republished"], 1)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(queue.enqueued, ["meeting-1"])
+        self.assertEqual(meetings.limit, 25)
+        self.assertGreaterEqual(session.commits, 1)
         self.assertEqual(locks.released, [(service.lock_key, "token")])
 
     def test_skips_run_when_another_reconciler_holds_the_lock(self) -> None:
@@ -91,7 +101,7 @@ class ProcessingReconciliationServiceTestCase(unittest.TestCase):
             settings=self.make_settings(),
             lock_provider=FakeLockProvider(available=False),
             queue_provider=queue,
-            jobs=FakeJobRepository([]),
+            meetings=FakeMeetingRepository([]),
         )
 
         result = service.reconcile()
@@ -100,22 +110,24 @@ class ProcessingReconciliationServiceTestCase(unittest.TestCase):
         self.assertEqual(queue.enqueued, [])
         self.assertEqual(session.commits, 0)
 
-    def test_broker_failure_leaves_job_eligible_for_a_later_reconciliation(self) -> None:
-        job = SimpleNamespace(id="job-1", meeting_id="meeting-1", payload={"meetingId": "meeting-1"})
+    def test_broker_failure_leaves_meeting_eligible_for_a_later_reconciliation(self) -> None:
+        meeting = SimpleNamespace(id="meeting-1")
         session = FakeSession()
         service = ProcessingReconciliationService(
             session=session,
             settings=self.make_settings(),
             lock_provider=FakeLockProvider(),
-            queue_provider=FakeQueueProvider(failing_job_id="job-1"),
-            jobs=FakeJobRepository([job]),
+            queue_provider=FakeQueueProvider(failing_meeting_id="meeting-1"),
+            meetings=FakeMeetingRepository([meeting]),
         )
 
         result = service.reconcile()
 
-        self.assertEqual(result, {"status": "completed", "scanned": 1, "republished": 0, "failed": 1})
-        self.assertNotIn("reconciliation", job.payload)
-        self.assertEqual(session.commits, 1)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["scanned"], 1)
+        self.assertEqual(result["republished"], 0)
+        self.assertEqual(result["failed"], 1)
+        self.assertGreaterEqual(session.commits, 1)
 
 
 if __name__ == "__main__":

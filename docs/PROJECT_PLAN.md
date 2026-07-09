@@ -21,3 +21,11 @@ Project documentation rules:
 - `docs/rules/update-explanation.md`
 
 - `docs/plans/10 - frontend backend resilience.md` - frontend request protection, backend rate limiting, concurrency guards, and circuit breakers.
+
+- `docs/plans/11 - resilience hardening.md` - Redis pool, fallback rate-limit, circuit breaker wiring, frontend abort/retry, rate-limit refinements.
+- `docs/plans/12 - voice processing upgrade.md` - ASR whisper-medium upgrade, configurable model settings, diarization overlap ratio matching, dynamic confidence.
+- `docs/plans/13 - guardrail scope reduction.md` - remove transcript and retrieved-context guardrail layers, keep input/output guardrails only, and update related docs/env/runtime references.
+- `docs/plans/14 - guardrail intelligence upgrade.md` - parser hardening, category normalization, per-layer strict mode, output soft block/redaction, confidence heuristics, latency budget, observability metadata, orchestration tests.
+- `docs/plans/15 - guardrail simplification and threshold control.md` - simplify actions to allowed/blocked, remove redaction strategy, regex pre-check, few-shot Vietnamese prompt, post-verdict category validation, input→output trust boost, text length guard, stale env cleanup.
+
+- `docs/plans/17 - typewriter-expansion.md` - expand typewriter effect to all evidence states (grounded, partial, not_enough_evidence, fast_path, blocked, error).

@@ -74,12 +74,11 @@ Durable business state belongs in PostgreSQL.
 | `audit_event` | Security and operational trace for important actions |
 | `meeting` | Main aggregate for uploaded/recorded meeting content |
 | `meeting_asset` | File metadata for raw uploads, recordings, transcripts, exports, and standalone account-library files stored in MinIO |
-| `processing_job` | Async job state for transcription, analysis, and embedding work |
 | `meeting_intelligence_result` | Versioned processed transcript JSON used as the main knowledge base for chat |
 | `meeting_chunk` | Retrieval unit derived from processed JSON sections and source ranges |
 | `chat_message` | Saved user questions, assistant answers, citations, and timestamps |
 
-The current PostgreSQL local-dev schema intentionally has 9 business tables: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `processing_jobs`, `meeting_intelligence_results`, `meeting_chunks`, and `chat_messages`. `workspaces`, `workspace_members`, `account_files`, `transcript_segments`, `meeting_insights`, and `chat_sessions` were removed during the schema consolidation; their responsibilities are handled by direct account ownership, JSONB result storage, derived `meeting_chunks`, and meeting-scoped chat messages.
+The current PostgreSQL local-dev schema intentionally has 8 business tables: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `meeting_intelligence_results`, `meeting_chunks`, and `chat_messages`. `workspaces`, `workspace_members`, `account_files`, `processing_jobs`, `transcript_segments`, `meeting_insights`, and `chat_sessions` were removed during the schema consolidation; their responsibilities are handled by direct account ownership, meeting status/attempt fields, JSONB result storage, derived `meeting_chunks`, and meeting-scoped chat messages.
 
 Meeting status lifecycle:
 
@@ -88,15 +87,7 @@ DRAFT -> UPLOADED -> QUEUED -> PROCESSING -> READY
                               -> FAILED -> QUEUED (retry)
 ```
 
-Processing job status lifecycle:
-
-```text
-PENDING -> RUNNING -> SUCCEEDED
-        -> CANCELLED
-RUNNING -> FAILED -> RETRYING -> RUNNING
-```
-
-`PENDING` jobs whose meeting remains `QUEUED` beyond the configured stale threshold are automatically republished by Celery Beat. `FAILED` jobs still require an explicit retry.
+`QUEUED` meetings that remain stale beyond the configured threshold are automatically republished by Celery Beat. `FAILED` meetings still require an explicit retry.
 
 ## Meeting Intelligence Pipeline
 
@@ -106,7 +97,7 @@ Core asynchronous pipeline:
 upload/recording
 -> backend validation
 -> MinIO object
--> PostgreSQL asset + processing_job
+-> PostgreSQL asset + meeting status/attempt state
 -> RabbitMQ task
 -> worker lock + idempotency check
 -> text extraction or voice preprocessing
@@ -135,7 +126,7 @@ question
 -> evidence guard against irrelevant local-embedding hits
 -> rerank candidate chunks when rerank provider is enabled
 -> load source evidence from transcript entries inside the JSON
--> guardrail input/context checks when guardrails are enabled
+-> guardrail input checks when guardrails are enabled
 -> answer generation with cited context
 -> guardrail output check when guardrails are enabled
 -> save chat messages
@@ -346,8 +337,6 @@ GUARDRAIL_MODEL=llama-guard3:1b
 GUARDRAIL_TIMEOUT_SECONDS=20
 GUARDRAIL_MAX_RETRIES=0
 GUARDRAIL_INPUT_ENABLED=true
-GUARDRAIL_TRANSCRIPT_ENABLED=true
-GUARDRAIL_CONTEXT_ENABLED=true
 GUARDRAIL_OUTPUT_ENABLED=true
 GUARDRAIL_STRICT_MODE=false
 ```
@@ -526,7 +515,7 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | ASR provider | Local faster-whisper command runner is implemented and verified through MP3 upload processing | Revisit when changing ASR model size, language defaults, or GPU acceleration |
 | LLM provider | API/private endpoint first with Ollama fallback; the same LLM boundary is used for analysis JSON and chat answers | Revisit when improving prompts, evaluations, and chat generation |
 | Embeddings and rerank | Ollama text embeddings, PostgreSQL chunk records, Milvus REST upsert/query, and local SentenceTransformers rerank are implemented | Revisit model choices after latency and quality evaluation |
-| Guardrails | Ollama guardrail provider, transcript/input/context/output checks, safe refusals, and `not_enough_evidence` downgrade are implemented | Revisit after live model latency checks and policy tuning |
+| Guardrails | Ollama guardrail provider with input/output checks, regex pre-check, post-verdict validation, and fail-open error handling are implemented | Revisit after live model latency checks and policy tuning |
 | Raw audio retention | Private object storage with explicit future retention policy | Before production or real user data |
 | File/session deletion | Direct file deletion is blocked while a meeting session references the file; admin session deletion cascades linked file cleanup | Revisit when adding shared files or reusable uploads |
 | Operational log retention | Temporary Redis Stream capped at 1,000 events with a 24-hour sliding TTL | Revisit when centralized durable log aggregation is required |
@@ -547,4 +536,65 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 7 | Hardening | Done |
 | 8 | Operational logs | Done |
 | 9 | Full JSON RAG coverage | Done |
-| 10 | Frontend and backend resilience | Pending |
+| 10 | Frontend and backend resilience | Done |
+| 11 | Resilience hardening | Done |
+| 12 | Voice processing upgrade | Done |
+| 13 | Guardrail scope reduction | Done |
+| 14 | Guardrail intelligence upgrade | Done |
+| 15 | Guardrail simplification and threshold control | Done |
+| 16 | Agentic RAG upgrade | Done |
+| 17 | Typewriter expansion | Done |
+| 18 | Backend refactor safety cleanup | Done |
+| 19 | Frontend refactor safety cleanup | Done |
+| 20 | Frontend design token cleanup | Done |
+| 21 | Fast path temperature tuning | Done |
+
+## Agentic RAG Architecture (Phase 16)
+
+### Overview
+
+The system uses an Agentic RAG approach where an AI agent dynamically selects tools and performs multi-hop reasoning to answer meeting questions.
+
+### Flow
+
+```text
+Question → Fast Path Check → Immediate Response (greeting/chitchat)
+                │
+                ▼ Meeting Question
+         Agent Loop (max 3 iterations)
+         ├── Think: LLM analyzes question
+         ├── Execute: Call tools (parallel)
+         └── Observe: Evaluate results
+                │
+                ▼
+         Synthesize → Answer with citations
+```
+
+### Tools
+
+- **Search**: semantic, keyword, section, speaker
+- **Retrieval**: summary, action_items, decisions, risks, timeline, participants
+- **Synthesis**: synthesize_answer
+
+### Evidence States
+
+- `fast_path`: Immediate response
+- `grounded`: Full context
+- `partial`: Partial context
+- `not_enough_evidence`: No context
+- `blocked`: Guardrail blocked
+- `error`: System error
+
+### Feature Flag
+
+The system uses Agentic RAG exclusively.
+
+## Phase 17 - Typewriter Expansion
+
+Expanded typewriter effect to work for ALL assistant message evidence states (grounded, partial, not_enough_evidence, fast_path, blocked, error). Previously, typewriter only worked for grounded/partial messages. Now all assistant messages display with typewriter animation regardless of their evidence state.
+
+### Key Changes
+- Removed `!isStreaming` restriction from typewriter activation
+- Added evidence state CSS classes for visual distinction
+- Updated SSE and polling handlers to add typewriter IDs for all completed messages
+- Added CSS styles for blocked, error, fast_path, grounded, partial, not_enough_evidence states

@@ -221,14 +221,12 @@ def stream_chat_events(
     if meeting is None:
         raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
 
-    import json as _json
-
     channel = f"chat:{meeting_id}"
     pubsub = event_provider.subscribe(channel)
 
     def event_stream():
         try:
-            yield 'event: connected\ndata: {"status": "connected"}\n\n'
+            yield 'event: connected\ndata: {"type": "connected", "status": "connected"}\n\n'
             for message in pubsub.listen():
                 if message["type"] != "message":
                     continue

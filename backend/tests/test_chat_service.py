@@ -7,17 +7,16 @@ from backend.configs.database import SessionLocal
 from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.meeting_dto import MeetingChatRequest
 from backend.models.core_models import User
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
+from backend.models.enums import MeetingStatus
 from backend.providers.analysis_provider import SCHEMA_VERSION
-from backend.providers.vector_provider import VectorProviderError
 from backend.repositories.auth_repository import AuthRepository
 from backend.repositories.chat_repository import ChatMessageRepository
 from backend.repositories.meeting_repository import (
     MeetingIntelligenceResultRepository,
     MeetingRepository,
-    ProcessingJobRepository,
 )
 from backend.repositories.retrieval_repository import MeetingChunkRepository
+from backend.services.agentic_rag_service import AgentResult
 from backend.services.chat_service import MeetingChatService
 from backend.tests.fakes import TestEmbeddingProvider, TestGuardrailProvider
 
@@ -46,23 +45,29 @@ class FakeParticipantLLMProvider:
         }
 
 
-class BrokenVectorProvider:
-    enabled = True
-    provider_name = "broken-vector"
+class FakeAgenticRAGService:
+    def __init__(self, answer: str, chunks: list[dict], evidence_state: str = "grounded") -> None:
+        self.answer = answer
+        self.chunks = chunks
+        self.evidence_state = evidence_state
+        self.calls: list[dict] = []
 
-    def upsert_chunks(self, chunks) -> dict:
-        raise VectorProviderError("vector unavailable")
-
-    def search_chunk_ids(self, *, workspace_id: str, meeting_id: str, query_vector: list[float], limit: int):
-        raise VectorProviderError("vector unavailable")
-
-
-class IdentityRerankProvider:
-    provider_name = "identity-rerank"
-    model_name = "test-rerank"
-
-    def rerank(self, *, query: str, chunks: list, output_k: int) -> list:
-        return chunks[:output_k]
+    def generate_answer(self, *, meeting_id: str, workspace_id: str, question: str, event_callback=None) -> AgentResult:
+        self.calls.append({"meeting_id": meeting_id, "workspace_id": workspace_id, "question": question})
+        if event_callback:
+            event_callback({"type": "agent_synthesize", "message": "Đang tạo câu trả lời cuối cùng..."})
+        return AgentResult(
+            answer=self.answer,
+            evidence_state=self.evidence_state,
+            confidence=0.91,
+            provider="fake-agent",
+            model="fake-agent-model",
+            iterations=1,
+            total_duration_ms=12,
+            tool_calls_summary=[{"tool": "search_semantic", "success": True}],
+            agent_thoughts=[{"iteration": 1, "thought": "Use retrieved meeting chunks."}],
+            metadata={"chunks": self.chunks, "tokenUsage": {"total": 42}},
+        )
 
 
 class ChatServiceTestCase(unittest.TestCase):
@@ -83,56 +88,100 @@ class ChatServiceTestCase(unittest.TestCase):
             session.execute(delete(User).where(User.id == self.user_id))
             session.commit()
 
-    def test_chat_saves_history_directly_by_meeting(self) -> None:
-        meeting_id = self._create_ready_meeting_with_chunk()
+    def test_generate_answer_saves_history_directly_by_meeting(self) -> None:
+        meeting_id, chunks = self._create_ready_meeting_with_chunk()
         with SessionLocal() as session:
+            user_message = ChatMessageRepository(session).create(
+                meeting_id=meeting_id,
+                role="user",
+                content="Who must index action items by Friday?",
+            )
+            session.commit()
             service = MeetingChatService(
                 session,
                 llm_provider=FakeChatLLMProvider(),
                 guardrail_provider=TestGuardrailProvider(),
+                agentic_rag_service=FakeAgenticRAGService(
+                    "Bob cần index action items trước thứ Sáu.",
+                    [chunks["action"]],
+                ),
             )
-            service.retrieval_search.vector_provider = BrokenVectorProvider()
-            service.retrieval_search.embedding_provider = TestEmbeddingProvider(dimensions=8)
-            service.retrieval_search.rerank_provider = IdentityRerankProvider()
 
-            response = service.ask(
-                self.context,
-                meeting_id,
-                MeetingChatRequest(question="Who must index action items by Friday?"),
+            response = service.generate_answer(
+                meeting_id=meeting_id,
+                user_id=self.user_id,
+                question="Who must index action items by Friday?",
+                user_message_id=user_message.id,
+                input_guardrails={},
             )
             history = service.get_history(self.context, meeting_id)
 
-        self.assertEqual(response.evidence_state, "grounded")
-        self.assertEqual(response.citations[0].chunk_id, "analysis.actionItems-001")
+        self.assertEqual(response["status"], "succeeded")
         self.assertEqual(len(history.messages), 2)
         self.assertEqual([message.role for message in history.messages], ["user", "assistant"])
         self.assertEqual(history.messages[1].retrieved_chunk_ids, ["analysis.actionItems-001"])
+        self.assertEqual(history.messages[1].citations[0].chunk_id, "analysis.actionItems-001")
+        self.assertEqual(history.messages[1].metadata["agentIterations"], 1)
 
-    def test_chat_answers_participant_count_from_participant_chunks(self) -> None:
-        meeting_id = self._create_ready_meeting_with_chunk()
+    def test_generate_answer_saves_participant_citation_from_agent_chunks(self) -> None:
+        meeting_id, chunks = self._create_ready_meeting_with_chunk()
         with SessionLocal() as session:
+            user_message = ChatMessageRepository(session).create(
+                meeting_id=meeting_id,
+                role="user",
+                content="Cuộc gọi này có bao nhiêu người tham gia?",
+            )
+            session.commit()
             service = MeetingChatService(
                 session,
                 llm_provider=FakeParticipantLLMProvider(),
                 guardrail_provider=TestGuardrailProvider(),
-            )
-            service.retrieval_search.vector_provider = BrokenVectorProvider()
-            service.retrieval_search.embedding_provider = TestEmbeddingProvider(dimensions=8)
-            service.retrieval_search.rerank_provider = IdentityRerankProvider()
-
-            response = service.ask(
-                self.context,
-                meeting_id,
-                MeetingChatRequest(question="Cuộc gọi này có bao nhiêu người tham gia?"),
+                agentic_rag_service=FakeAgenticRAGService(
+                    "Cuộc gọi có 2 người tham gia: Alice và Bob.",
+                    [chunks["participants"]],
+                ),
             )
 
-        self.assertEqual(response.evidence_state, "grounded")
-        self.assertEqual(response.citations[0].chunk_id, "participants-overview")
-        self.assertEqual(response.citations[0].section_type, "participants.overview")
-        self.assertIn("participant Count: 2", response.citations[0].text)
+            response = service.generate_answer(
+                meeting_id=meeting_id,
+                user_id=self.user_id,
+                question="Cuộc gọi này có bao nhiêu người tham gia?",
+                user_message_id=user_message.id,
+                input_guardrails={},
+            )
+            history = service.get_history(self.context, meeting_id)
+
+        self.assertEqual(response["status"], "succeeded")
+        self.assertEqual(history.messages[1].citations[0].chunk_id, "participants-overview")
+        self.assertEqual(history.messages[1].citations[0].section_type, "participants.overview")
+        self.assertIn("participant Count: 2", history.messages[1].citations[0].text)
+
+    def test_ask_queues_chat_generation_and_marks_pending(self) -> None:
+        meeting_id, _ = self._create_ready_meeting_with_chunk()
+        delayed_calls = []
+
+        with SessionLocal() as session:
+            service = MeetingChatService(session, guardrail_provider=TestGuardrailProvider())
+
+            from unittest.mock import patch
+
+            with patch("backend.tasks.chat_tasks.generate_chat_answer.delay", lambda **kwargs: delayed_calls.append(kwargs)):
+                response = service.ask(
+                    self.context,
+                    meeting_id,
+                    MeetingChatRequest(question="Who must index action items by Friday?"),
+                )
+            meeting = MeetingRepository(session).get(meeting_id)
+            messages = ChatMessageRepository(session).list_for_meeting(meeting_id=meeting_id)
+
+        self.assertEqual(response.status, "processing")
+        self.assertEqual(meeting.pending_chat_status, "queued")
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].role, "user")
+        self.assertEqual(delayed_calls[0]["meeting_id"], meeting_id)
 
     def test_chat_message_repository_has_no_chat_session_layer(self) -> None:
-        meeting_id = self._create_ready_meeting_with_chunk()
+        meeting_id, _ = self._create_ready_meeting_with_chunk()
         with SessionLocal() as session:
             repository = ChatMessageRepository(session)
             repository.create(meeting_id=meeting_id, role="user", content="Question?")
@@ -145,25 +194,17 @@ class ChatServiceTestCase(unittest.TestCase):
         self.assertEqual(messages[0].meeting_id, meeting_id)
         self.assertEqual(messages[1].meeting_id, meeting_id)
 
-    def _create_ready_meeting_with_chunk(self) -> str:
+    def _create_ready_meeting_with_chunk(self) -> tuple[str, dict[str, dict]]:
         with SessionLocal() as session:
             meeting_repo = MeetingRepository(session)
-            job_repo = ProcessingJobRepository(session)
             result_repo = MeetingIntelligenceResultRepository(session)
             meeting = meeting_repo.create(
                 user_id=self.user_id,
                 title="Chat service meeting",
             )
             meeting_repo.update_status(meeting, MeetingStatus.READY)
-            job = job_repo.create(
-                meeting_id=meeting.id,
-                idempotency_key=f"chat-test-{uuid4()}",
-                payload={"meetingId": meeting.id},
-                status=ProcessingJobStatus.SUCCEEDED,
-            )
             result = result_repo.upsert(
                 meeting_id=meeting.id,
-                processing_job_id=job.id,
                 schema_version=SCHEMA_VERSION,
                 provider_name="test",
                 provider_model="test",
@@ -174,6 +215,28 @@ class ChatServiceTestCase(unittest.TestCase):
             embedding = embedding_provider.embed_text(text)
             participant_overview_text = "Participants overview. participant Count: 2. participants: Alice, Bob"
             participant_text = "name: Alice. role: Product owner. details: Alice led the meeting."
+            participant_chunk = {
+                "chunkId": "participants-overview",
+                "sourceType": "structured",
+                "sectionType": "participants.overview",
+                "jsonPointer": "/participants",
+                "text": participant_overview_text,
+                "citationIds": [],
+                "segmentIds": [],
+                "startMs": None,
+                "endMs": None,
+            }
+            action_chunk = {
+                "chunkId": "analysis.actionItems-001",
+                "sourceType": "structured",
+                "sectionType": "analysis.actionItems",
+                "jsonPointer": "/analysis/actionItems/0",
+                "text": text,
+                "citationIds": ["cite-001"],
+                "segmentIds": ["seg-001"],
+                "startMs": 1000,
+                "endMs": 5000,
+            }
             MeetingChunkRepository(session).replace_for_result(
                 meeting_id=meeting.id,
                 intelligence_result_id=result.id,
@@ -241,7 +304,7 @@ class ChatServiceTestCase(unittest.TestCase):
                 ],
             )
             session.commit()
-            return meeting.id
+            return meeting.id, {"participants": participant_chunk, "action": action_chunk}
 
 
 if __name__ == "__main__":

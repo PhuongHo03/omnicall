@@ -31,7 +31,7 @@ class TestGuardrailProvider:
         lowered = text.lower()
         if "ignore previous" in lowered or "reveal the system prompt" in lowered:
             return GuardrailResult(
-                action="block",
+                action="blocked",
                 categories=["prompt_injection"],
                 confidence=0.96,
                 provider=self.provider_name,
@@ -40,7 +40,7 @@ class TestGuardrailProvider:
             )
         if kind == "answer" and "without the provided meeting evidence" in lowered:
             return GuardrailResult(
-                action="block",
+                action="blocked",
                 categories=["unsupported_answer"],
                 confidence=0.92,
                 provider=self.provider_name,
@@ -48,7 +48,7 @@ class TestGuardrailProvider:
                 safe_message="Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này.",
             )
         return GuardrailResult(
-            action="allow",
+            action="allowed",
             categories=["safe"],
             confidence=0.9,
             provider=self.provider_name,

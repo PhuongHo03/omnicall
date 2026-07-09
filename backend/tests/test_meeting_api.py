@@ -41,8 +41,8 @@ class FakeLockProvider:
 
 
 class FakeQueueProvider:
-    def revoke_meeting_processing(self, *, job_ids: list[str]) -> dict:
-        return {"requested": len(job_ids), "revoked": len(job_ids), "status": "requested"}
+    def revoke_meeting_processing(self, *, meeting_ids: list[str]) -> dict:
+        return {"requested": len(meeting_ids), "revoked": len(meeting_ids), "status": "requested"}
 
 
 class FakeCacheProvider:

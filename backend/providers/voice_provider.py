@@ -18,6 +18,7 @@ from backend.configs.model_runtime import (
     DIARIZATION_MODEL,
     VOICE_FFMPEG_PATH,
     VOICE_WORK_DIR,
+    build_asr_command,
 )
 from backend.configs.settings import Settings, get_settings
 from backend.models.meeting_models import MeetingAsset
@@ -224,12 +225,20 @@ class LocalASRProvider:
         self,
         settings: Settings | None = None,
         *,
-        command_template: str = ASR_COMMAND,
-        model_name: str = ASR_MODEL,
+        command_template: str | None = None,
+        model_name: str | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.command_template = command_template
-        self.provider_model = model_name
+        if command_template is not None:
+            self.command_template = command_template
+        else:
+            self.command_template = build_asr_command(
+                model_name=self.settings.asr_model,
+                compute_type=self.settings.asr_compute_type,
+                beam_size=self.settings.asr_beam_size,
+                language=self.settings.asr_language,
+            )
+        self.provider_model = model_name or self.settings.asr_model
 
     def transcribe_audio(
         self,
@@ -259,7 +268,9 @@ class LocalASRProvider:
         if not completed.stdout.strip():
             return []
         payload = json.loads(completed.stdout)
-        return _segments_from_asr_payload(payload, speech_regions)
+        segments, language = _segments_from_asr_payload(payload, speech_regions)
+        self.last_detected_language = language
+        return segments
 
 
 class LocalCommandDiarizationProvider:
@@ -430,10 +441,11 @@ def _merge_regions(
     ]
 
 
-def _segments_from_asr_payload(payload: dict | list, speech_regions: list[SpeechRegion]) -> list[TranscriptSegment]:
+def _segments_from_asr_payload(payload: dict | list, speech_regions: list[SpeechRegion]) -> tuple[list[TranscriptSegment], str | None]:
     raw_segments = payload if isinstance(payload, list) else payload.get("segments", [])
+    language = payload.get("language") if isinstance(payload, dict) else None
     if not isinstance(raw_segments, list):
-        return []
+        return [], language
     segments: list[TranscriptSegment] = []
     for index, raw_segment in enumerate(raw_segments, start=1):
         if not isinstance(raw_segment, dict):
@@ -456,7 +468,7 @@ def _segments_from_asr_payload(payload: dict | list, speech_regions: list[Speech
                 confidence=_asr_confidence(raw_segment),
             )
         )
-    return segments
+    return segments, language
 
 
 def _merge_diarization_payload(payload: dict | list, transcript_segments: list[TranscriptSegment]) -> list[TranscriptSegment]:
@@ -480,36 +492,62 @@ def _merge_diarization_payload(payload: dict | list, transcript_segments: list[T
     ]
     if not normalized_turns:
         raise RuntimeError("Diarization response did not include speaker assignments.")
-    return [
-        _segment_with_speaker(segment, _best_turn(segment, normalized_turns))
-        for segment in transcript_segments
-    ]
+    result = []
+    for segment in transcript_segments:
+        turn, overlap_ratio = _best_turn(segment, normalized_turns)
+        seg_duration = max(1, segment.end_ms - segment.start_ms)
+        threshold = 0.05 if seg_duration < 500 else 0.10
+        if turn and overlap_ratio >= threshold:
+            result.append(_segment_with_speaker(segment, turn, overlap_ratio))
+        else:
+            result.append(TranscriptSegment(
+                id=segment.id,
+                speaker=segment.speaker or "unknown",
+                start_ms=segment.start_ms,
+                end_ms=segment.end_ms,
+                text=segment.text,
+                confidence=max(0.0, min(1.0, segment.confidence * 0.5)),
+            ))
+    return result
 
 
-def _segment_with_speaker(segment: TranscriptSegment, assignment: dict) -> TranscriptSegment:
+def _segment_with_speaker(
+    segment: TranscriptSegment,
+    assignment: dict,
+    overlap_ratio: float = 1.0,
+) -> TranscriptSegment:
     speaker = str(assignment.get("speaker") or assignment.get("speakerLabel") or segment.speaker or "unknown")
-    confidence = assignment.get("confidence", segment.confidence)
+    turn_confidence = float(assignment.get("confidence", 0.85))
+    confidence = max(0.1, min(0.99, turn_confidence * overlap_ratio))
     return TranscriptSegment(
         id=segment.id,
         speaker=speaker,
         start_ms=segment.start_ms,
         end_ms=segment.end_ms,
         text=segment.text,
-        confidence=max(0.0, min(1.0, float(confidence))),
+        confidence=confidence,
     )
 
 
-def _best_turn(segment: TranscriptSegment, turns: list[dict]) -> dict:
-    best: dict | None = None
-    best_overlap = -1
+def _best_turn(segment: TranscriptSegment, turns: list[dict]) -> tuple[dict, float]:
+    best: dict = {}
+    best_score = -1.0
+    best_ratio = 0.0
+    seg_duration = max(1, segment.end_ms - segment.start_ms)
     for turn in turns:
         start_ms = _turn_time_ms(turn, "startMs", "start")
         end_ms = _turn_time_ms(turn, "endMs", "end")
         overlap = max(0, min(segment.end_ms, end_ms) - max(segment.start_ms, start_ms))
-        if overlap > best_overlap:
+        if overlap <= 0:
+            continue
+        overlap_ratio = overlap / seg_duration
+        turn_confidence = turn.get("confidence", 0.85)
+        score = overlap_ratio * 0.7 + turn_confidence * 0.3
+        if score > best_score:
             best = turn
-            best_overlap = overlap
-    return best or {}
+            best_score = score
+            best_ratio = overlap_ratio
+    return best, best_ratio
 
 
 def _asr_time_ms(raw_segment: dict, ms_key: str, seconds_key: str, fallback: int) -> int:

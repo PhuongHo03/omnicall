@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BarChart3, ListTree, LogOut, Moon, PanelLeftClose, PanelLeftOpen, Plus, RadioTower, ShieldCheck, Sun, UserRound, UsersRound } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
-import type { Account } from "../../features/auth/types/authTypes";
 import { IconOnlyButton } from "../components/IconOnlyButton";
 import { useTheme } from "../hooks/useTheme";
+import type { AccountSummary } from "../types/account";
 import { useSidebarSlot } from "./SidebarContext";
 
 type AppShellProps = {
   children: ReactNode;
-  account: Account;
+  account: AccountSummary;
   onLogout: () => void;
 };
 

@@ -1,4 +1,3 @@
-from dataclasses import replace
 from typing import Any
 import time
 
@@ -12,22 +11,19 @@ from backend.dtos.meeting_dto import (
     MeetingChatHistoryResponse,
     MeetingChatMessageResponse,
     MeetingChatRequest,
-    MeetingChatResponse,
 )
 from backend.models.enums import MeetingStatus
-from backend.models.meeting_models import ChatMessage, MeetingChunkRecord
+from backend.models.meeting_models import ChatMessage
 from backend.providers.guardrail_provider import GuardrailProvider, GuardrailResult, get_guardrail_provider, safe_guardrail_check
 from backend.providers.llm_provider import (
     LLMProvider,
-    LLMProviderError,
-    get_effective_model_name,
-    get_effective_provider_name,
     get_llm_provider,
 )
 from backend.repositories.chat_repository import ChatMessageRepository
 from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository
+from backend.services.agent import AgenticRAGService
 from backend.services.operational_log_service import OperationalLogService
-from backend.services.retrieval_search_service import RetrievedChunk, RetrievalSearchService
+from backend.services.retrieval_search_service import RetrievalSearchService
 from backend.utils.exceptions import ApplicationError
 
 
@@ -40,6 +36,7 @@ class MeetingChatService:
         guardrail_provider: GuardrailProvider | None = None,
         settings: Settings | None = None,
         operational_logs: OperationalLogService | None = None,
+        agentic_rag_service: AgenticRAGService | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
@@ -50,6 +47,13 @@ class MeetingChatService:
         self.llm_provider = llm_provider or get_llm_provider()
         self.guardrail_provider = guardrail_provider or get_guardrail_provider()
         self.operational_logs = operational_logs
+        self.agentic_rag_service = agentic_rag_service or AgenticRAGService(
+            session=session,
+            llm_provider=self.llm_provider,
+            retrieval_search=self.retrieval_search,
+            operational_logs=operational_logs,
+            settings=self.settings,
+        )
 
     def ask(self, context: CurrentUserContext, meeting_id: str, request: MeetingChatRequest) -> MeetingChatAcceptedResponse:
         meeting = self.meetings.get_for_owner(meeting_id, context.user_id)
@@ -155,7 +159,7 @@ class MeetingChatService:
             log_context=log_context,
         )
 
-        effective_question = input_guardrail.redacted_text if input_guardrail and input_guardrail.redacted_text else question
+        effective_question = question
         self.chat_messages.update(
             user_message,
             content=effective_question,
@@ -163,7 +167,7 @@ class MeetingChatService:
         )
         self.session.commit()
 
-        if input_guardrail and input_guardrail.action == "block":
+        if input_guardrail and input_guardrail.action == "blocked":
             if event_callback:
                 event_callback({"type": "blocked", "message": "Câu hỏi đã bị đánh dấu không an toàn"})
             self._emit(
@@ -186,177 +190,48 @@ class MeetingChatService:
             )
             return {"status": "blocked"}
         if event_callback:
-            event_callback({"type": "status", "stage": "retrieval", "message": "Đang tìm kiếm ngữ cảnh..."})
+            event_callback({"type": "status", "stage": "agent", "message": "Đang phân tích và tìm bằng chứng..."})
         self._emit(
             level="info",
             flow="rag",
-            stage="retrieval",
+            stage="agent",
             status="started",
-            message="RAG retrieval started.",
+            message="Agentic RAG answer generation started.",
             **log_context,
         )
-        try:
-            retrieved = self.retrieval_search.search_meeting(
-                workspace_id=user_id,
-                meeting_id=meeting.id,
-                query=effective_question,
-            )
-        except Exception as exc:
-            self._emit(
-                level="error",
-                flow="rag",
-                stage="retrieval",
-                status="failed",
-                message="RAG retrieval failed.",
-                **log_context,
-                provider=self.retrieval_search.embedding_provider.provider_name,
-                model=self.retrieval_search.embedding_provider.model_name,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-            )
-            meeting.pending_chat_status = None
-            self._save_error_message(meeting.id, f"Retrieval failed: {exc}", input_guardrails)
-            return {"status": "error", "error": str(exc)}
-
-        search_metadata = self.retrieval_search.last_search_metadata
-        embedding_metadata = search_metadata.get("embedding", {})
-        self._emit(
-            level="info",
-            flow="rag",
-            stage="query_embedding",
-            status="succeeded",
-            message="Question embedding generated.",
-            **log_context,
-            provider=embedding_metadata.get("provider"),
-            model=embedding_metadata.get("model"),
-            duration_ms=embedding_metadata.get("durationMs"),
-            details={"dimensions": embedding_metadata.get("dimensions")},
+        agent_result = self.agentic_rag_service.generate_answer(
+            meeting_id=meeting.id,
+            workspace_id=user_id,
+            question=effective_question,
+            event_callback=event_callback,
         )
-        retrieval_metadata = search_metadata.get("retrieval", {})
+        answer_payload = agent_result.to_answer_payload()
+        agent_chunks = agent_result.metadata.get("chunks", [])
+        citations = [_citation_response_from_chunk(chunk) for chunk in agent_chunks[:4]]
+        retrieved_chunk_ids = [
+            chunk.get("chunkId")
+            for chunk in agent_chunks
+            if isinstance(chunk, dict) and isinstance(chunk.get("chunkId"), str)
+        ]
+        context_guardrail = None
         self._emit(
-            level="info",
+            level="info" if answer_payload.get("evidenceState") != "error" else "error",
             flow="rag",
-            stage="retrieval",
-            status="succeeded",
-            message="Meeting evidence retrieval completed.",
+            stage="agent",
+            status="succeeded" if answer_payload.get("evidenceState") != "error" else "failed",
+            message="Agentic RAG answer generated.",
             **log_context,
-            provider=retrieval_metadata.get("provider"),
-            model=self.settings.milvus_collection if retrieval_metadata.get("provider") != "postgres-fallback" else None,
-            duration_ms=retrieval_metadata.get("durationMs"),
+            provider=answer_payload.get("provider"),
+            model=answer_payload.get("model"),
+            duration_ms=agent_result.total_duration_ms,
             details={
-                **retrieval_metadata,
-                "resultCount": search_metadata.get("resultCount"),
-                "chunkIds": [item.record.chunk_id for item in retrieved],
+                "evidenceState": answer_payload.get("evidenceState"),
+                "confidence": answer_payload.get("confidence"),
+                "citationCount": len(citations),
+                "retrievedChunkCount": len(retrieved_chunk_ids),
+                "iterations": agent_result.iterations,
             },
         )
-        rerank_metadata = search_metadata.get("rerank", {})
-        rerank_failed = rerank_metadata.get("status") == "unavailable"
-        self._emit(
-            level="error" if rerank_failed else "info",
-            flow="rag",
-            stage="rerank",
-            status="failed" if rerank_failed else "succeeded",
-            message="Reranker failed; retrieval order fallback was used." if rerank_failed else "Retrieved evidence reranked.",
-            **log_context,
-            provider=rerank_metadata.get("provider"),
-            model=rerank_metadata.get("model"),
-            duration_ms=rerank_metadata.get("durationMs"),
-            details=rerank_metadata,
-            error_type="RerankProviderError" if rerank_failed else None,
-            error_message=rerank_metadata.get("error") if rerank_failed else None,
-        )
-        citations = [_citation_response(item.record) for item in retrieved[:4]]
-        context_guardrail = None
-        if not retrieved:
-            answer_payload = {
-                "answer": "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này.",
-                "evidenceState": "not_enough_evidence",
-                "confidence": 0.0,
-                "provider": "local-evidence-guard",
-            }
-        else:
-            if event_callback:
-                event_callback({"type": "status", "stage": "context_guardrail", "message": "Đang kiểm tra ngữ cảnh..."})
-            guardrail_started = time.perf_counter()
-            context_guardrail = self._check_guardrail(
-                enabled=self.settings.guardrail_context_enabled,
-                kind="retrieved_context",
-                text=_retrieved_context_text(retrieved),
-                metadata={"meetingId": meeting.id, "source": "retrieved_context"},
-            )
-            context_guardrail = _downgrade_non_strict_context_block(
-                context_guardrail,
-                strict_mode=self.settings.guardrail_strict_mode,
-            )
-            self._emit_guardrail(
-                stage="context_guardrail",
-                result=context_guardrail,
-                duration_ms=_elapsed_ms(guardrail_started),
-                message="Retrieved context guardrail check completed.",
-                log_context=log_context,
-            )
-            if context_guardrail and context_guardrail.action == "block":
-                citations = []
-                answer_payload = {
-                    "answer": context_guardrail.safe_message or "Câu trả lời đã bị đánh dấu không an toàn",
-                    "evidenceState": "blocked",
-                    "confidence": context_guardrail.confidence,
-                    "provider": context_guardrail.provider,
-                }
-            else:
-                if event_callback:
-                    event_callback({"type": "status", "stage": "generating", "message": "Đang tạo câu trả lời..."})
-                answer_payload = self._generate_answer(
-                    question=effective_question,
-                    retrieved=retrieved,
-                )
-                answer_error = answer_payload.pop("_error", None)
-                fallback_error = answer_payload.pop("_fallbackError", None)
-                answer_duration_ms = answer_payload.pop("_durationMs", None)
-                if answer_error:
-                    self._emit(
-                        level="error",
-                        flow="rag",
-                        stage="answer_llm",
-                        status="failed",
-                        message="LLM answer generation failed; local evidence fallback was used.",
-                        **log_context,
-                        provider=answer_error.get("provider"),
-                        model=answer_error.get("model"),
-                        duration_ms=answer_duration_ms,
-                        error_type=answer_error.get("type"),
-                        error_message=answer_error.get("message"),
-                    )
-                elif fallback_error:
-                    self._emit(
-                        level="error",
-                        flow="rag",
-                        stage="answer_llm_primary",
-                        status="failed",
-                        message="Primary LLM provider failed; Ollama fallback was activated.",
-                        **log_context,
-                        provider=fallback_error.get("provider"),
-                        model=fallback_error.get("model"),
-                        duration_ms=answer_duration_ms,
-                        error_type=fallback_error.get("type"),
-                        error_message=fallback_error.get("message"),
-                    )
-                self._emit(
-                    level="info",
-                    flow="rag",
-                    stage="answer_llm" if not answer_error else "answer_fallback",
-                    status="succeeded",
-                    message="Grounded LLM answer generated." if not answer_error else "Local evidence fallback answer generated.",
-                    **log_context,
-                    provider=answer_payload.get("provider"),
-                    model=answer_payload.get("model"),
-                    duration_ms=answer_duration_ms,
-                    details={
-                        "evidenceState": answer_payload.get("evidenceState"),
-                        "confidence": answer_payload.get("confidence"),
-                        "citationCount": len(citations),
-                    },
-                )
 
         guardrail_started = time.perf_counter()
         if event_callback:
@@ -389,13 +264,21 @@ class MeetingChatService:
             meeting_id=meeting.id,
             role="assistant",
             content=answer_payload["answer"],
-            retrieved_chunk_ids=[item.record.chunk_id for item in retrieved],
+            retrieved_chunk_ids=retrieved_chunk_ids,
             citations=[citation.model_dump() for citation in citations],
             metadata={
                 "evidenceState": answer_payload["evidenceState"],
                 "confidence": answer_payload["confidence"],
                 "provider": answer_payload["provider"],
                 "model": answer_payload.get("model"),
+                "agentIterations": answer_payload.get("agentIterations"),
+                "agentToolCalls": answer_payload.get("agentToolCalls", []),
+                "agentThoughts": answer_payload.get("agentThoughts", []),
+                "agent": {
+                    "durationMs": agent_result.total_duration_ms,
+                    "tokenUsage": agent_result.metadata.get("tokenUsage", {}),
+                    "error": agent_result.metadata.get("error"),
+                },
                 "rerank": self.retrieval_search.last_rerank_metadata,
                 "guardrails": guardrails,
                 "guardrailDecisionCounts": _decision_counts(guardrails),
@@ -421,7 +304,7 @@ class MeetingChatService:
                 "evidenceState": answer_payload.get("evidenceState"),
                 "confidence": answer_payload.get("confidence"),
                 "citationCount": len(citations),
-                "retrievedChunkCount": len(retrieved),
+                "retrievedChunkCount": len(retrieved_chunk_ids),
             },
         )
         return {"status": "succeeded"}
@@ -509,55 +392,6 @@ class MeetingChatService:
             messages=[_message_response(message) for message in messages],
         )
 
-    def _generate_answer(self, *, question: str, retrieved: list[RetrievedChunk]) -> dict:
-        started = time.perf_counter()
-        try:
-            response = self.llm_provider.generate_json(
-                system_prompt=_chat_system_prompt(),
-                user_prompt=_chat_user_prompt(question=question, retrieved=retrieved),
-            )
-            answer = response.get("answer")
-            if not isinstance(answer, str) or not answer.strip():
-                raise LLMProviderError("Chat provider response did not include an answer.")
-            evidence_state = response.get("evidenceState")
-            if evidence_state not in {"grounded", "partial", "not_enough_evidence"}:
-                evidence_state = "grounded"
-            confidence = response.get("confidence", 0.7)
-            if not isinstance(confidence, int | float):
-                confidence = 0.7
-            payload = {
-                "answer": answer.strip(),
-                "evidenceState": evidence_state,
-                "confidence": float(confidence),
-                "provider": get_effective_provider_name(self.llm_provider),
-                "model": get_effective_model_name(self.llm_provider),
-                "_durationMs": _elapsed_ms(started),
-            }
-            if getattr(self.llm_provider, "last_fallback_used", False):
-                primary = getattr(self.llm_provider, "primary", None)
-                payload["_fallbackError"] = {
-                    "type": getattr(self.llm_provider, "last_primary_error_type", "LLMProviderError"),
-                    "message": getattr(self.llm_provider, "last_primary_error_message", "Primary LLM provider failed."),
-                    "provider": getattr(primary, "provider_name", None),
-                    "model": getattr(primary, "model_name", None),
-                }
-            return payload
-        except LLMProviderError as exc:
-            return {
-                "answer": _fallback_answer(retrieved),
-                "evidenceState": "partial",
-                "confidence": 0.45,
-                "provider": "local-retrieval-summary",
-                "model": None,
-                "_durationMs": _elapsed_ms(started),
-                "_error": {
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                    "provider": get_effective_provider_name(self.llm_provider),
-                    "model": get_effective_model_name(self.llm_provider),
-                },
-            }
-
     def _emit_guardrail(
         self,
         *,
@@ -569,15 +403,14 @@ class MeetingChatService:
     ) -> None:
         metadata = result.to_metadata() if result else {"enabled": False}
         provider_error = result is not None and "provider_error" in result.categories
-        fail_open_provider_error = provider_error and result.action == "warn"
         self._emit(
-            level="info" if fail_open_provider_error or not provider_error else "error",
+            level="info" if not provider_error or result.action == "allowed" else "error",
             flow="rag",
             stage=stage,
-            status="warned" if fail_open_provider_error else "failed" if provider_error else "succeeded",
+            status="warned" if provider_error and result.action == "allowed" else "failed" if provider_error else "succeeded",
             message=(
                 f"{message} Provider unavailable; continuing with warning."
-                if fail_open_provider_error
+                if provider_error and result.action == "allowed"
                 else f"{message} Provider unavailable."
                 if provider_error
                 else message
@@ -587,57 +420,13 @@ class MeetingChatService:
             model=result.model if result else None,
             duration_ms=duration_ms,
             details=metadata,
-            error_type="GuardrailProviderError" if provider_error and not fail_open_provider_error else None,
-            error_message=result.safe_message if provider_error and not fail_open_provider_error else None,
+            error_type="GuardrailProviderError" if provider_error and result.action != "allowed" else None,
+            error_message=result.safe_message if provider_error and result.action != "allowed" else None,
         )
 
     def _emit(self, **event) -> None:
         if self.operational_logs is not None:
             self.operational_logs.emit(**event)
-
-
-def _chat_system_prompt() -> str:
-    return (
-        "You are a meeting intelligence analyst for Omnicall. "
-        "Answer using only the provided meeting intelligence context; never add facts from outside the context. "
-        "Prefer structured meeting intelligence over raw transcript fragments when both are available. "
-        "Treat meeting metadata, participant records, source/model metadata, transcript coverage, quality warnings, and empty-section notes as valid evidence when they directly answer the question. "
-        "Synthesize the most relevant evidence instead of copying one isolated chunk. "
-        "If the question asks for a count or list, answer directly from the relevant structured chunks and include names, roles, or caveats when available. "
-        "If the question asks for a topic, issue, reason, decision, risk, timeline, quality warning, source/model, or next action, include the concrete details that make the answer useful. "
-        "For broad questions, answer with a concise overview plus key supporting points. "
-        "For narrow factual questions, answer directly and mention any important caveat from the context. "
-        "Use the user's language when possible. "
-        "Return JSON with answer, evidenceState, and confidence. "
-        "Use not_enough_evidence only when the provided context truly does not support the answer."
-    )
-
-
-def _chat_user_prompt(*, question: str, retrieved: list[RetrievedChunk]) -> str:
-    context_lines = []
-    for index, item in enumerate(retrieved[:6], start=1):
-        chunk = item.record
-        context_lines.append(
-            "\n".join(
-                [
-                    f"[{index}] chunkId={chunk.chunk_id}",
-                    f"sourceType={chunk.source_type}",
-                    f"sectionType={chunk.section_type}",
-                    f"jsonPointer={chunk.json_pointer}",
-                    f"title={(chunk.metadata_json or {}).get('title') or ''}",
-                    f"score={round(item.score, 6)}",
-                    f"text={chunk.text}",
-                ]
-            )
-        )
-    return f"Question: {question}\n\nMeeting context:\n\n" + "\n\n".join(context_lines)
-
-
-def _fallback_answer(retrieved: list[RetrievedChunk]) -> str:
-    lines = [item.record.text.strip() for item in retrieved[:3] if item.record.text.strip()]
-    if not lines:
-        return "Không đủ bằng chứng trong dữ liệu cuộc họp để trả lời câu hỏi này."
-    return "Dựa trên dữ liệu cuộc họp: " + " ".join(lines)
 
 
 def _asset_log_context(asset) -> dict:
@@ -663,50 +452,12 @@ def _elapsed_ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
-def _retrieved_context_text(retrieved: list[RetrievedChunk]) -> str:
-    return "\n\n".join(item.record.text for item in retrieved[:6] if item.record.text.strip())
-
-
-def _downgrade_non_strict_context_block(
-    context_guardrail: GuardrailResult | None,
-    *,
-    strict_mode: bool,
-) -> GuardrailResult | None:
-    if context_guardrail is None or context_guardrail.action != "block" or strict_mode:
-        return context_guardrail
-    if _has_prompt_injection_category(context_guardrail.categories):
-        return context_guardrail
-    return replace(
-        context_guardrail,
-        action="warn",
-        categories=list(dict.fromkeys([*context_guardrail.categories, "non_strict_context_block_downgraded"])),
-    )
-
-
-def _has_prompt_injection_category(categories: list[str]) -> bool:
-    normalized = {category.lower() for category in categories}
-    return bool(
-        normalized.intersection(
-            {
-                "prompt_injection",
-                "jailbreak",
-                "system_prompt",
-                "exfiltration",
-                "bypass",
-                "instruction_override",
-            }
-        )
-    )
-
-
 def _apply_output_guardrail(
     answer_payload: dict,
     citations: list[MeetingChatCitationResponse],
     output_guardrail: GuardrailResult | None,
 ) -> tuple[dict, list[MeetingChatCitationResponse]]:
-    if output_guardrail and output_guardrail.action == "redact" and output_guardrail.redacted_text:
-        answer_payload = {**answer_payload, "answer": output_guardrail.redacted_text}
-    if output_guardrail and output_guardrail.action == "block":
+    if output_guardrail and output_guardrail.action == "blocked":
         return (
             {
                 "answer": output_guardrail.safe_message or "Câu trả lời đã bị đánh dấu không an toàn",
@@ -747,20 +498,18 @@ def _decision_counts(guardrails: dict) -> dict[str, int]:
     return counts
 
 
-
-def _citation_response(chunk: MeetingChunkRecord) -> MeetingChatCitationResponse:
+def _citation_response_from_chunk(chunk: dict) -> MeetingChatCitationResponse:
     return MeetingChatCitationResponse(
-        chunk_id=chunk.chunk_id,
-        source_type=chunk.source_type,
-        section_type=chunk.section_type,
-        json_pointer=chunk.json_pointer,
-        citation_ids=list(chunk.citation_ids or []),
-        segment_ids=list(chunk.segment_ids or []),
-        start_ms=chunk.start_ms,
-        end_ms=chunk.end_ms,
-        text=chunk.text,
+        chunk_id=str(chunk.get("chunkId") or ""),
+        source_type=str(chunk.get("sourceType") or ""),
+        section_type=str(chunk.get("sectionType") or ""),
+        json_pointer=str(chunk.get("jsonPointer") or ""),
+        citation_ids=list(chunk.get("citationIds") or []),
+        segment_ids=list(chunk.get("segmentIds") or []),
+        start_ms=chunk.get("startMs") if isinstance(chunk.get("startMs"), int) else None,
+        end_ms=chunk.get("endMs") if isinstance(chunk.get("endMs"), int) else None,
+        text=str(chunk.get("text") or ""),
     )
-
 
 def _message_response(message: ChatMessage) -> MeetingChatMessageResponse:
     return MeetingChatMessageResponse(

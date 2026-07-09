@@ -1,5 +1,4 @@
 from backend.models.meeting_models import Meeting, MeetingAsset
-from backend.providers.text_extraction_provider import DocumentTextExtractionProvider, get_text_extraction_provider
 from backend.providers.transcript_types import TranscriptSegment
 from backend.providers.voice_provider import (
     ASRProvider,
@@ -25,59 +24,20 @@ class LocalTranscriptionProvider:
 
     def __init__(
         self,
-        text_extraction_provider: DocumentTextExtractionProvider | None = None,
         audio_preprocessor: AudioPreprocessor | None = None,
         vad_provider: VADProvider | None = None,
         asr_provider: ASRProvider | None = None,
         diarization_provider: DiarizationProvider | None = None,
     ) -> None:
-        self.text_extraction_provider = text_extraction_provider
         self.audio_preprocessor = audio_preprocessor
         self.vad_provider = vad_provider
         self.asr_provider = asr_provider
         self.diarization_provider = diarization_provider
         self.last_voice_metadata: dict = {}
 
-    def route_metadata(self, asset: MeetingAsset) -> dict:
-        if self.text_extraction_provider is not None and self.text_extraction_provider.can_extract(asset):
-            return {
-                "sourceKind": "text",
-                "provider": self.text_extraction_provider.provider_name,
-                "model": self.text_extraction_provider.provider_model,
-            }
-        if self.asr_provider is not None:
-            return {
-                "sourceKind": "voice",
-                "provider": self.asr_provider.provider_name,
-                "model": self.asr_provider.provider_model,
-                "audioPreprocessor": getattr(self.audio_preprocessor, "provider_name", None),
-                "audioPreprocessorModel": getattr(self.audio_preprocessor, "provider_model", None),
-                "vadProvider": getattr(self.vad_provider, "provider_name", None),
-                "vadModel": getattr(self.vad_provider, "provider_model", None),
-                "diarizationProvider": getattr(self.diarization_provider, "provider_name", None),
-                "diarizationModel": getattr(self.diarization_provider, "provider_model", None),
-            }
-        return {
-            "sourceKind": "unknown",
-            "provider": self.provider_name,
-            "model": self.provider_model,
-        }
-
     def transcribe(self, meeting: Meeting, asset: MeetingAsset) -> list[TranscriptSegment]:
         self.last_voice_metadata = {}
-        if self.text_extraction_provider is not None and self.text_extraction_provider.can_extract(asset):
-            extracted = self.text_extraction_provider.extract(asset)
-            if extracted.segments:
-                self.last_provider_name = self.text_extraction_provider.provider_name
-                self.last_provider_model = self.text_extraction_provider.provider_model
-                self.last_voice_metadata = {"sourceKind": extracted.source_kind}
-                return extracted.segments
-
-        voice_segments = self._transcribe_voice_asset(asset)
-        if voice_segments:
-            return voice_segments
-
-        raise TranscriptionProviderError("Audio transcription requires a configured local ASR model command.")
+        return self._transcribe_voice_asset(asset)
 
     def _transcribe_voice_asset(self, asset: MeetingAsset) -> list[TranscriptSegment]:
         if self.audio_preprocessor is None or self.vad_provider is None or self.asr_provider is None:
@@ -117,6 +77,7 @@ class LocalTranscriptionProvider:
                 asr_provider=self.asr_provider,
                 diarization_provider=self.diarization_provider,
                 speech_regions=speech_regions,
+                detected_language=getattr(self.asr_provider, "last_detected_language", None),
                 warnings=[
                     *warnings,
                     "ASR failed.",
@@ -135,6 +96,7 @@ class LocalTranscriptionProvider:
                 asr_provider=self.asr_provider,
                 diarization_provider=self.diarization_provider,
                 speech_regions=speech_regions,
+                detected_language=getattr(self.asr_provider, "last_detected_language", None),
                 warnings=warnings,
             )
             raise TranscriptionProviderError("ASR did not return transcript segments.")
@@ -151,6 +113,7 @@ class LocalTranscriptionProvider:
                     asr_provider=self.asr_provider,
                     diarization_provider=self.diarization_provider,
                     speech_regions=speech_regions,
+                    detected_language=getattr(self.asr_provider, "last_detected_language", None),
                     warnings=warnings,
                 )
                 raise TranscriptionProviderError(
@@ -165,6 +128,7 @@ class LocalTranscriptionProvider:
             asr_provider=self.asr_provider,
             diarization_provider=self.diarization_provider,
             speech_regions=speech_regions,
+            detected_language=getattr(self.asr_provider, "last_detected_language", None),
             warnings=warnings,
         )
         return segments
@@ -172,7 +136,6 @@ class LocalTranscriptionProvider:
 
 def get_transcription_provider() -> LocalTranscriptionProvider:
     return LocalTranscriptionProvider(
-        text_extraction_provider=get_text_extraction_provider(),
         audio_preprocessor=get_audio_preprocessor(),
         vad_provider=get_vad_provider(),
         asr_provider=get_asr_provider(),
@@ -188,6 +151,7 @@ def _voice_metadata(
     asr_provider: ASRProvider,
     diarization_provider: DiarizationProvider | None,
     speech_regions,
+    detected_language: str | None,
     warnings: list[str],
 ) -> dict:
     return {
@@ -200,6 +164,7 @@ def _voice_metadata(
         "asrModel": getattr(asr_provider, "provider_model", None),
         "diarizationProvider": getattr(diarization_provider, "provider_name", None),
         "diarizationModel": getattr(diarization_provider, "provider_model", None),
+        "detectedLanguage": detected_language,
         "durationMs": audio.duration_ms,
         "sampleRateHz": audio.sample_rate_hz,
         "channelCount": audio.channel_count,

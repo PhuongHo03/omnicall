@@ -55,7 +55,7 @@ function parseInlineFormatting(text: string): string {
   return result;
 }
 
-export function parseMarkdown(markdown: string): string {
+export function parseMarkdown(markdown: string = ""): string {
   const lines = markdown.split("\n");
   const blocks: string[] = [];
   let inList = false;

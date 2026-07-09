@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import quote_plus
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     vad_energy_threshold: float = Field(default=0.012, alias="VAD_ENERGY_THRESHOLD")
     asr_timeout_seconds: float = Field(default=120.0, alias="ASR_TIMEOUT_SECONDS")
     asr_timeout_realtime_factor: float = Field(default=1.0, alias="ASR_TIMEOUT_REALTIME_FACTOR")
+    asr_model: str = Field(default="whisper-medium", alias="ASR_MODEL")
+    asr_compute_type: str = Field(default="int8", alias="ASR_COMPUTE_TYPE")
+    asr_beam_size: int = Field(default=5, alias="ASR_BEAM_SIZE")
+    asr_language: str = Field(default="auto", alias="ASR_LANGUAGE")
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
     embedding_dimensions: int = Field(default=768, alias="EMBEDDING_DIMENSIONS")
     embedding_timeout_seconds: float = Field(default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
@@ -91,10 +95,12 @@ class Settings(BaseSettings):
     guardrail_timeout_seconds: float = Field(default=20.0, alias="GUARDRAIL_TIMEOUT_SECONDS")
     guardrail_max_retries: int = Field(default=0, alias="GUARDRAIL_MAX_RETRIES")
     guardrail_input_enabled: bool = Field(default=True, alias="GUARDRAIL_INPUT_ENABLED")
-    guardrail_transcript_enabled: bool = Field(default=True, alias="GUARDRAIL_TRANSCRIPT_ENABLED")
-    guardrail_context_enabled: bool = Field(default=True, alias="GUARDRAIL_CONTEXT_ENABLED")
     guardrail_output_enabled: bool = Field(default=True, alias="GUARDRAIL_OUTPUT_ENABLED")
     guardrail_strict_mode: bool = Field(default=False, alias="GUARDRAIL_STRICT_MODE")
+    guardrail_input_strict_mode: bool | None = Field(default=None, alias="GUARDRAIL_INPUT_STRICT_MODE")
+    guardrail_output_strict_mode: bool | None = Field(default=None, alias="GUARDRAIL_OUTPUT_STRICT_MODE")
+    guardrail_latency_budget_ms: int = Field(default=8000, alias="GUARDRAIL_LATENCY_BUDGET_MS")
+    guardrail_pii_redaction_enabled: bool = Field(default=True, alias="GUARDRAIL_PII_REDACTION_ENABLED")
     vector_provider: str = Field(default="milvus", alias="VECTOR_PROVIDER")
     milvus_host: str = Field(default="milvus", alias="MILVUS_HOST")
     milvus_port: int = Field(default=19530, alias="MILVUS_PORT")
@@ -115,12 +121,47 @@ class Settings(BaseSettings):
     ollama_context_length: int = Field(default=8192, alias="OLLAMA_CONTEXT_LENGTH")
     prometheus_url: str = Field(default="http://prometheus:9090", alias="PROMETHEUS_URL")
 
+    # Rate limiting
+    rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
+    rate_limit_auth_per_minute: int = Field(default=20, alias="RATE_LIMIT_AUTH_PER_MINUTE")
+    rate_limit_meetings_per_minute: int = Field(default=300, alias="RATE_LIMIT_MEETINGS_PER_MINUTE")
+    rate_limit_admin_per_minute: int = Field(default=180, alias="RATE_LIMIT_ADMIN_PER_MINUTE")
+    rate_limit_public_per_minute: int = Field(default=10, alias="RATE_LIMIT_PUBLIC_PER_MINUTE")
+
+    # Concurrency limiting
+    concurrency_limit_per_account: int = Field(default=5, alias="CONCURRENCY_LIMIT_PER_ACCOUNT")
+    concurrency_limit_meetings: int = Field(default=5, alias="CONCURRENCY_LIMIT_MEETINGS")
+    concurrency_limit_admin: int = Field(default=3, alias="CONCURRENCY_LIMIT_ADMIN")
+    concurrency_limit_auth: int = Field(default=3, alias="CONCURRENCY_LIMIT_AUTH")
+
+    # Task guard
+    task_limit_per_meeting: int = Field(default=2, alias="TASK_LIMIT_PER_MEETING")
+    task_limit_per_user: int = Field(default=5, alias="TASK_LIMIT_PER_USER")
+
+    # Circuit breaker
+    circuit_breaker_enabled: bool = Field(default=True, alias="CIRCUIT_BREAKER_ENABLED")
+    circuit_breaker_failure_threshold: int = Field(default=5, alias="CIRCUIT_BREAKER_FAILURE_THRESHOLD")
+    circuit_breaker_recovery_seconds: int = Field(default=30, alias="CIRCUIT_BREAKER_RECOVERY_SECONDS")
+
+    # Agentic RAG
+    agentic_rag_max_iterations: int = Field(default=3, alias="AGENTIC_RAG_MAX_ITERATIONS")
+    agentic_rag_iteration_timeout_seconds: float = Field(default=30.0, alias="AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS")
+    agentic_rag_total_timeout_seconds: float = Field(default=60.0, alias="AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS")
+    agentic_rag_max_context_tokens: int = Field(default=4000, alias="AGENTIC_RAG_MAX_CONTEXT_TOKENS")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         populate_by_name=True,
         extra="ignore",
     )
+
+    @field_validator("guardrail_input_strict_mode", "guardrail_output_strict_mode", mode="before")
+    @classmethod
+    def _empty_str_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     @computed_field
     @property

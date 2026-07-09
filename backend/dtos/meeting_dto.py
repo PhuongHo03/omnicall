@@ -64,8 +64,25 @@ class MeetingChatMessageResponse(BaseModel):
     content: str
     retrieved_chunk_ids: list[str]
     citations: list[MeetingChatCitationResponse]
-    metadata: dict
+    metadata: dict  # May include: evidenceState, confidence, provider, model, guardrails,
+                    # agentIterations, agentToolCalls, agentThoughts
     created_at: datetime
+
+
+class AgentToolCallResponse(BaseModel):
+    """Response schema for a single agent tool call."""
+    tool: str
+    arguments: dict = Field(default_factory=dict)
+    result_count: int = 0
+
+
+class AgentThoughtResponse(BaseModel):
+    """Response schema for agent thinking step."""
+    iteration: int
+    decision: str = ""
+    reasoning: str = ""
+    tools: list[str] = Field(default_factory=list)
+    duration_ms: int = 0
 
 
 class MeetingChatResponse(BaseModel):
@@ -73,6 +90,10 @@ class MeetingChatResponse(BaseModel):
     evidence_state: str
     citations: list[MeetingChatCitationResponse]
     message: MeetingChatMessageResponse
+    # Agent metadata (optional for backward compatibility)
+    iterations: int | None = None
+    toolCalls: list[AgentToolCallResponse] | None = None
+    agentThoughts: list[AgentThoughtResponse] | None = None
 
 
 class MeetingChatAcceptedResponse(BaseModel):

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { Navigate, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { RotateCw } from "lucide-react";
 
 import { AdminAccountsScreen } from "../features/admin/screens/AdminAccountsScreen";
 import { AdminMetricsScreen } from "../features/admin/screens/AdminMetricsScreen";
@@ -11,6 +12,7 @@ import type { Account } from "../features/auth/types/authTypes";
 import { MeetingsScreen } from "../features/meetings/screens/MeetingsScreen";
 import { AppShell } from "../shared/layouts/AppShell";
 import { SidebarProvider } from "../shared/layouts/SidebarContext";
+import { IconButton } from "../shared/components/IconButton";
 
 type AuthState = ReturnType<typeof useAuthSession>;
 
@@ -20,6 +22,15 @@ export function AppRoutes() {
 
   if (auth.isSessionChecking) {
     return <RouteLoading />;
+  }
+
+  if (auth.sessionError && !auth.account) {
+    return (
+      <SessionErrorScreen
+        message={auth.sessionError}
+        onRetry={auth.refreshAccount}
+      />
+    );
   }
 
   return (
@@ -112,6 +123,28 @@ function RouteLoading() {
           <strong>Omnicall</strong>
           <span>Restoring your session.</span>
         </div>
+      </section>
+    </main>
+  );
+}
+
+function SessionErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <main className="auth-screen">
+      <section className="auth-panel-card">
+        <div className="auth-brand">
+          <strong>Omnicall</strong>
+        </div>
+        <p className="auth-error" role="alert">{message}</p>
+        <p className="auth-session-note">
+          Your session is preserved. Retrying automatically…
+        </p>
+        <IconButton
+          icon={<RotateCw size={16} />}
+          label="Retry now"
+          variant="primary"
+          onClick={onRetry}
+        />
       </section>
     </main>
   );

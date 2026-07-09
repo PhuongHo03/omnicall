@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { usePollingEffect } from "../../../shared/hooks/usePollingEffect";
 import { clearAdminOperationalLogs, getAdminOperationalLogs } from "../api/adminApi";
 import type { AdminLogFlow, AdminLogLevel, AdminOperationalLog } from "../types/adminTypes";
 
@@ -53,13 +54,7 @@ export function useAdminLogs(token: string, meetingId?: string) {
     void refreshLogs();
   }, [refreshLogs]);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = window.setInterval(() => {
-      void refreshLogs(true);
-    }, 2000);
-    return () => window.clearInterval(interval);
-  }, [autoRefresh, refreshLogs]);
+  usePollingEffect(() => void refreshLogs(true), 2000, autoRefresh);
 
   const clearLogs = useCallback(async () => {
     setIsClearing(true);

@@ -5,16 +5,16 @@ from sqlalchemy import delete, select
 
 from backend.configs.database import SessionLocal
 from backend.models.core_models import User
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
+from backend.models.enums import MeetingStatus
 from backend.models.meeting_models import MeetingChunkRecord, MeetingIntelligenceResult
 from backend.providers.analysis_provider import SCHEMA_VERSION
 from backend.providers.transcript_types import TranscriptSegment
 from backend.providers.vector_provider import NoopVectorProvider
 from backend.repositories.auth_repository import AuthRepository
-from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository, ProcessingJobRepository
+from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository
 from backend.services.processing_pipeline_service import ProcessingPipelineService
 from backend.services.retrieval_index_service import RetrievalIndexService
-from backend.tests.fakes import TestEmbeddingProvider, TestGuardrailProvider
+from backend.tests.fakes import TestEmbeddingProvider
 
 
 class FakeLockProvider:
@@ -30,6 +30,7 @@ class FakeTranscriptionProvider:
     provider_model = "fake-transcription-model"
     last_provider_name = "fake-asr"
     last_provider_model = "fake-asr-model"
+    last_voice_metadata = {}
 
     def transcribe(self, meeting, asset) -> list[TranscriptSegment]:
         return [
@@ -50,7 +51,7 @@ class FakeAnalysisProvider:
     last_provider_name = "fake-analysis"
     last_provider_model = "fake-analysis-model"
 
-    def build_result(self, *, meeting, asset, transcript_segments: list[TranscriptSegment]) -> dict:
+    def build_result(self, *, meeting, asset, transcript_segments: list[TranscriptSegment], detected_language=None) -> dict:
         return {
             "schemaVersion": SCHEMA_VERSION,
             "source": {"analysisProvider": self.provider_name},
@@ -103,7 +104,7 @@ class ProcessingPipelineServiceTestCase(unittest.TestCase):
             session.commit()
 
     def test_pipeline_persists_one_json_result_and_rag_chunks(self) -> None:
-        meeting_id, job_id = self._create_uploaded_meeting_and_job()
+        meeting_id = self._create_uploaded_meeting()
         with SessionLocal() as session:
             retrieval_index = RetrievalIndexService(
                 session,
@@ -115,13 +116,11 @@ class ProcessingPipelineServiceTestCase(unittest.TestCase):
                 lock_provider=FakeLockProvider(),
                 transcription_provider=FakeTranscriptionProvider(),
                 analysis_provider=FakeAnalysisProvider(),
-                guardrail_provider=TestGuardrailProvider(),
                 retrieval_index=retrieval_index,
             )
 
-            response = service.process_meeting(job_id=job_id, meeting_id=meeting_id)
+            response = service.process_meeting(meeting_id=meeting_id)
             meeting = MeetingRepository(session).get(meeting_id)
-            job = ProcessingJobRepository(session).get(job_id)
             results = list(
                 session.scalars(select(MeetingIntelligenceResult).where(MeetingIntelligenceResult.meeting_id == meeting_id)).all()
             )
@@ -129,14 +128,15 @@ class ProcessingPipelineServiceTestCase(unittest.TestCase):
 
         self.assertEqual(response["status"], "succeeded")
         self.assertEqual(meeting.status, MeetingStatus.READY)
-        self.assertEqual(job.status, ProcessingJobStatus.SUCCEEDED)
+        self.assertEqual(meeting.attempts, 1)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].result_json["transcript"]["segments"][0]["id"], "seg-001")
         self.assertGreaterEqual(len(chunks), 3)
 
-    def _create_uploaded_meeting_and_job(self) -> tuple[str, str]:
+    def _create_uploaded_meeting(self) -> str:
         with SessionLocal() as session:
             meeting = MeetingRepository(session).create(user_id=self.user_id, title="Pipeline test")
+            MeetingRepository(session).update_status(meeting, MeetingStatus.UPLOADED)
             MeetingAssetRepository(session).create(
                 meeting_id=meeting.id,
                 user_id=self.user_id,
@@ -146,13 +146,8 @@ class ProcessingPipelineServiceTestCase(unittest.TestCase):
                 size_bytes=100,
                 idempotency_key="upload",
             )
-            job = ProcessingJobRepository(session).create(
-                meeting_id=meeting.id,
-                idempotency_key="process",
-                payload={"meetingId": meeting.id},
-            )
             session.commit()
-            return meeting.id, job.id
+            return meeting.id
 
 
 if __name__ == "__main__":

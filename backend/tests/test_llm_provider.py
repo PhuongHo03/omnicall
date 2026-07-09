@@ -31,7 +31,11 @@ class BrokenProvider:
     provider_name = "broken"
     model_name = "broken-model"
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
+    def __init__(self) -> None:
+        self.temperatures: list[float] = []
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict:
+        self.temperatures.append(temperature)
         raise LLMProviderError("primary failed")
 
 
@@ -39,8 +43,12 @@ class StaticProvider:
     provider_name = "static"
     model_name = "static-model"
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
-        return {"ok": True, "userPrompt": user_prompt}
+    def __init__(self) -> None:
+        self.temperatures: list[float] = []
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict:
+        self.temperatures.append(temperature)
+        return {"ok": True, "userPrompt": user_prompt, "temperature": temperature}
 
 
 class LLMProviderTestCase(unittest.TestCase):
@@ -119,6 +127,38 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(captured["headers"]["Authorization"], "Bearer secret")
         self.assertEqual(captured["body"]["model"], "private-model")
         self.assertEqual(captured["body"]["response_format"], {"type": "json_object"})
+        self.assertEqual(captured["body"]["temperature"], 0)
+
+    def test_openai_compatible_provider_posts_custom_temperature(self) -> None:
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeHTTPResponse(
+                {"choices": [{"message": {"content": "{\"summary\":\"done\"}"}}]}
+            )
+
+        provider = OpenAICompatibleLLMProvider(
+            config=type(
+                "Config",
+                (),
+                {
+                    "base_url": "http://llm.internal/v1",
+                    "model": "private-model",
+                    "api_key": "",
+                    "timeout_seconds": 12,
+                },
+            )()
+        )
+
+        with patch("backend.providers.llm_provider.urlopen", side_effect=fake_urlopen):
+            provider.generate_json(
+                system_prompt="return json",
+                user_prompt="hello",
+                temperature=0.5,
+            )
+
+        self.assertEqual(captured["body"]["temperature"], 0.5)
 
     def test_openai_compatible_provider_retries_transient_failures(self) -> None:
         calls = {"count": 0}
@@ -153,12 +193,16 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(calls["count"], 2)
 
     def test_fallback_provider_uses_secondary_provider_after_primary_failure(self) -> None:
-        provider = FallbackLLMProvider(BrokenProvider(), StaticProvider())
+        primary = BrokenProvider()
+        fallback = StaticProvider()
+        provider = FallbackLLMProvider(primary, fallback)
 
         self.assertEqual(
-            provider.generate_json(system_prompt="system", user_prompt="hello"),
-            {"ok": True, "userPrompt": "hello"},
+            provider.generate_json(system_prompt="system", user_prompt="hello", temperature=0.5),
+            {"ok": True, "userPrompt": "hello", "temperature": 0.5},
         )
+        self.assertEqual(primary.temperatures, [0.5])
+        self.assertEqual(fallback.temperatures, [0.5])
         self.assertEqual(provider.last_provider_name, "static")
         self.assertEqual(provider.last_provider_model, "static-model")
         self.assertTrue(provider.last_fallback_used)
@@ -171,12 +215,16 @@ class LLMProviderTestCase(unittest.TestCase):
         self.assertEqual(get_configured_primary_model_name(provider), "static-model")
 
     def test_fallback_provider_records_primary_provider_when_primary_succeeds(self) -> None:
-        provider = FallbackLLMProvider(StaticProvider(), BrokenProvider())
+        primary = StaticProvider()
+        fallback = BrokenProvider()
+        provider = FallbackLLMProvider(primary, fallback)
 
         self.assertEqual(
             provider.generate_json(system_prompt="system", user_prompt="hello"),
-            {"ok": True, "userPrompt": "hello"},
+            {"ok": True, "userPrompt": "hello", "temperature": 0},
         )
+        self.assertEqual(primary.temperatures, [0])
+        self.assertEqual(fallback.temperatures, [])
         self.assertEqual(provider.last_provider_name, "static")
         self.assertEqual(provider.last_provider_model, "static-model")
         self.assertFalse(provider.last_fallback_used)

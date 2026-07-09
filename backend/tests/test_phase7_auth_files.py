@@ -7,10 +7,11 @@ from backend.configs.database import SessionLocal
 from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.auth_dto import AuthRegisterRequest
 from backend.models.core_models import AccountSession, User
-from backend.models.enums import MeetingStatus, ProcessingJobStatus
-from backend.models.meeting_models import Meeting, MeetingAsset, ProcessingJob
+from backend.models.enums import MeetingStatus
+from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.repositories.auth_repository import AuthRepository
-from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository, ProcessingJobRepository
+from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository
+from backend.services.auth_service import AuthService
 from backend.services.admin_account_service import AdminAccountService
 
 
@@ -39,8 +40,8 @@ class FakeLockProvider:
 
 
 class FakeQueueProvider:
-    def revoke_meeting_processing(self, *, job_ids: list[str]) -> dict:
-        return {"revoked": job_ids}
+    def revoke_meeting_processing(self, *, meeting_ids: list[str]) -> dict:
+        return {"revoked": meeting_ids}
 
 
 class FakeCacheProvider:
@@ -106,15 +107,9 @@ class Phase7AuthFilesTestCase(unittest.TestCase):
                 size_bytes=100,
                 idempotency_key="upload",
             )
-            ProcessingJobRepository(session).create(
-                meeting_id=meeting.id,
-                idempotency_key="process",
-                payload={"meetingId": meeting.id},
-                status=ProcessingJobStatus.SUCCEEDED,
-            )
             standalone = MeetingAsset(
                 owner_user_id=user_id,
-                meeting_id=str(uuid4()),
+                meeting_id=None,
                 object_key=f"users/{user_id}/files/note.txt",
                 file_name="note.txt",
                 content_type="text/plain",

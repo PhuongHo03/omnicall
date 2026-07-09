@@ -40,34 +40,6 @@ class ExistingAudioPreprocessor(FakeAudioPreprocessor):
         )
 
 
-class FakeTextExtractionResult:
-    def __init__(self, segments: list[TranscriptSegment], source_kind: str = "text") -> None:
-        self.segments = segments
-        self.source_kind = source_kind
-
-
-class FakeTextExtractionProvider:
-    provider_name = "fake-text-extraction"
-    provider_model = "fake-text-model"
-
-    def can_extract(self, asset: MeetingAsset) -> bool:
-        return asset.file_name.endswith(".txt")
-
-    def extract(self, asset: MeetingAsset) -> FakeTextExtractionResult:
-        return FakeTextExtractionResult(
-            [
-                TranscriptSegment(
-                    id="seg-001",
-                    speaker="Alice",
-                    start_ms=0,
-                    end_ms=1000,
-                    text="Text transcript segment.",
-                    confidence=0.95,
-                )
-            ]
-        )
-
-
 class FakeVADProvider:
     provider_name = "fake-vad"
     provider_model = "fake-vad-model"
@@ -135,24 +107,6 @@ class FakeDiarizationProvider:
 
 
 class TranscriptionProviderTestCase(unittest.TestCase):
-    def test_route_metadata_reports_the_actual_text_or_voice_provider(self) -> None:
-        provider = LocalTranscriptionProvider(
-            text_extraction_provider=FakeTextExtractionProvider(),
-            audio_preprocessor=FakeAudioPreprocessor(),
-            vad_provider=FakeVADProvider(),
-            asr_provider=FakeASRProvider(),
-            diarization_provider=FakeDiarizationProvider(),
-        )
-
-        text_route = provider.route_metadata(_asset(file_name="meeting.txt", content_type="text/plain"))
-        voice_route = provider.route_metadata(_asset())
-
-        self.assertEqual(text_route["provider"], "fake-text-extraction")
-        self.assertEqual(text_route["model"], "fake-text-model")
-        self.assertEqual(voice_route["provider"], "fake-asr")
-        self.assertEqual(voice_route["model"], "fake-asr-model")
-        self.assertEqual(voice_route["diarizationProvider"], "fake-diarization")
-
     def test_voice_provider_contract_outputs_diarized_transcript_segments(self) -> None:
         provider = LocalTranscriptionProvider(
             audio_preprocessor=FakeAudioPreprocessor(),
@@ -170,31 +124,6 @@ class TranscriptionProviderTestCase(unittest.TestCase):
         self.assertEqual(provider.last_voice_metadata["asrProvider"], "fake-asr")
         self.assertEqual(provider.last_voice_metadata["diarizationProvider"], "fake-diarization")
         self.assertEqual(provider.last_voice_metadata["speechRegionCount"], 1)
-
-    def test_text_and_voice_inputs_return_same_transcript_segment_contract(self) -> None:
-        text_provider = LocalTranscriptionProvider(
-            text_extraction_provider=FakeTextExtractionProvider(),
-            audio_preprocessor=FakeAudioPreprocessor(),
-            vad_provider=FakeVADProvider(),
-            asr_provider=FakeASRProvider(),
-            diarization_provider=FakeDiarizationProvider(),
-        )
-        voice_provider = LocalTranscriptionProvider(
-            text_extraction_provider=FakeTextExtractionProvider(),
-            audio_preprocessor=FakeAudioPreprocessor(),
-            vad_provider=FakeVADProvider(),
-            asr_provider=FakeASRProvider(),
-            diarization_provider=FakeDiarizationProvider(),
-        )
-
-        text_segments = text_provider.transcribe(_meeting(), _asset(file_name="meeting.txt", content_type="text/plain"))
-        voice_segments = voice_provider.transcribe(_meeting(), _asset())
-
-        self.assertEqual(set(text_segments[0].__dict__), set(voice_segments[0].__dict__))
-        self.assertEqual(text_provider.last_provider_name, "fake-text-extraction")
-        self.assertEqual(voice_provider.last_provider_name, "fake-asr")
-        self.assertEqual(text_provider.last_voice_metadata["sourceKind"], "text")
-        self.assertEqual(voice_provider.last_voice_metadata["sourceKind"], "voice")
 
     def test_asr_failure_raises_without_placeholder_with_safe_voice_metadata(self) -> None:
         provider = LocalTranscriptionProvider(

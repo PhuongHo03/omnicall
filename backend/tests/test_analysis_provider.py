@@ -84,6 +84,28 @@ class EchoThenSuccessfulLLMProvider:
         }
 
 
+class HallucinatedCitationsLLMProvider:
+    provider_name = "hallucinating-llm"
+    model_name = "hallucination-model"
+
+    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict:
+        return {
+            "summary": {
+                "executive": "Meeting discussed processing pipeline.",
+                "detailed": [],
+                "keyPoints": [{"text": "Use JSON for retrieval.", "citationIds": ["cite-001", "cite-999"]}],
+            },
+            "analysis": {
+                "decisions": [{"text": "Process with JSON.", "citationIds": ["cite-999", "cite-001"]}],
+                "actionItems": [],
+                "timeline": [],
+                "risks": [],
+            },
+            "citations": [{"id": "cite-001", "segmentIds": ["seg-001"], "startMs": 0, "endMs": 5000}],
+            "quality": {"coverage": "partial", "warnings": [], "confidence": 0.7},
+        }
+
+
 class WrappedFallbackLLMProvider:
     provider_name = "fallback"
     model_name = "test-llm:primary-model|ollama:fallback-model"
@@ -206,6 +228,23 @@ class AnalysisProviderTestCase(unittest.TestCase):
         self.assertIn("processed JSON as the RAG source", prompt)
         self.assertNotIn('"startMs"', prompt)
         self.assertNotIn('"confidence"', prompt)
+
+    def test_llm_analysis_warns_when_hallucinating_citations(self) -> None:
+        provider = LLMAnalysisProvider(HallucinatedCitationsLLMProvider())
+
+        result = provider.build_result(
+            meeting=self.make_meeting(),
+            asset=self.make_asset(),
+            transcript_segments=self.make_segments(),
+        )
+
+        self.assertEqual(result["analysis"]["decisions"][0]["citationIds"], ["cite-001"])
+        self.assertEqual(result["summary"]["keyPoints"][0]["citationIds"], ["cite-001"])
+        quality_warnings = result.get("quality", {}).get("warnings", [])
+        self.assertTrue(
+            any("cite-999" in w and "non-existent" in w for w in quality_warnings),
+            f"Expected hallucination warning with cite-999, got: {quality_warnings}"
+        )
 
 
 if __name__ == "__main__":

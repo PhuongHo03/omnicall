@@ -19,10 +19,17 @@ class LLMProvider(Protocol):
     provider_name: str
     model_name: str
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict[str, Any]:
         ...
 
-    def generate_stream_json(self, *, system_prompt: str, user_prompt: str, on_token: Any = None) -> dict[str, Any]:
+    def generate_stream_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_token: Any = None,
+        temperature: float = 0,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -46,7 +53,7 @@ class OpenAICompatibleLLMProvider:
         self.last_provider_name = self.provider_name
         self.last_provider_model = self.model_name
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict[str, Any]:
         payload = {
             "model": self.config.model,
             "messages": [
@@ -54,7 +61,7 @@ class OpenAICompatibleLLMProvider:
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0,
+            "temperature": temperature,
         }
         response = self._post_json("chat/completions", payload)
         content = (
@@ -66,9 +73,16 @@ class OpenAICompatibleLLMProvider:
             raise LLMProviderError("OpenAI-compatible response did not include message content.")
         return _parse_json_content(content)
 
-    def generate_stream_json(self, *, system_prompt: str, user_prompt: str, on_token: Any = None) -> dict[str, Any]:
+    def generate_stream_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_token: Any = None,
+        temperature: float = 0,
+    ) -> dict[str, Any]:
         if on_token is None:
-            return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt, temperature=temperature)
         payload = {
             "model": self.config.model,
             "messages": [
@@ -76,7 +90,7 @@ class OpenAICompatibleLLMProvider:
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0,
+            "temperature": temperature,
             "stream": True,
         }
         url = urljoin(_ensure_trailing_slash(self.config.base_url), "chat/completions")
@@ -141,7 +155,7 @@ class CustomJSONEndpointLLMProvider:
         self.last_provider_name = self.provider_name
         self.last_provider_model = self.model_name
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict[str, Any]:
         response = _post_json(
             base_url=self.config.base_url,
             path="generate-json",
@@ -150,6 +164,7 @@ class CustomJSONEndpointLLMProvider:
                 "systemPrompt": system_prompt,
                 "userPrompt": user_prompt,
                 "responseFormat": "json",
+                "temperature": temperature,
             },
             api_key=self.config.api_key,
             timeout_seconds=self.config.timeout_seconds,
@@ -164,9 +179,16 @@ class CustomJSONEndpointLLMProvider:
             return response["result"]
         raise LLMProviderError("Custom JSON endpoint response did not include a JSON result.")
 
-    def generate_stream_json(self, *, system_prompt: str, user_prompt: str, on_token: Any = None) -> dict[str, Any]:
+    def generate_stream_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_token: Any = None,
+        temperature: float = 0,
+    ) -> dict[str, Any]:
         if on_token is None:
-            return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt, temperature=temperature)
         payload = {
             "model": self.config.model,
             "messages": [
@@ -174,7 +196,7 @@ class CustomJSONEndpointLLMProvider:
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0,
+            "temperature": temperature,
             "stream": True,
         }
         url = urljoin(_ensure_trailing_slash(self.config.base_url), "chat/completions")
@@ -228,8 +250,8 @@ class OllamaLLMProvider:
         self.last_provider_name = self.provider_name
         self.last_provider_model = self.model_name
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        options: dict[str, Any] = {"temperature": 0}
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict[str, Any]:
+        options: dict[str, Any] = {"temperature": temperature}
         if self.config.context_length:
             options["num_ctx"] = self.config.context_length
         response = _post_json(
@@ -254,8 +276,15 @@ class OllamaLLMProvider:
             raise LLMProviderError("Ollama response did not include message content.")
         return _parse_json_content(content)
 
-    def generate_stream_json(self, *, system_prompt: str, user_prompt: str, on_token: Any = None) -> dict[str, Any]:
-        options: dict[str, Any] = {"temperature": 0}
+    def generate_stream_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_token: Any = None,
+        temperature: float = 0,
+    ) -> dict[str, Any]:
+        options: dict[str, Any] = {"temperature": temperature}
         if self.config.context_length:
             options["num_ctx"] = self.config.context_length
         payload = {
@@ -317,12 +346,16 @@ class FallbackLLMProvider:
         self.last_primary_error_type: str | None = None
         self.last_primary_error_message: str | None = None
 
-    def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict[str, Any]:
         self.last_fallback_used = False
         self.last_primary_error_type = None
         self.last_primary_error_message = None
         try:
-            result = self.primary.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            result = self.primary.generate_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=temperature,
+            )
             self.last_provider_name = getattr(self.primary, "last_provider_name", self.primary.provider_name)
             self.last_provider_model = getattr(self.primary, "last_provider_model", self.primary.model_name)
             return result
@@ -330,17 +363,33 @@ class FallbackLLMProvider:
             self.last_fallback_used = True
             self.last_primary_error_type = type(exc).__name__
             self.last_primary_error_message = str(exc)
-            result = self.fallback.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            result = self.fallback.generate_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=temperature,
+            )
             self.last_provider_name = getattr(self.fallback, "last_provider_name", self.fallback.provider_name)
             self.last_provider_model = getattr(self.fallback, "last_provider_model", self.fallback.model_name)
             return result
 
-    def generate_stream_json(self, *, system_prompt: str, user_prompt: str, on_token: Any = None) -> dict[str, Any]:
+    def generate_stream_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        on_token: Any = None,
+        temperature: float = 0,
+    ) -> dict[str, Any]:
         self.last_fallback_used = False
         self.last_primary_error_type = None
         self.last_primary_error_message = None
         try:
-            result = self.primary.generate_stream_json(system_prompt=system_prompt, user_prompt=user_prompt, on_token=on_token)
+            result = self.primary.generate_stream_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                on_token=on_token,
+                temperature=temperature,
+            )
             self.last_provider_name = getattr(self.primary, "last_provider_name", self.primary.provider_name)
             self.last_provider_model = getattr(self.primary, "last_provider_model", self.primary.model_name)
             return result
@@ -348,7 +397,12 @@ class FallbackLLMProvider:
             self.last_fallback_used = True
             self.last_primary_error_type = type(exc).__name__
             self.last_primary_error_message = str(exc)
-            result = self.fallback.generate_stream_json(system_prompt=system_prompt, user_prompt=user_prompt, on_token=on_token)
+            result = self.fallback.generate_stream_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                on_token=on_token,
+                temperature=temperature,
+            )
             self.last_provider_name = getattr(self.fallback, "last_provider_name", self.fallback.provider_name)
             self.last_provider_model = getattr(self.fallback, "last_provider_model", self.fallback.model_name)
             return result
@@ -506,4 +560,3 @@ def _extract_answer_stream(collected: str, answer_key: str) -> str:
         result.append(ch)
         i += 1
     return "".join(result)
-

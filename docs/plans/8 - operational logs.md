@@ -30,7 +30,7 @@
 - [x] Emit worker receive/lock and processing lifecycle events.
 - [x] Emit transcription, audio preprocessing, VAD, ASR, and diarization events.
 - [x] Resolve the transcription route before the start event so provider/model context points at text extraction or ASR instead of a router placeholder.
-- [x] Emit transcript guardrail and LLM analysis events.
+- [x] Emit transcript guardrail and LLM analysis events. *(Transcript guardrail emission removed later in Phase 13)*
 - [x] Record primary LLM failure and effective Ollama fallback provider/model when fallback occurs.
 - [x] Emit processed JSON validation/persistence, embedding, Milvus upsert, result, and safe failure events.
 

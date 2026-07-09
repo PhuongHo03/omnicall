@@ -42,7 +42,7 @@ class OperationalLogServiceTestCase(unittest.TestCase):
             meeting_name="Session A",
             file={"name": "meeting.mp3"},
             provider="local-asr",
-            model="whisper-small",
+            model="whisper-medium",
         )
         self.service.emit(
             level="error",

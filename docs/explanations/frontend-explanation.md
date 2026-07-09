@@ -18,12 +18,37 @@ frontend/
     ├── shared/
     │   ├── components/
     │   │   ├── ConfirmDialog.tsx
+    │   │   ├── Drawer.tsx
+    │   │   ├── EmptyState.tsx
     │   │   ├── IconButton.tsx
-    │   │   └── IconOnlyButton.tsx
+    │   │   ├── IconOnlyButton.tsx
+    │   │   └── PageHeader.tsx
+    │   ├── hooks/
+    │   │   ├── useDebounceCallback.ts
+    │   │   ├── usePollingEffect.ts
+    │   │   └── useTheme.ts
     │   ├── layouts/
-    │   │   └── AppShell.tsx
-    │   └── styles/
-    │       └── global.css
+    │   │   ├── AppShell.tsx
+    │   │   └── SidebarContext.tsx
+    │   ├── styles/
+    │   │   ├── global.css
+    │   │   ├── tokens.css
+    │   │   ├── base.css
+    │   │   ├── layout.css
+    │   │   ├── components.css
+    │   │   ├── auth.css
+    │   │   ├── admin.css
+    │   │   ├── meetings.css
+    │   │   ├── result-viewer.css
+    │   │   ├── chat.css
+    │   │   └── responsive.css
+    │   ├── types/
+    │   │   └── account.ts
+    │   └── utils/
+    │       ├── browserDownload.ts
+    │       ├── httpClient.ts
+    │       ├── id.ts
+    │       └── retryWithBackoff.ts
     └── features/
         ├── admin/
         │   ├── api/
@@ -41,9 +66,12 @@ frontend/
         │   ├── hooks/
         │   │   ├── useAdminAccounts.ts
         │   │   ├── useAdminLogs.ts
+        │   │   ├── useAdminMeetingLogDetail.ts
+        │   │   ├── useAdminMeetingLogs.ts
         │   │   └── useAdminMetrics.ts
         │   ├── screens/
         │   │   ├── AdminAccountsScreen.tsx
+        │   │   ├── AdminMeetingLogsScreen.tsx
         │   │   ├── AdminLogsScreen.tsx
         │   │   └── AdminMetricsScreen.tsx
         │   └── types/
@@ -61,22 +89,46 @@ frontend/
         │       └── authTypes.ts
         └── meetings/
             ├── api/
+            │   ├── chatStreamApi.ts
             │   └── meetingApi.ts
             ├── dtos/
             │   └── meetingDtos.ts
             ├── hooks/
-            │   └── useMeetingWorkspace.ts
+            │   ├── useMeetingAssetPlayback.ts
+            │   ├── useMeetingChatWatch.ts
+            │   ├── useMeetingRecording.ts
+            │   ├── useMeetingSelection.ts
+            │   ├── useMeetingStatusSync.ts
+            │   ├── useMeetingWorkspace.ts
+            │   └── useResultSectionState.ts
             ├── screens/
             │   └── MeetingsScreen.tsx
+            ├── states/
+            │   ├── chatState.ts
+            │   └── meetingState.ts
             ├── types/
             │   └── meetingTypes.ts
+            ├── utils/
+            │   ├── citationFormatters.ts
+            │   ├── jsonDisplay.ts
+            │   ├── markdownParser.ts
+            │   ├── meetingFormatters.ts
+            │   └── meetingTranscript.ts
             └── components/
-                ├── AccountFileLibrary.tsx
+                ├── AssetMetadataBar.tsx
+                ├── AssetPlaybackPanel.tsx
+                ├── ChatMessageBubble.tsx
+                ├── JsonSection.tsx
+                ├── JsonValue.tsx
                 ├── MeetingActionPanel.tsx
-                ├── MeetingAssetPlaybackPanel.tsx
                 ├── MeetingChatPanel.tsx
                 ├── MeetingIntelligenceResultPanel.tsx
                 ├── MeetingList.tsx
+                ├── PlaybackDrawer.tsx
+                ├── PlayerControls.tsx
+                ├── ResultDrawer.tsx
+                ├── TranscriptTrack.tsx
+                ├── WaveformDisplay.tsx
                 └── StatusPill.tsx
 ```
 
@@ -128,13 +180,11 @@ Implemented frontend routes:
 
 | Area | Component | Purpose |
 |---|---|---|
-| Account storage | `AccountFileLibrary` | Lists files uploaded by the authenticated account, supports authorized playback, blocks deleting linked meeting files, and deletes unlinked files |
-| Meeting list and creation | `MeetingList` | Lists meetings, creates a new analysis from the header Create button, and refreshes the owned meeting list |
-| Left sidebar | `MeetingList`, `AccountFileLibrary` | Lists meetings, creates a new analysis, and manages account-scoped uploaded files |
-| Meeting actions | `MeetingActionPanel` | Shows the selected meeting, inline rename control, one-file upload/record controls, process/retry button, processing progress, and delete action for the selected owned meeting |
-| Audio playback | `MeetingAssetPlaybackPanel` | Shows the uploaded audio asset in a browser audio player above the processed JSON when the ready meeting has an audio file |
-| Processed JSON result | `MeetingIntelligenceResultPanel` | Renders the complete `meeting-intelligence-result.v1` as readable collapsible sections and remembers each section's open/closed UI preference in browser storage |
-| Meeting chat | `MeetingChatPanel` | Sits below the processed result, asks questions against a ready meeting, renders immediate user bubbles, pending assistant state, streamed answer text, saved evidence state, and citations |
+| Meeting list and creation | `MeetingList` | Lives in the shared sidebar slot, lists meetings, creates a new analysis, and selects the current meeting |
+| Meeting actions | `MeetingActionPanel` | Shows the selected meeting, inline rename control, one-file upload/record controls, process/retry button, playback/result actions, refresh actions, and delete action |
+| Playback drawer | `PlaybackDrawer`, `AssetPlaybackPanel`, `PlayerControls`, `TranscriptTrack`, `WaveformDisplay` | Loads the selected meeting asset into a temporary browser Blob URL, provides playback controls, transcript navigation, and download |
+| Processed JSON result | `ResultDrawer`, `MeetingIntelligenceResultPanel`, `JsonSection`, `JsonValue` | Renders the complete `meeting-intelligence-result.v1` as readable collapsible sections and remembers each section's open/closed UI preference in browser storage |
+| Meeting chat | `MeetingChatPanel`, `ChatMessageBubble` | Asks questions against a ready meeting, renders immediate user bubbles, pending assistant state, streamed answer text, saved evidence state, citations, and source expansion |
 | Status display | `StatusPill` | Displays meeting and job state |
 
 Meeting selection is URL-backed. `/meetings` is the authenticated landing page and intentionally keeps no meeting selected. Opening `/meetings/:meetingId` selects that meeting after the authorized meeting list loads. Selecting or creating a meeting updates the URL, deleting the selected meeting returns to `/meetings`, and clicking the navbar Meetings button always returns to `/meetings`. The Meetings panel creates a backend-owned meeting shell immediately; the backend names the shell with its generated meeting ID until the user renames it from the selected meeting header. This supports refresh, browser back/forward navigation, bookmarks, and direct links without moving business authorization into the frontend.
@@ -177,33 +227,44 @@ The recording entry point uses `MediaRecorder` to produce a completed `audio/web
 
 `MeetingActionPanel` follows the one-analysis-per-meeting rule. Upload and recording are shown only while the selected meeting is `DRAFT` and has no asset. Once a file is uploaded, the intake box is hidden and the meeting is locked to that asset whether processing later succeeds or fails. Processing remains available for an uploaded asset and retryable after a failed job. These controls are UI affordances only; backend state validation remains authoritative and returns `409 Conflict` for stale or direct requests that try to upload another file.
 
-The central workspace no longer uses operation/chat tabs. It is a chatbot-style flow: progress and process controls at the top, uploaded audio playback above the processed JSON when an audio asset exists, processed JSON result sections in the middle after `READY`, and the meeting chat composer/thread below the result. The processed JSON panel remembers open/closed section state locally in the browser so switching meetings does not force `Summary`, `Analysis`, or `Quality` back open after the user closes them. The left sidebar behaves like a modern chat app history rail for selecting or creating analyses.
+The central workspace no longer uses operation/chat tabs. It is a chatbot-style flow: meeting controls stay at the top, playback and processed-result details open in drawers, and the meeting chat composer/thread fills the selected meeting workspace after the meeting is `READY`. The processed JSON panel remembers open/closed section state locally in the browser so switching meetings does not force `Summary`, `Analysis`, or `Quality` back open after the user closes them. The shared app sidebar behaves like a modern chat history rail for selecting or creating analyses.
 
 The current visual system uses a neutral operational surface, white raised panels, and multiple restrained accents: green for primary actions/ready states, indigo for queued states, amber for in-progress or partial states, and coral for destructive/error states. Cards and controls keep the existing 8px radius limit while using slightly stronger spacing, panel shadows, and focus states for a more modern workspace feel.
 
+Global CSS is loaded from `shared/styles/global.css`, which is now only an import aggregator. Domain files keep the cascade readable: `tokens.css` defines the shared design contract for font families, text sizes, line heights, radius values, core colors, semantic alpha colors, overlays, shadows, focus rings, and dark-theme overrides. `base.css` handles reset/base elements and generic controls, `layout.css` owns the app shell/sidebar, `components.css` owns shared UI components and dark shared overrides, `auth.css`, `admin.css`, `meetings.css`, `result-viewer.css`, and `chat.css` own feature/product-area styles, and `responsive.css` keeps viewport overrides together.
+
+Phase 20 tightened visual consistency by moving avoidable one-off color, radius, shadow, line-height, overlay, and mono-font values into `tokens.css`. Feature CSS now uses those variables for reusable primitives; React keeps inline styles only where the value is dynamic runtime state, such as playback and transcript progress widths.
+
 ## API And DTO Boundaries
 
-`authApi.ts`, `meetingApi.ts`, and `adminApi.ts` are intentionally thin. They send requests to backend endpoints and attach `Authorization: Bearer <token>` for authenticated calls.
+`authApi.ts`, `meetingApi.ts`, and `adminApi.ts` are intentionally thin. They keep feature-specific endpoint functions in each feature `api/` folder and delegate shared request mechanics to `frontend/src/shared/utils/httpClient.ts`, including API prefix handling, bearer headers, JSON headers, JSON parsing, blob parsing, and normalized backend error extraction.
 
 `meetingDtos.ts` maps backend snake_case responses into frontend camelCase types and performs basic runtime shape checks.
 
 Meeting chat calls are handled through the same feature boundary:
 
 ```text
-MeetingChatPanel -> useMeetingWorkspace -> meetingApi -> /api/meetings/{meetingId}/chat
+MeetingChatPanel -> useMeetingWorkspace -> meetingApi/chatStreamApi -> /api/meetings/{meetingId}/chat
 ```
 
-Chat request building and response/history mapping live in `meetingDtos.ts`. The frontend keeps only lightweight UI state: current question text, temporary optimistic messages while an answer is pending, and the message list returned by the backend. It does not create, store, or send a chat-session ID. When a question is submitted, `useMeetingWorkspace` immediately adds the user bubble and a local assistant `Đang tra cứu...` bubble. When the backend response arrives, the hook types the assistant answer into the bubble in small chunks, then replaces the temporary state with persisted chat history from `GET /api/meetings/{meetingId}/chat`. If the POST transport drops after the backend persists the answer, the same recovery path polls history briefly and streams the recovered assistant message.
+Chat request building and response/history mapping live in `meetingDtos.ts`. REST chat calls remain in `meetingApi.ts`, while SSE parsing and stream-event typing live in `chatStreamApi.ts`. The frontend keeps only lightweight UI state: current question text, temporary optimistic messages while an answer is pending, and the message list returned by the backend. It does not create, store, or send a chat-session ID. When a question is submitted, `useMeetingWorkspace` immediately adds the user bubble and a local assistant `Đang chờ xử lý...` bubble. `useMeetingChatWatch` then consumes backend SSE status, agent, done, blocked, and error events, updates Vietnamese assistant status text, and replaces local optimistic state with persisted chat history from `GET /api/meetings/{meetingId}/chat`. If streaming cannot finish cleanly, the same recovery path polls history briefly and applies typewriter IDs to recovered assistant answers.
+
+### Resilience Hooks and States
+
+- `useDebounceCallback` hook in `frontend/src/shared/hooks/` provides generic debouncing with `.cancel()` support and unmount cleanup.
+- `usePollingEffect` hook in `frontend/src/shared/hooks/` centralizes interval setup for admin logs, admin metrics, admin meeting-log summaries, and meeting status polling while keeping each feature's fetch behavior local.
+- `useMeetingWorkspace` remains the public facade for `MeetingsScreen`, but selection, status/list polling, chat watch, recording, playback Blob URL lifecycle, transcript extraction, and browser download behavior are split into smaller feature hooks/utilities.
+- Duplicate request guards prevent the same action from running concurrently (e.g. clicking Refresh 10 times only sends 1 request).
+- `useAuthSession.refreshAccount()` distinguishes transient network errors from real auth failures: network errors keep the session token; only server 401 removes it.
+- Meeting API functions (`listMeetings`, `getMeeting`, etc.) accept an optional `AbortSignal` for request cancellation.
 
 Assistant messages display the backend evidence state and citations. During the local typewriter effect, citations are hidden so the answer reads progressively; after streaming completes, all citations returned by the backend are shown under a `Sources` heading. Citations include processed JSON section pointers, transcript time ranges when available, metadata/section labels for non-timestamped sources such as participants, meeting metadata, source metadata, quality warnings, and empty-section notes, and the citation text returned by the backend. Unsupported answers are shown as normal assistant messages with the backend `not_enough_evidence` state rather than optimistic certainty.
 
-For selected meetings, the hook loads `GET /api/meetings/{meetingId}/processing-status` to retrieve the latest job and latest asset, then loads `GET /api/meetings/{meetingId}/intelligence-result` when the meeting is `READY`. When the latest asset is an audio file, the hook fetches `GET /api/meetings/{meetingId}/assets/{assetId}/content` with the bearer token, creates a temporary browser Blob URL, and revokes it when the selected meeting or asset changes. While a meeting is `QUEUED` or `PROCESSING`, the hook polls processing status every 3 seconds. The frontend does not parse or recompute intelligence sections; it renders the JSON returned by the backend.
+For selected meetings, the hook loads `GET /api/meetings/{meetingId}/processing-status` to retrieve the latest job and latest asset, then loads `GET /api/meetings/{meetingId}/intelligence-result` when the meeting is `READY`. When the latest asset is playable audio or video, the hook fetches `GET /api/meetings/{meetingId}/assets/{assetId}/content` with the bearer token, creates a temporary browser Blob URL, and revokes it when the selected meeting or asset changes. While a meeting is `QUEUED` or `PROCESSING`, the hook polls processing status every 3 seconds. The frontend does not parse or recompute intelligence sections; it renders the JSON returned by the backend.
 
-The account file library calls `/api/files` through the meetings feature API layer. It can upload account files from the Files panel header, fetch authorized file bytes into a temporary Blob URL for playback/download, and ask the backend to delete unlinked files. Files linked to an existing meeting session show disabled delete behavior in the UI, but backend conflict responses remain authoritative.
+Meeting deletion is exposed in `MeetingActionPanel` for authenticated `User` and `Admin` accounts. It asks for in-app confirmation before calling owner-scoped `DELETE /api/meetings/{meetingId}` through the meeting API wrapper with the current bearer token, then clears the selected meeting and reloads meeting state. The backend remains authoritative and returns `404` if a direct request targets another account's meeting.
 
-Meeting deletion is exposed in `MeetingActionPanel` for authenticated `User` and `Admin` accounts. It asks for in-app confirmation before calling owner-scoped `DELETE /api/meetings/{meetingId}` through the meeting API wrapper with the current bearer token, then reloads meeting and file-library state. The backend remains authoritative and returns `404` if a direct request targets another account's meeting.
-
-Destructive UI actions ask for confirmation before sending requests: account-file delete in `AccountFileLibrary`, meeting-session delete in `MeetingActionPanel`, and account delete in `AdminAccountsTable`. These confirmations use the shared in-app `ConfirmDialog` component instead of browser-native `window.confirm`, so the browser cannot suppress later confirmations with a "don't ask again" option. These confirmations are UX guardrails only; backend authorization and reference checks remain authoritative.
+Destructive UI actions ask for confirmation before sending requests: meeting-session delete in `MeetingActionPanel` and account delete in `AdminAccountsTable`. These confirmations use the shared in-app `ConfirmDialog` component instead of browser-native `window.confirm`, so the browser cannot suppress later confirmations with a "don't ask again" option. These confirmations are UX guardrails only; backend authorization and reference checks remain authoritative.
 
 The frontend does not enforce business rules. Backend remains authoritative for authorization, upload validation, state transitions, idempotency, and processing eligibility.
 
@@ -246,9 +307,114 @@ Playwright verification:
 | React Router route split and admin metrics/accounts separation build | Passed |
 | Navbar account hover dropdown and meeting account-banner removal build | Passed |
 | Phase 8 Admin logs TypeScript/Vite build and NGINX route smoke | Passed |
+| Phase 19 frontend refactor safety cleanup TypeScript/Vite build | Passed |
+| Phase 19 CSS split Vite build with no CSS minify warning | Passed |
+| Phase 19 no unused-import workaround scan | Passed |
+| Phase 20 frontend design token cleanup TypeScript/Vite build | Passed |
+| Phase 20 hard-coded style scan outside `tokens.css` | Passed |
 
 Earlier phase screenshots were generated under ignored `tmp/screenshots/`.
 
-Playwright screenshot re-verification was attempted on 2026-06-17, but the local Playwright package could not install Chromium because the current environment reports `ubuntu26.04-x64`, which Playwright did not support for that browser build. The verified fallback for this UI pass is TypeScript/Vite build plus gateway HTTP smoke.
+Playwright screenshot re-verification was attempted on 2026-06-17, but the local Playwright package could not install Chromium because the current environment reports `ubuntu26.04-x64`, which Playwright did not support for that browser build. The verified fallback for the Phase 20 design-token cleanup pass is TypeScript/Vite build, static source review, and frontend style scans.
 
-*Document reflects project state after Phase 9 full JSON RAG coverage updates on **2026-06-26**. Frontend routes include Admin-only metrics, accounts, and realtime processing/RAG logs, while meeting creation lives in the Meetings panel header, selected meetings can be renamed inline, and speech language is auto-detected during backend transcription. Backend authorization remains authoritative.*
+## Agentic RAG Frontend (Phase 16)
+
+### New SSE Events
+
+The frontend now handles additional SSE events for the Agentic RAG agent loop:
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `agent_think` | `{ type, iteration, message }` | Shows agent iteration progress |
+| `agent_search` | `{ type, iteration, tools, message }` | Shows tools being called |
+| `observation` | `{ type, iteration, tool_results, total_chunks }` | Shows chunks found |
+| `agent_synthesize` | `{ type, message }` | Shows final-answer generation status |
+| `fast_path` | `{ type, intent, message }` | Shows immediate response |
+| `connected` | `{ type: "connected", status: "connected" }` | Initial stream handshake |
+
+### Agent Metadata
+
+Chat messages now include optional `agentMetadata`:
+
+```typescript
+interface MeetingChatMessage {
+  // ... existing fields
+  agentMetadata?: {
+    iterations?: number;      // Number of agent iterations used
+    toolCalls?: string[];     // Tools called during processing
+    agentThoughts?: string[]; // Agent reasoning messages
+  };
+}
+```
+
+Agent SSE handling is defensive: `agent_search`, `observation`, and `agent_synthesize` events may arrive with only structured fields such as `tools`, `resultCount`, or `forced`, so `useMeetingWorkspace` derives a safe Vietnamese status message instead of assigning `undefined` into chat message content. The backend stream handshake also sends a typed JSON payload (`type: "connected"`), while the markdown/typewriter renderer treats missing message content as an empty string so one malformed transient streaming message cannot crash the chat thread.
+
+### UI Components
+
+| Component | Feature |
+|-----------|---------|
+| `ChatMessageBubble` | Shows fast path badge for immediate responses |
+| `ChatMessageBubble` | Shows agent iteration badge during processing |
+| `ChatMessageBubble` | Shows tools called section with badges |
+
+### CSS Classes
+
+| Class | Purpose |
+|-------|---------|
+| `.fast-path-badge` | Green badge for fast path responses |
+| `.agent-iteration-badge` | Blue badge showing iteration count |
+| `.agent-tools` | Container for tool badges |
+| `.agent-tool-badge` | Individual tool badges |
+| `.chat-message--fast-path` | Left border highlight for fast path |
+
+## Typewriter Expansion (Phase 17)
+
+The typewriter effect has been expanded to work for ALL assistant message evidence states, not just grounded/partial messages.
+
+### Supported Evidence States
+
+| Evidence State | Typewriter | Visual Style |
+|----------------|------------|--------------|
+| `grounded` | ✅ | Green border |
+| `partial` | ✅ | Amber border |
+| `not_enough_evidence` | ✅ | Amber border + background |
+| `fast_path` | ✅ | Green border + background |
+| `blocked` | ✅ | Muted border + faint background |
+| `error` | ✅ | Red border + danger background |
+
+### Implementation Changes
+
+**MeetingChatPanel.tsx:**
+- Removed `!isStreaming` restriction from typewriter activation
+- Added evidence state CSS class to chat message container
+- Typewriter now activates for all assistant messages (except `isTyping` state)
+
+**useMeetingWorkspace.ts:**
+- SSE `done`/`blocked` handler adds typewriter IDs for ALL new assistant messages
+- Polling handler adds typewriter IDs for ALL new assistant messages
+- No longer limited to only the last message
+
+**global.css:**
+- No CSS changes needed (existing evidence badge styles are sufficient)
+
+### Typewriter Activation Logic
+
+```typescript
+// Before: Only for grounded/partial
+enableTypewriter && !isTyping && !isStreaming && message.role === "assistant"
+
+// After: For ALL assistant messages
+enableTypewriter && !isTyping && message.role === "assistant"
+```
+
+### Evidence Badge Display
+
+All evidence states display a badge with appropriate styling:
+- `grounded`: Green badge
+- `partial`: Amber badge
+- `not_enough_evidence`: Amber badge
+- `fast_path`: Green badge
+- `blocked`: Muted badge
+- `error`: Red badge
+
+*Document reflects project state after **Phase 20 Frontend Design Token Cleanup**. Frontend source follows feature-layer boundaries, `useMeetingWorkspace` is a facade over workflow hooks, shared HTTP/polling helpers own cross-feature mechanics, global CSS is split by domain meaning behind `global.css`, and shared visual primitives are centralized in `tokens.css`.*

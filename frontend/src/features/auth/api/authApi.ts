@@ -1,69 +1,42 @@
+import { retryWithBackoff } from "../../../shared/utils/retryWithBackoff";
+import { apiUrl, authHeaders, jsonHeaders, parseJsonResponse } from "../../../shared/utils/httpClient";
 import { buildLoginPayload, buildRegisterPayload, parseAuthSession, parseMe } from "../dtos/authDtos";
 import type { Account, AuthSession } from "../types/authTypes";
-
-const API_PREFIX = "/api";
-
-async function parseJsonResponse(response: Response): Promise<unknown> {
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = apiErrorMessage(payload);
-    throw new Error(message);
-  }
-  return payload;
-}
-
-function apiErrorMessage(payload: unknown): string {
-  if (!payload || typeof payload !== "object") {
-    return "Request failed.";
-  }
-  if ("message" in payload && typeof payload.message === "string") {
-    return payload.message;
-  }
-  if ("detail" in payload && Array.isArray(payload.detail)) {
-    const firstDetail = payload.detail[0] as { msg?: unknown; loc?: unknown } | undefined;
-    if (firstDetail && typeof firstDetail.msg === "string") {
-      const location = Array.isArray(firstDetail.loc) ? firstDetail.loc.filter((item) => item !== "body").join(".") : "";
-      return location ? `${location}: ${firstDetail.msg}` : firstDetail.msg;
-    }
-  }
-  if ("detail" in payload && typeof payload.detail === "string") {
-    return payload.detail;
-  }
-  return "Request failed.";
-}
 
 export async function registerAccount(
   email: string,
   password: string,
   displayName: string
 ): Promise<AuthSession> {
-  const response = await fetch(`${API_PREFIX}/auth/register`, {
+  const response = await fetch(apiUrl("/auth/register"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(buildRegisterPayload(email, password, displayName))
   });
   return parseAuthSession(await parseJsonResponse(response));
 }
 
 export async function loginAccount(email: string, password: string): Promise<AuthSession> {
-  const response = await fetch(`${API_PREFIX}/auth/login`, {
+  const response = await fetch(apiUrl("/auth/login"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonHeaders(),
     body: JSON.stringify(buildLoginPayload(email, password))
   });
   return parseAuthSession(await parseJsonResponse(response));
 }
 
 export async function logoutAccount(token: string): Promise<void> {
-  await fetch(`${API_PREFIX}/auth/logout`, {
+  await fetch(apiUrl("/auth/logout"), {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` }
+    headers: authHeaders(token)
   });
 }
 
 export async function getCurrentAccount(token: string): Promise<Account> {
-  const response = await fetch(`${API_PREFIX}/me`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  return parseMe(await parseJsonResponse(response));
+  return retryWithBackoff(async () => {
+    const response = await fetch(apiUrl("/me"), {
+      headers: authHeaders(token)
+    });
+    return parseMe(await parseJsonResponse(response));
+  }, { maxRetries: 2, baseDelayMs: 1000 });
 }

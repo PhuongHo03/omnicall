@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { usePollingEffect } from "../../../shared/hooks/usePollingEffect";
 import { getAdminMetrics } from "../api/adminApi";
 import type { AdminMetrics } from "../types/adminTypes";
 
@@ -27,12 +28,7 @@ export function useAdminMetrics(token: string) {
     void refreshMetrics();
   }, [refreshMetrics]);
 
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      void refreshMetrics();
-    }, 30000);
-    return () => window.clearInterval(interval);
-  }, [refreshMetrics]);
+  usePollingEffect(() => void refreshMetrics(), 30000);
 
   const groupedMetrics = useMemo(() => {
     const groups = new Map<string, AdminMetrics["metrics"]>();
