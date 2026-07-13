@@ -7,6 +7,7 @@ from backend.models.meeting_models import (
     MeetingAsset,
     MeetingChunkRecord,
     MeetingIntelligenceResult,
+    MeetingTranscriptWindow,
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "MeetingAsset",
     "MeetingChunkRecord",
     "MeetingIntelligenceResult",
+    "MeetingTranscriptWindow",
     "User",
 ]

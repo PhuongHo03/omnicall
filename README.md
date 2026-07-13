@@ -75,6 +75,22 @@ Expected response:
 {"app":"Omnicall API","status":"ok"}
 ```
 
+Run backend verification in the running backend container:
+
+```bash
+docker compose exec -T -e RATE_LIMIT_ENABLED=false backend \
+  python -m unittest discover -s backend/tests -p 'test_*.py'
+```
+
+Rebuild derived retrieval data after changing the processed JSON or chunk schema:
+
+```bash
+docker compose exec -T backend python -m backend.scripts.rebuild_retrieval_index --clear-chat
+docker compose exec -T backend python -m backend.scripts.cleanup_orphaned_objects
+```
+
+The orphan cleanup command is dry-run by default. Add `--apply` only after confirming the reported MinIO objects are unreferenced.
+
 Useful local URLs:
 
 | Service | URL |
@@ -129,9 +145,23 @@ Useful local URLs:
 │   ├── migrations/                   <- Alembic migrations
 │   ├── middlewares/                  <- Request/response middleware
 │   ├── models/                       <- SQLAlchemy models
-│   ├── providers/                    <- Storage and queue adapters
+│   ├── providers/                    <- Storage, model, and queue adapters
+│   │   ├── contracts/                <- Provider protocols and result/config DTOs
+│   │   ├── analysis/                 <- Processed JSON analysis adapter
+│   │   ├── llm/                      <- HTTP, Ollama, fallback, and LLM factory adapters
+│   │   └── voice/                    <- Audio preprocessing, VAD, ASR, and diarization adapters
 │   ├── repositories/                 <- Database access abstractions
 │   ├── services/                     <- Business services/use cases
+│   │   ├── agent/                    <- Agentic RAG orchestration components
+│   │   ├── processing/               <- Processing pipeline stages
+│   │   └── retrieval/                <- Chunking, indexing, candidates, and retrieval lifecycle
+│   ├── scripts/                      <- Retrieval rebuild and MinIO cleanup commands
+│   ├── tests/                        <- Backend unittest suite
+│   │   ├── agent/                    <- Agentic RAG tests
+│   │   ├── api/                      <- API/orchestration tests
+│   │   ├── processing/               <- Worker pipeline tests
+│   │   ├── providers/                <- Provider tests
+│   │   └── retrieval/                <- Retrieval/indexing tests
 │   ├── tasks/                        <- Celery task definitions
 │   ├── utils/                        <- Shared utilities
 │   ├── main.py                       <- App factory and route registration
@@ -184,3 +214,6 @@ Useful local URLs:
 - Worker execution, processed JSON indexing, RAG chat, rerank metadata, and local guardrail checks are implemented.
 - Voice uploads use repository-owned ASR and diarization runners with fixed CPU-friendly model/runtime contracts.
 - `model-init` downloads the required ASR, diarization, and rerank snapshots into the fixed `/models` volume before backend and worker startup.
+- Refactor phases 1 through 6 are complete. Internal imports use the canonical Agent, retrieval, provider-package, and provider-contract paths; the compatibility wrappers covered by this refactor have been removed.
+- Final refactor verification confirmed matching `.env` and `.env.example` key sets, valid Compose configuration, operational rebuild/cleanup scripts, and `225/225` backend tests.
+- Docker/Compose cleanup confirmed that all declared services and named volumes are active runtime dependencies; generated Python caches and frontend build output were removed from the workspace without deleting persistent volumes.

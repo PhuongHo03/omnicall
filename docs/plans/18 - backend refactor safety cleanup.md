@@ -255,7 +255,7 @@
 - Standardized the chat SSE connected payload to include `type: "connected"`.
 - Restored `synthesize_answer` registration/execution in `AgentToolRegistry`.
 - Grouped Agentic RAG implementation under `backend/services/agent/` while keeping compatibility wrappers for old imports.
-- Split pure retrieval chunk construction into `backend/services/retrieval_chunk_builder.py`, leaving `RetrievalIndexService` as orchestration.
+- Split pure retrieval chunk construction into `backend/services/retrieval/chunk_builder.py`, leaving `RetrievalIndexService` as orchestration.
 - Fixed in-memory rate-limit fallback so expired timestamps are trimmed while the current request remains tracked.
 - Updated backend, frontend, worker explanations and the project phase summary.
 

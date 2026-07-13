@@ -47,15 +47,15 @@ class MeetingChatRequest(BaseModel):
 
 
 class MeetingChatCitationResponse(BaseModel):
+    citation_id: str
     chunk_id: str
     source_type: str
     section_type: str
     json_pointer: str
-    citation_ids: list[str]
     segment_ids: list[str]
     start_ms: int | None
     end_ms: int | None
-    text: str
+    quote: str
 
 
 class MeetingChatMessageResponse(BaseModel):

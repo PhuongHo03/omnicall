@@ -51,12 +51,12 @@ backend/
 │   └── meeting_models.py          <- Meeting, asset, result, chunk, and chat-message models
 ├── providers/
 │   ├── __init__.py
-│   ├── analysis_provider.py       <- LLM-backed processed JSON provider and result normalization
+│   ├── analysis/                  <- Processed JSON provider adapters
+│   ├── contracts/                 <- Shared provider protocols and result/config DTOs
 │   ├── app_metrics_provider.py    <- Prometheus application metrics registry and middleware
 │   ├── cache_provider.py          <- Redis JSON cache adapter
 │   ├── embedding_provider.py      <- Ollama text embedding provider
-│   ├── guardrail_provider.py      <- Ollama guardrail provider boundary
-│   ├── llm_provider.py            <- LLM provider adapters and Ollama fallback selection
+│   ├── llm/                       <- HTTP, Ollama, fallback, factory, and transport adapters
 │   ├── lock_provider.py           <- Redis lock provider for worker idempotency
 │   ├── operational_log_provider.py <- Temporary bounded Redis Stream adapter
 │   ├── prometheus_provider.py     <- Internal Prometheus HTTP query adapter
@@ -64,11 +64,10 @@ backend/
 │   ├── circuit_breaker.py         <- Generic circuit breaker with Prometheus metrics
 │   ├── rerank_provider.py         <- Local model rerank command boundary
 │   ├── storage_provider.py        <- MinIO object storage adapter
-│   ├── text_extraction_provider.py <- Text transcript and notes extraction adapter
 │   ├── transcript_types.py        <- Shared transcript segment value type
 │   ├── transcription_provider.py  <- Text/voice transcription routing provider
 │   ├── vector_provider.py         <- Milvus REST vector index adapter and PostgreSQL fallback switch
-│   └── voice_provider.py          <- Voice preprocessing, VAD, ASR, and diarization provider contracts
+│   └── voice/                     <- Local voice preprocessing, VAD, ASR, and diarization adapters
 ├── repositories/
 │   ├── __init__.py
 │   ├── auth_repository.py         <- User/session/audit persistence
@@ -83,11 +82,20 @@ backend/
 │   ├── admin_metrics_service.py   <- Admin metrics aggregation and Redis cache use case
 │   ├── agent/                     <- Agentic RAG bounded context
 │   │   ├── context_manager.py     <- Agent context accumulation with chunk deduplication and tool call tracking
+│   │   ├── context_coordinator.py <- Chunk limits, token budget, tool history, and answer metadata
+│   │   ├── agent_loop.py          <- LLM think step and parallel tool execution boundary
+│   │   ├── answer_synthesizer.py <- LLM synthesis, local summary, and retrieval fallback
 │   │   ├── fast_path.py           <- Fast path handler for common queries without retrieval
 │   │   ├── parallel_executor.py   <- Parallel tool execution with timeout and partial-failure handling
+│   │   ├── prompt_builder.py      <- Agent and synthesis prompts plus stable retrieval status copy
+│   │   ├── response_utils.py      <- Chunk normalization, evidence, confidence, and fallback helpers
+│   │   ├── result_models.py       <- Agent response DTOs
 │   │   ├── service.py             <- Main Agentic RAG orchestration loop
 │   │   ├── token_management.py    <- Token counting, limits, and budget management
-│   │   └── tool_registry.py       <- Agent tool definitions and execution
+│   │   ├── tool_catalog.py        <- Stable Agent tool definitions and parameters
+│   │   ├── tool_definitions.py    <- Agent tool contracts and chunk serialization
+│   │   ├── tool_executor.py       <- Retrieval and synthesis tool implementations
+│   │   └── tool_registry.py       <- Tool lookup, schema formatting, and dispatch
 │   ├── auth_service.py            <- Registration, login, logout, and current account use cases
 │   ├── chat_service.py            <- Meeting-grounded chat use case
 │   ├── file_service.py            <- Account file library use cases
@@ -96,13 +104,16 @@ backend/
 │   ├── meeting_service.py         <- Meeting upload and processing use cases
 │   ├── operational_log_service.py <- Structured processing/RAG event sanitization, tail, and clear use case
 │   ├── processing_pipeline_service.py <- Worker processing use case
+│   ├── processing/                <- Processing pipeline stage helpers
+│   │   └── analysis_stage.py      <- LLM intelligence analysis stage
+│   │   └── observability.py       <- Processing timing and sanitized asset/job log context
+│   │   └── voice_events.py        <- ASR, VAD, and diarization operational event emission
+│   │   └── persistence_stage.py   <- Processed intelligence result persistence stage
+│   │   └── result_validation.py   <- RAG-first result schema and evidence reference validation
+│   │   └── retrieval_index_stage.py <- Chunk, embedding, and vector indexing stage
+│   │   └── transcription_stage.py <- Voice transcription stage and stage events
 │   ├── processing_reconciliation_service.py <- Stale pending-job recovery use case
-│   ├── retrieval_chunk_builder.py <- Pure processed JSON to retrieval chunk builder
-│   ├── retrieval_index_service.py <- Retrieval indexing orchestration and vector upsert
-│   ├── agent_context_manager.py <- Compatibility wrapper for `services/agent/context_manager.py`
-│   ├── fast_path_handler.py     <- Compatibility wrapper for `services/agent/fast_path.py`
-│   ├── retrieval_search_service.py <- Milvus search with PostgreSQL authoritative record reload and fallback ranking
-│   └── token_management.py      <- Compatibility wrapper for `services/agent/token_management.py`
+│   └── retrieval/                <- Chunking, indexing, candidate, and search boundaries
 ├── tasks/
 │   ├── __init__.py
 │   ├── maintenance_tasks.py       <- Celery reconciliation task registration
@@ -154,7 +165,7 @@ Current public backend route:
 | `GET` | `/api/meetings/{meetingId}` | Meeting detail and status |
 | `PATCH` | `/api/meetings/{meetingId}` | Rename an owned meeting |
 | `DELETE` | `/api/meetings/{meetingId}` | Delete an owned meeting session with cascading cleanup |
-| `POST` | `/api/meetings/{meetingId}/assets` | Uploaded audio/video/text asset metadata; one asset per meeting |
+| `POST` | `/api/meetings/{meetingId}/assets` | Uploaded audio/video asset metadata; one asset per meeting |
 | `GET` | `/api/meetings/{meetingId}/assets/{assetId}/content` | Authorized uploaded asset bytes for browser playback or download |
 | `POST` | `/api/meetings/{meetingId}/process` | Processing job queued or visible queue failure |
 | `GET` | `/api/meetings/{meetingId}/processing-status` | Meeting status plus latest processing job and latest uploaded asset |
@@ -202,17 +213,17 @@ The fallback validates the user UUID, creates or updates a local `users` row, an
 
 All meeting reads, uploads, process triggers, owned meeting deletion, file-library actions, and chat history reads are scoped by `owner_user_id == context.user_id`.
 
-`DELETE /api/meetings/{meetingId}` is available to authenticated `User` and `Admin` accounts for meetings they own. It uses the production cleanup path: acquire the meeting processing lock, revoke queued processing jobs by ID, delete worker-derived rows and objects, invalidate the admin metrics cache, and release the lock. If processing is actively running and the lock cannot be acquired, it returns `409 meeting_processing_in_progress`. A request for another account's meeting returns `404 meeting_not_found`.
+`DELETE /api/meetings/{meetingId}` is available to authenticated `User` and `Admin` accounts for meetings they own. It uses the production cleanup path: acquire the meeting processing lock, require queued processing jobs to be revoked successfully, remove derived vectors, delete worker-derived rows and objects, invalidate the admin metrics cache, and release the lock. Queue or vector cleanup failures return retryable `503` errors and preserve the meeting. If processing is actively running and the lock cannot be acquired, it returns `409 meeting_processing_in_progress`. A request for another account's meeting returns `404 meeting_not_found`.
 
 Admin operations APIs use the same current-context dependency plus a backend role check. `GET /api/admin/metrics`, `DELETE /api/admin/meetings/{meetingId}`, account role updates, and account deletion accept only `Admin` and reject `User` with `403 admin_access_required`. Frontend role checks only hide admin portal affordances; backend authorization is authoritative.
 
 `GET /api/admin/accounts` lists local accounts with display name, email, role, creation time, and whether the current admin may change the role. `PATCH /api/admin/accounts/{userId}/role` accepts only `Admin` or `User`, updates `users.role`, records `admin.account.role_update`, and rejects attempts to change the caller's own role with `409 cannot_change_own_role`.
 
-`DELETE /api/admin/accounts/{userId}` deletes another account only. It rejects self-deletion with `409 cannot_delete_own_account`. Before deleting data, it acquires the same Redis processing locks used by workers for every target meeting. If any lock is already held, deletion is blocked with `409 account_meeting_processing_in_progress` so the account cannot be deleted while a worker is mutating its meeting state. When locks are held, it revokes queued Celery processing tasks best-effort by job ID, deletes meetings owned by the target account, removes standalone file-library `meeting_assets` rows and MinIO objects, deletes the user row so sessions and remaining owned rows cascade, invalidates the Redis admin metrics cache, releases the locks, and records `admin.account.delete`.
+`DELETE /api/admin/accounts/{userId}` deletes another account only. It rejects self-deletion with `409 cannot_delete_own_account`. Before deleting data, it acquires the same Redis processing locks used by workers for every target meeting. If any lock is already held, deletion is blocked with `409 account_meeting_processing_in_progress` so the account cannot be deleted while a worker is mutating its meeting state. When locks are held, it requires queued Celery processing tasks to be revoked successfully before deleting meetings owned by the target account. Queue or vector cleanup failures abort the transaction and preserve the account data. It then removes standalone file-library `meeting_assets` rows and MinIO objects, deletes the user row so sessions and remaining owned rows cascade, invalidates the Redis admin metrics cache, releases the locks, and records `admin.account.delete`.
 
-`DELETE /api/admin/meetings/{meetingId}` uses the same production-grade cleanup path for a single meeting: acquire the meeting processing lock, revoke queued processing jobs by ID, delete worker-derived rows and objects, invalidate the admin metrics cache, and release the lock. If processing is actively running and the lock cannot be acquired, it returns `409 meeting_processing_in_progress`.
+`DELETE /api/admin/meetings/{meetingId}` uses the same production-grade cleanup path for a single meeting: acquire the meeting processing lock, require queued processing jobs to be revoked successfully, delete worker-derived rows and objects, invalidate the admin metrics cache, and release the lock. If processing is actively running and the lock cannot be acquired, it returns `409 meeting_processing_in_progress`; if queue cleanup fails, it returns `503 processing_queue_unavailable`.
 
-The current local-dev baseline has no `workspaces`, `workspace_members`, `account_files`, `chat_sessions`, `transcript_segments`, or `meeting_insights` tables. `users.role` is the authoritative role field.
+The current local-dev baseline has no `workspaces`, `workspace_members`, `account_files`, `chat_sessions`, `transcript_segments`, or `meeting_insights` tables. `users.role` is the authoritative role field, and meetings are scoped directly by `meetings.owner_user_id`.
 
 ## Admin Metrics Flow
 
@@ -270,7 +281,7 @@ Events include meeting/session name and IDs, uploaded file metadata, job/chat ID
 
 The LLM analysis start event reports the configured primary model so the log does not look like two models are running at once. The completion event and persisted `source.analysisModel` report the effective model that actually generated the processed JSON. If the primary endpoint fails, a separate `analysis_llm_primary` error event records the primary provider/model and the later analysis completion records the fallback provider/model.
 
-The transcription start event resolves the asset route before logging provider/model context. Text uploads now report `local-text-extraction` with `deterministic-v1`; audio/video uploads report the ASR provider/model and include the voice preprocessing, VAD, and diarization provider details in event metadata. The `LocalTranscriptionProvider` itself remains only a routing boundary named `local-transcription-router` with `routing-v1`, so it is not counted as a separate model.
+The transcription start event reports the voice routing boundary before ASR begins. Audio/video uploads then report the effective ASR provider/model and include the voice preprocessing, VAD, and diarization provider details in event metadata. Meeting asset uploads are intentionally voice-only; text transcript and notes files are rejected by the meeting upload allowlist instead of entering processing.
 
 ## Persistence
 
@@ -291,7 +302,7 @@ Removed tables from the earlier local design:
 
 | Removed Table | Replacement |
 |---|---|
-| `workspaces`, `workspace_members` | `users.role` and direct `meetings.owner_user_id` ownership |
+| `workspaces`, `workspace_members` | `users.role` and direct `meetings.owner_user_id` ownership; retrieval is scoped by `meeting_id` |
 | `account_files` | Standalone file-library rows in `meeting_assets` with `meeting_id = NULL` |
 | `transcript_segments`, `meeting_insights` | Full transcript and structured insights remain inside `meeting_intelligence_results.result_json`; retrieval indexes use `meeting_chunks` |
 | `chat_sessions` | One meeting equals one chat thread; messages are stored directly in `chat_messages.meeting_id` |
@@ -351,7 +362,7 @@ If queue publishing fails after the database commit, the backend marks the meeti
 
 `DELETE /api/admin/meetings/{meetingId}` is implemented in `AdminMeetingService` and requires an `Admin` context.
 
-The use case loads the meeting by ID, collects all related object keys, deletes chat messages, retrieval chunks, processed JSON, meeting asset metadata, and the meeting row, then removes object bytes from MinIO. It also asks the vector provider to delete derived Milvus vectors for the meeting. Vector cleanup errors are recorded as derived-infrastructure failures and do not expose internal details to the client.
+The use case loads the meeting by ID, collects all related object keys, and first requires the vector provider to remove derived Milvus vectors for the meeting. Only after vector cleanup succeeds does it delete chat messages, retrieval chunks, processed JSON, meeting asset metadata, and the meeting row, then remove object bytes from MinIO. A vector cleanup failure returns `503 vector_index_unavailable`, leaves PostgreSQL meeting data intact, and allows a later retry instead of silently creating orphan vectors.
 
 The endpoint is safe to retry: a missing meeting returns a successful `{deleted: true}` response for the requested ID, and object deletion ignores missing-object responses.
 
@@ -365,9 +376,11 @@ meeting-intelligence-result.v1
 
 The persisted JSON contains:
 
-- `meeting`, `source`, `participants`, `transcript`, `summary`, `analysis`, `citations`, and `quality`.
-- Transcript segments inside `transcript.segments`.
-- Structured analysis sections such as topics, decisions, action items, important notes, timeline, risks, blockers, dependencies, open questions, follow-ups, outcomes, requirements, constraints, assumptions, conflicts, metrics, parking lot, entities, glossary, and explicit empty-section reasons.
+- `meeting`, `source`, `transcript`, `evidence`, `speakers`, `participants`, `entities`, `facts`, `events`, `relationships`, `topics`, `summaries`, `actions`, `decisions`, `risks`, `questions`, `quality`, and `extraction`.
+- Transcript segments inside `transcript.segments`; each segment keeps stable IDs, speaker labels, time ranges, text, and confidence.
+- Canonical transcript evidence inside `evidence.citations`, with deterministic quotes copied from transcript segments.
+- Deterministic speaker statistics inside `speakers`, including speaker count, identified participant count, mentioned-only count, segment count, and talk time.
+- Verified knowledge records for precise RAG: participant profiles, atomic facts, event timeline records, entities, relationship edges, actions, decisions, risks, open questions, hierarchical topics, and executive/topic/timeline summaries.
 
 Read endpoints do not call model providers. They load the authorized meeting, read the latest persisted result, and return either the full JSON or a view of relevant sections. Provider prompts and raw provider responses are not exposed.
 
@@ -375,13 +388,12 @@ Current provider behavior is model-backed for the six model points. Test-only fa
 
 | Provider | Current adapter | Purpose |
 |---|---|---|
-| Transcription | `LocalTranscriptionProvider` | Routes text uploads to text extraction and audio assets through voice preprocessing/VAD/ASR/diarization; voice failures raise safe processing errors instead of creating placeholder transcript text |
-| Text extraction | `DocumentTextExtractionProvider` | Reads `.txt`, `.md`, `.vtt`, and `.srt` uploads from MinIO and turns timestamp/speaker lines into transcript segments |
+| Transcription | `LocalTranscriptionProvider` | Routes meeting assets through voice preprocessing/VAD/ASR/diarization; voice failures raise safe processing errors instead of creating placeholder transcript text |
 | Voice preprocessing | `LocalAudioPreprocessor` | Reads the original asset bytes from MinIO, normalizes supported media to a stable per-asset temporary 16 kHz mono WAV with ffmpeg, deletes raw temp input, reuses valid derived WAVs across retries, and records duration, sample rate, channel count, and warnings |
 | VAD | `LocalVADProvider` | Local energy-based speech-region detector over normalized WAV audio, with configurable minimum speech duration, silence merge gap, energy threshold, and speech-region metadata |
 | ASR | `LocalASRProvider` | Runs the repository-owned faster-whisper CPU `int8` runner, parses JSON segments, and maps them into `TranscriptSegment[]` |
 | Diarization | `LocalCommandDiarizationProvider` | Runs the repository-owned WeSpeaker CPU runner and merges speaker assignments into transcript segments |
-| Analysis | `LLMAnalysisProvider` | Calls the configured LLM provider, retries once with a repair prompt if the provider echoes input or omits required intelligence sections, sends transcript evidence to the provider as compact `segmentId|speaker|text` lines to conserve model context, merges generated sections into the canonical result shape, and preserves the full authoritative transcript |
+| Analysis | `LLMAnalysisProvider` | Calls the configured LLM provider, retries once with a repair prompt if the provider echoes input or omits required intelligence sections, sends transcript evidence as compact `segmentId|speaker|startMs|endMs|confidence|text` lines, merges LLM candidate knowledge records into the canonical result shape, preserves deterministic transcript/evidence/speaker/source fields, normalizes citation IDs, quarantines malformed or unknown relationship endpoints with quality warnings, supplies a transcript-grounded fallback when the executive summary is empty, and marks unsupported claims when important records lack citations or deterministic sources |
 | LLM | `OpenAICompatibleLLMProvider`, `CustomJSONEndpointLLMProvider`, `OllamaLLMProvider`, `FallbackLLMProvider` | Selects API/private endpoint/Ollama providers, tries the configured API/endpoint primary before Ollama fallback, forwards optional per-call JSON temperature, and records the effective provider/model that actually generated the result |
 | Text embedding | `OllamaEmbeddingProvider` | Calls local Ollama `/api/embed` with `EMBEDDING_MODEL=nomic-embed-text` and validates the configured vector dimension |
 | Vector index | `MilvusVectorProvider`, `NoopVectorProvider` | Upserts derived chunk vectors to Milvus through REST and falls back to PostgreSQL ranking when vector search is unavailable |
@@ -402,15 +414,15 @@ The production local model paths are implemented as command runners under `backe
 
 The diarization runner handles the WeSpeaker Hugging Face snapshot shape used by `Wespeaker/wespeaker-voxceleb-resnet34-LM`, including the `avg_model` file alias expected by WeSpeaker. It also uses a WAV loader compatibility patch for CPU containers where the installed `torchaudio` backend cannot decode standard WAV files directly.
 
-Local Compose now includes an `ollama` service. Backend and worker call it through `OLLAMA_BASE_URL=http://ollama:11434`. Text transcript uploads can produce transcript segments without ASR. Voice uploads use the default local ASR and diarization command templates in `.env`/`.env.example`, which call the repository-owned model runners above. Phase 5.5 added voice contracts, ffmpeg preprocessing, local energy VAD, local ASR and diarization runners, Ollama text embeddings, and local model rerank. Phase 5.6 added Ollama guardrails around chat input and output. Phase 15 simplified actions to `allowed`/`blocked` and added regex pre-check, few-shot prompt, and post-verdict category validation.
+Local Compose now includes an `ollama` service. Backend and worker call it through `OLLAMA_BASE_URL=http://ollama:11434`. Meeting processing accepts audio/video assets only; text transcript or notes files are rejected by the meeting upload allowlist. Voice uploads use the default local ASR and diarization command templates in `.env`/`.env.example`, which call the repository-owned model runners above. Phase 5.5 added voice contracts, ffmpeg preprocessing, local energy VAD, local ASR and diarization runners, Ollama text embeddings, and local model rerank. Phase 5.6 added Ollama guardrails around chat input and output. Phase 15 simplified actions to `allowed`/`blocked` and added regex pre-check, few-shot prompt, and post-verdict category validation.
 
-After each successful processing run, the worker persists the full JSONB result and then rebuilds `meeting_chunks`. The full transcript and structured insight sections stay inside `meeting_intelligence_results.result_json`; the JSONB result remains the authoritative product artifact.
+After each successful processing run, the worker persists the full JSONB result and then rebuilds `meeting_chunks`. The full transcript, canonical evidence, speaker stats, fact/entity/event graph, actions, decisions, risks, questions, topics, and summaries stay inside `meeting_intelligence_results.result_json`; the JSONB result remains the authoritative product artifact.
 
-Retrieval chunks are built from the full processed JSON instead of only the narrative summary/analysis fields. `RetrievalIndexService` owns indexing orchestration only, while `retrieval_chunk_builder.py` owns pure chunk construction. The builder creates stable chunks for `meeting` metadata, `source` provider/model/voice/guardrail metadata, participant overview and per-participant records, summary sections, every list-shaped `analysis` section, `analysis.emptySections`, transcript coverage, quality overview/warnings, a compact citation map, and transcript fallback segments. Transcript fallback chunks include speaker, time range, confidence, and text together so questions about who spoke or transcript quality do not have to infer from text alone. Low-signal transcript text is skipped for retrieval indexing, but the original transcript remains preserved inside `meeting_intelligence_results.result_json`.
+Retrieval chunks are built from the RAG-first JSON knowledge records. `ProcessingPipelineService` delegates persistence to `PersistenceStage` and chunk/embedding/vector work to `RetrievalIndexStage`; `backend/services/retrieval/index_service.py` owns indexing orchestration, `chunk_builder.py` owns section construction, and `chunk_text.py` owns pure formatting/normalization helpers. `RetrievalSearchService` owns query lifecycle and metadata while `candidate_service.py` owns vector/PostgreSQL candidate resolution, intent pinning, and rerank. Candidate retrieval receives a `RetrievalScoring` policy from the orchestration service, so candidate code does not import private helpers back from the search service. The builder creates stable chunks for `meeting.metadata`, `source.processing`, `speaker.stats`, `fact.participant_count`, `fact.record`, `participant.overview`, `participant.profile`, `entity.profile`, `event.timeline`, `relationship.edge`, `topic.summary`, `summary.executive`, `summary.topic`, `summary.timeline`, `action.item`, `decision.record`, `risk.record`, `question.record`, `quality.*`, `extraction.*`, `evidence.map`, and `transcript.window`. Unified `knowledge.records` use an explicit record-type mapping, including `entity` to `entities`, so entity records are not silently dropped before `entity.profile` chunks are built.
 
-Structured item text is serialized from meaningful metadata fields instead of selecting only the first text-like field. This keeps owners, assignees, roles, statuses, due dates, priorities, categories, confidence, details, citation IDs, and segment references searchable when the LLM returns rich object-shaped items. The indexer still accepts string-shaped LLM sections and maps `citationIds`, `cites`, `sourceSegmentIds`, and `segmentIds` to stored citation metadata when possible.
+Chunk text is contextualized from canonical record fields, including IDs, types, normalized values, owners, statuses, due dates, participant/entity references, confidence, citation IDs, and time ranges. Fact, participant, event, action, decision, risk, and relationship records have higher retrieval priority than broader summaries. Transcript windows are still indexed as fallback evidence, but product truth remains the JSON document and low-signal transcript text can be skipped from retrieval without deleting it from `result_json`.
 
-When `VECTOR_PROVIDER=milvus`, `RetrievalIndexService` also upserts derived vectors to the Milvus REST API after `meeting_chunks` are persisted. The upsert payload includes stable derived references: meeting ID, result ID, chunk ID, JSON pointer, source type, section type, and time range. Milvus failures are recorded in retrieval metadata and do not fail the meeting because Milvus is derived infrastructure.
+When `VECTOR_PROVIDER=milvus`, `RetrievalIndexService` also upserts derived vectors to the Milvus REST API after `meeting_chunks` are persisted. The upsert payload includes stable derived references: meeting ID, result ID, chunk ID, JSON pointer, source type, section type, time range, and an index generation. Search reloads the authoritative PostgreSQL chunk and rejects vector hits whose generation does not match. Milvus failures are recorded in retrieval metadata and schedule bounded vector repair without making the derived index authoritative.
 
 ## Meeting Chat Flow
 
@@ -429,62 +441,66 @@ POST /api/meetings/{meetingId}/chat
 -> reload authoritative meeting_chunks from PostgreSQL
 -> PostgreSQL fallback ranking if Milvus is unavailable or empty
 -> rerank candidates with configured local rerank model command when available
--> guardrail check retrieved context
 -> call LLMProvider with retrieved context
 -> fallback to local retrieval summary if the provider fails
 -> guardrail check assistant answer
--> save assistant chat_message with retrieved chunk IDs and citations
--> return answer, evidence state, and source citations
+-> save assistant chat_message with retrieved chunk IDs and verified citations
+-> return answer, evidence state, and citation-level evidence
 ```
 
-Retrieval search prefers Milvus when available, then reloads the returned `chunk_id` values from PostgreSQL within the authorized meeting. If Milvus is unavailable, empty, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`, combining lexical overlap, model embedding similarity, and structured-section priority. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: participant/count/role questions pin participant chunks; quality/confidence/warning questions pin quality, transcript coverage, and voice metadata; source/model/file questions pin source metadata; meeting-title/duration questions pin meeting metadata; missing-evidence questions pin `analysis.emptySections`; metric/entity/glossary questions pin those analysis sections; overview/key-point questions pin executive summary, detailed summary, key points, and topics; reason/cause questions pin detailed summary, requirements, constraints, blockers, and key points; return/refund/process questions pin detailed summary, requirements, constraints, blockers, follow-ups, and key points; action questions pin action items/follow-ups/decisions; risk questions pin risks/blockers/open questions; decision/outcome questions pin decisions/outcomes; and timeline questions pin timeline/follow-up sections. This prevents broad Vietnamese questions from being answered only from semantically noisy transcript snippets.
+Retrieval search prefers Milvus when available, then reloads returned `chunk_id` values from PostgreSQL within the authorized meeting and validates the vector generation. If Milvus is unavailable, empty, returns stale hits, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`. The fallback combines exact lexical overlap, PostgreSQL trigram similarity, and high-priority structured/metadata candidates before rerank. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: participant/count questions pin `fact.participant_count`, `speaker.stats`, `participant.overview`, and `participant.profile` without requiring an optional role field; commercial price/cost questions route to fact, decision, and summary sections; business/store/entity questions route to entity, fact, summary, and transcript sections; nationality/citizenship questions pin and relevance-sort `fact.record` before broader participant chunks; quality questions pin quality, extraction, transcript coverage, and speaker stats; source/model/file questions pin source metadata; missing-evidence questions pin extraction warnings; metric/entity/glossary questions pin facts and entities; overview/topic questions pin executive, topic, and timeline summaries; reason/cause and process questions pin events, relationships, facts, risks, actions, and topics; action/owner/deadline questions pin actions, relationships, facts, and questions; risk questions pin risks, relationships, questions, and events; decision/outcome questions pin decisions, events, relationships, and facts; and timeline questions pin events, facts, actions, questions, and timeline summaries. Keyword retrieval first attempts a phrase match, then token-level matching so normalized planner queries such as `price OR cost OR dollar` can find English canonical JSON chunks.
 
-If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. Guardrails now use the simplified `allowed`/`blocked` contract only. If input guardrails block the user question, the service stores a safe assistant refusal without calling the agent. Provider errors fail open as `allowed` with `provider_error` metadata. If output guardrails block an answer, the assistant response is replaced with a safe message and citations are removed. The chat flow no longer expects redacted text, warning actions, or a context guardrail stage. Provider prompts and raw provider responses are not saved in chat history.
+Meeting deletion removes the meeting's operational-log events from Redis after the database deletion commits. Log cleanup is best effort because operational logs are diagnostic data, not the source of truth for meeting deletion. Account deletion applies the same cleanup to every meeting removed with the account, preventing deleted or test-only meetings from remaining as cards in the admin log view.
+
+If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. Verified citation IDs from answer synthesis are mapped back to authoritative chunks, deduplicated, and persisted separately from retrieved chunk IDs. Retrieval chunk metadata stores `citationQuotes` and `citationLocations` per citation ID; chat response mapping uses the per-citation segment IDs and timestamps instead of the chunk-level aggregate location. Legacy chunk-level citation JSON is normalized when chat history is read. Guardrails now use the simplified `allowed`/`blocked` contract only. If input guardrails block the user question, the service stores a safe assistant refusal without calling the agent. Provider errors fail open as `allowed` with `provider_error` metadata. If output guardrails block an answer, the assistant response is replaced with a safe message and citations are removed. The chat flow no longer expects redacted text, warning actions, or a context guardrail stage. If query embedding fails, retrieval skips Milvus and uses hybrid lexical/trigram/structured PostgreSQL ranking, recording `postgres-fallback-embedding` in search metadata. If a worker exception escapes normal answer generation, it resets `pending_chat_status`, persists one idempotent safe error response keyed by the user message, and publishes an error event. Provider prompts and raw provider responses are not saved in chat history.
 
 Answer prompts live in the Agentic RAG service rather than `MeetingChatService`. Phase 18 removed the unused linear-RAG helper path from `MeetingChatService`, leaving that service focused on permission checks, user/assistant message persistence, guardrail orchestration, agent delegation, SSE status publishing, and operational logs. Assistant message metadata includes agent iterations, tool calls, thoughts, duration, token usage, and guardrail action/categories/provider/model/confidence/latency/promptVersion/textLength/decisionId metadata so answer generation, retrieval ordering, and guardrail decisions can be observed without storing LLM prompts, rerank prompts, guardrail prompts, or raw provider responses. `GET /api/meetings/{meetingId}/chat` returns the authorized meeting thread and messages, allowing the frontend to recover persisted chat after reloads, route changes, or lost browser state.
 
-For local development after changing chunk formats, run `python -m backend.scripts.rebuild_retrieval_index --clear-chat` inside the backend environment to rebuild all PostgreSQL chunks and Milvus vectors from stored `meeting_intelligence_results` and remove chat history that may cite stale chunk IDs. Use `--meeting-id <id>` to target one meeting. A full disposable reset is still possible with Compose volume deletion, migrations, and reprocessing when old local data is not worth preserving.
+For local development after changing chunk formats, run `python -m backend.scripts.rebuild_retrieval_index --clear-chat` inside the backend environment to rebuild all PostgreSQL chunks and Milvus vectors from stored `meeting_intelligence_results` and remove chat history that may cite stale chunk IDs. Phase 22 intentionally rejects obsolete pre-RAG-first JSON documents during rebuild; old local meetings must be reprocessed or removed. Use `--meeting-id <id>` to target one meeting. A full disposable reset is still possible with Compose volume deletion, migrations, and reprocessing when old local data is not worth preserving.
 
-## Agentic RAG (Phase 16)
+## Agentic RAG (Phase 26)
 
-The chat service uses `backend.services.agent.AgenticRAGService` for all chat requests after input guardrails pass. The agentic code is grouped under `backend/services/agent/`; old module paths such as `backend.services.agentic_rag_service` remain compatibility wrappers. The agentic flow implements a Think → Execute Tools → Observe loop with up to 3 iterations (configurable via `AGENTIC_RAG_MAX_ITERATIONS`) and a total timeout budget (`AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS`).
+The chat service uses `backend.services.agent.AgenticRAGService` for all chat requests after input guardrails pass. Phase 26 uses a bounded hybrid flow: fast path -> schema-shaped query plan -> deterministic/parallel retrieval -> evidence verification -> at most one replan by default -> final synthesis. `query_planner.py` describes intent, sub-queries, sections, and required fields; `evidence_verifier.py` checks section/field/citation coverage; `agent_loop.py` remains the LLM decision and parallel execution boundary; `context_coordinator.py` owns deduplication and token limits; `answer_synthesizer.py` owns final synthesis and retrieval fallback; and `service.py` owns lifecycle, limits, events, and metadata. Runtime defaults are two iterations, one replan, four tool calls per iteration, five chunks per tool, twelve total chunks, 4,000 context tokens, 30 seconds per iteration, and 60 seconds total. `synthesize_answer` is not an LLM tool: final synthesis is a service boundary.
 
 ### Flow
 
 ```
 user question
 -> input guardrail check
--> fast path detection through the LLM boundary
+-> fast path detection
    -> if fast path: return direct response with evidenceState="fast_path"
--> agent loop (max N iterations):
-   -> Think: LLM analyzes question and decides which tools to call
-   -> Execute: run selected tools in parallel (semantic search, keyword search, section search, etc.)
-   -> Observe: evaluate results and decide to continue or synthesize
-   -> if synthesize or last iteration: generate final answer
--> if the agent LLM fails: fall back to the existing retrieval search and local evidence summary
+-> query planner: intent, sub-queries, sections, required fields
+-> parallel retrieval from JSON-derived PostgreSQL chunks
+-> evidence verifier
+   -> sufficient: synthesize
+   -> missing fields and quota available: replan once and retrieve again
+-> AnswerSynthesizer: final answer with verified citations
 -> output guardrail check
--> save answer with agent metadata (iterations, tool calls, thoughts)
+-> save answer with plan, verification, iteration, replan, and tool metadata
 ```
 
 LLM JSON generation remains deterministic by default with `temperature=0` for analysis, planning, synthesis, and guardrail-like structured flows. Fast-path detection is the exception: `FastPathHandler` passes `temperature=0.5` for direct greeting, thanks, guidance, and small-talk answers so repeated non-RAG prompts can be less robotic while the response still follows the `{needsRag, answer}` JSON contract.
 
 ### Tools
 
-The agent can invoke these tools:
+The agent can invoke these retrieval tools:
 - `search_semantic`: vector embedding search via Milvus
-- `search_keyword`: PostgreSQL full-text ILIKE search
-- `search_section`: filter chunks by section type
+- `search_keyword`: PostgreSQL phrase-then-token ILIKE search
+- `search_section`: filter chunks by section type, with token matching for structured query hints
 - `search_speaker`: search by speaker name/role
 - `get_summary`, `get_action_items`, `get_decisions`, `get_risks`, `get_timeline`, `get_participants`: structured data retrieval
-- `synthesize_answer`: trigger final answer generation. Phase 18 restored this tool in the registry dispatch table so the declared tool list, `_VALID_TOOLS`, and execution behavior match.
+- Final synthesis is owned by `AnswerSynthesizer`, outside the tool catalog.
 
 ### SSE Events
 
 The agentic flow emits additional SSE events:
 - `connected`: initial stream handshake with `{"type":"connected","status":"connected"}`
 - `agent_think`: iteration number and message
+- `agent_plan`: intent, planned sections, and sub-query count
 - `agent_search`: iteration, tool names, and message
 - `observation`: iteration, new chunks found, success/failure counts
+- `agent_verify`: evidence sufficiency, missing fields, and evidence count
+- `agent_replan`: bounded replan number, reason, and missing fields
 - `agent_synthesize`: iteration and whether forced
 - `fast_path`: for immediate responses
 
@@ -492,8 +508,10 @@ The agentic flow emits additional SSE events:
 
 Assistant chat messages include additional metadata when using agentic RAG:
 - `agentIterations`: number of agent loop iterations used
+- `agentReplans`: number of replans used
 - `agentToolCalls`: list of tools called with arguments and result counts
 - `agentThoughts`: agent reasoning for each iteration (optional)
+- `agentQueryPlan`: sanitized intent, sections, and required fields
 - `agent.durationMs`, `agent.tokenUsage`, and optional `agent.error` diagnostics
 
 ### Feature Flag and Rollback
@@ -530,8 +548,8 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `OPERATIONAL_LOG_TTL_SECONDS` | `86400` | Sliding stream TTL refreshed when events are appended |
 | `OPERATIONAL_LOG_DEFAULT_TAIL` | `100` | Default number of recent events returned to the Admin UI |
 | `UPLOAD_MAX_BYTES` | `524288000` | Backend upload size limit |
-| `UPLOAD_ALLOWED_EXTENSIONS` | audio/video/text transcript extensions | Upload extension allowlist |
-| `UPLOAD_ALLOWED_CONTENT_TYPES` | audio/video/text transcript MIME types | Upload content-type allowlist |
+| `UPLOAD_ALLOWED_EXTENSIONS` | audio/video extensions | Upload extension allowlist |
+| `UPLOAD_ALLOWED_CONTENT_TYPES` | audio/video MIME types | Upload content-type allowlist |
 | `VAD_MIN_SPEECH_MS` | `300` | Minimum speech-region duration retained by local VAD |
 | `VAD_SILENCE_GAP_MS` | `500` | Maximum silence gap merged into one speech region |
 | `VAD_ENERGY_THRESHOLD` | `0.012` | RMS energy threshold used by local VAD |
@@ -540,6 +558,10 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama text embedding model |
 | `EMBEDDING_DIMENSIONS` | `768` | Expected local text embedding vector size |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30` | Ollama embedding request timeout |
+| `EMBEDDING_BATCH_SIZE` | `16` | Maximum chunk texts sent in one Ollama embedding request |
+| `EMBEDDING_MAX_RETRIES` | `2` | Bounded retry count for transient embedding failures |
+| `EMBEDDING_RETRY_BACKOFF_SECONDS` | `0.2` | Exponential retry backoff base for embedding requests |
+| `EMBEDDING_CONTRACT_VERSION` | `v1` | Embedding contract identity stored with indexed chunks |
 | `RERANK_TOP_K` | `12` | Number of retrieval candidates collected before rerank |
 | `RERANK_OUTPUT_K` | `6` | Number of reranked chunks returned to chat |
 | `RERANK_TIMEOUT_SECONDS` | `30` | Local rerank command timeout |
@@ -574,8 +596,24 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | Small local fallback model |
 | `OLLAMA_LLM_TIMEOUT_SECONDS` | `600` | Local fallback generation timeout, separate from the primary endpoint timeout |
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Context window used for local fallback meeting analysis |
+| `AGENTIC_RAG_MAX_ITERATIONS` | `2` | Maximum planner/retrieval/verification iterations |
+| `AGENTIC_RAG_MAX_REPLANS` | `1` | Maximum bounded replans after missing evidence |
+| `AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION` | `4` | Maximum retrieval tool calls in one iteration |
+| `AGENTIC_RAG_MAX_CHUNKS_PER_TOOL` / `AGENTIC_RAG_MAX_TOTAL_CHUNKS` | `5` / `12` | Per-tool and total accumulated chunk limits |
+| `AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS` | `30` | Per-iteration agent timeout |
+| `AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS` | `60` | Total agent request timeout |
+| `AGENTIC_RAG_MAX_CONTEXT_TOKENS` | `4000` | Maximum retrieved context tokens supplied to the agent |
+| `RETRIEVAL_FALLBACK_CANDIDATE_LIMIT` | `48` | Maximum degraded PostgreSQL fallback candidate pool |
+| `RETRIEVAL_TRIGRAM_THRESHOLD` | `0.12` | Minimum PostgreSQL trigram similarity for degraded retrieval candidates |
+| `RATE_LIMIT_ENABLED` | `true` | Enable request rate limiting |
+| `RATE_LIMIT_*_PER_MINUTE` | route-specific quotas | Rate-limit quotas for public, auth, meeting, and admin routes |
+| `CONCURRENCY_LIMIT_*` | route-specific limits | Maximum concurrent requests by route group |
+| `TASK_LIMIT_PER_MEETING` / `TASK_LIMIT_PER_USER` | `2` / `5` | Active meeting-processing task guards |
+| `CIRCUIT_BREAKER_ENABLED` | `true` | Enable PostgreSQL, Milvus, and MinIO circuit breakers |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures required to open a breaker |
+| `CIRCUIT_BREAKER_RECOVERY_SECONDS` | `30` | Recovery window before a half-open probe |
 
-The settings loader reads a root `.env` file when present. The environment exposes deployment addresses, credentials, feature toggles, timeouts, VAD thresholds, retrieval limits, and Ollama model selection. `ollama-init` pulls the configured `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL` directly, so no duplicate bootstrap-list variable is needed. Repository-owned local runner details live in `backend/configs/model_runtime.py`: ASR/diarization/rerank model names and commands, CPU/`int8` runtime choices, `/models`, ffmpeg, and the temporary voice directory. Specialized Hugging Face repositories and revisions live in `infras/model-init/model_init.py`.
+The settings loader reads a root `.env` file when present. Compose passes application settings to both backend and worker containers, including rate/concurrency/task guards, circuit-breaker thresholds, and Agentic RAG budgets. PostgreSQL, Milvus, and MinIO breakers now read those settings instead of using provider-local constants. The environment exposes deployment addresses, credentials, feature toggles, timeouts, VAD thresholds, retrieval limits, and Ollama model selection. `ollama-init` pulls the configured `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL` directly, so no duplicate bootstrap-list variable is needed. Repository-owned local runner details live in `backend/configs/model_runtime.py`: ASR/diarization/rerank model names and commands, CPU/`int8` runtime choices, `/models`, ffmpeg, and the temporary voice directory. Specialized Hugging Face repositories and revisions live in `infras/model-init/model_init.py`.
 
 ## Dependencies
 
@@ -629,6 +667,8 @@ Run backend tests in the backend container:
 ```bash
 docker compose exec -T backend python -m unittest discover -s backend/tests -v
 ```
+
+Backend tests are grouped by responsibility under `backend/tests/agent`, `api`, `processing`, `providers`, `retrieval`, and `integration`. Shared test doubles remain in `backend/tests/fakes.py`; the test root contains no flat `test_*.py` modules. The discovery command above intentionally starts at `backend/tests` so all groups continue to run together.
 
 Register and call authenticated APIs through the gateway:
 
@@ -695,9 +735,15 @@ Phase 8 operational-log verification on 2026-06-19 confirmed:
 | Admin account deletion and cleanup tests | Passed |
 | Account deletion processing-lock, queued-job revoke, and metrics-cache invalidation tests | Passed |
 
-*Document reflects project state after **Phase 21 Fast Path Temperature Tuning**. Agentic RAG code is grouped under `backend/services/agent/` with compatibility wrappers, retrieval chunk construction is split from indexing orchestration, the initial chat SSE handshake includes a typed JSON payload, LLM JSON generation defaults to deterministic temperature `0`, and fast-path direct responses use a dedicated temperature of `0.5`.*
+### Phase 25 Hierarchical Intelligence Model
 
-## Agentic RAG (Phase 16)
+Meeting processing keeps the complete transcript as the authoritative evidence document, then creates deterministic token-bounded transcript windows. Each window is persisted in `meeting_transcript_windows` with ordered segment references, status, retry metadata, and local extraction JSON. The worker fans out bounded LLM extraction across windows and reduces the results into the same `meeting-intelligence-result.v1` identifier with a redesigned internal shape: `transcript.windows`, `knowledge.records`, and `knowledge.relationships` replace the previous flat intelligence arrays as the canonical knowledge model. Every global record carries `citationIds` and `sourceWindowIds`.
+
+PostgreSQL remains authoritative for transcript windows, the result JSON, and retrieval chunks. Milvus receives only derived embeddings. Retrieval exposes a compatibility view of unified records to the existing chunk builders, so global records, summaries, relationships, and transcript windows remain searchable without sending the complete transcript to any one LLM request. Failed windows can be retried independently through `omnicall.processing.extract_transcript_window`.
+
+*Document reflects project state during **Phase 27 Citation Playback Links**. Backend owns planning, retrieval orchestration, evidence verification, bounded replanning, synthesis, and verified citation mapping; canonical JSON-derived chunks remain the evidence boundary.*
+
+## Agentic RAG Runtime Details (Phase 26)
 
 The Agentic RAG system replaces the linear RAG pipeline with an agent-driven approach that can dynamically select tools and perform multi-hop reasoning.
 
@@ -716,15 +762,9 @@ User Question
 │           │ meeting question                                 │
 │           ▼                                                  │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │              Agent Loop (max 3 iterations)              ││
+│  │ Query Plan → Retrieve → Verify (max 2 iterations)       ││
 │  │                                                         ││
-│  │  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  ││
-│  │  │  Think   │───▶│ Execute Tools│───▶│   Observe    │  ││
-│  │  │  (LLM)   │    │  (Parallel)  │    │  (Evaluate)  │  ││
-│  │  └──────────┘    └──────────────┘    └──────────────┘  ││
-│  │       │                                      │          ││
-│  │       └──────────────────────────────────────┘          ││
-│  │                      loop until done                    ││
+│  │  Missing fields → one bounded replan                    ││
 │  └─────────────────────────────────────────────────────────┘│
 │           │                                                  │
 │           ▼                                                  │
@@ -738,12 +778,12 @@ User Question
 
 | Service | File | Purpose |
 |---------|------|---------|
-| `AgenticRAGService` | `services/agentic_rag_service.py` | Main agent loop: Think → Execute → Observe → Synthesize |
-| `AgentToolRegistry` | `services/agent_tool_registry.py` | 11 tool definitions and execution |
-| `FastPathHandler` | `services/fast_path_handler.py` | Compatibility wrapper for `services/agent/fast_path.py`; handles fast path categories such as greeting, chitchat, guidance, and thanks through the LLM boundary with dedicated response temperature |
-| `AgentContextManager` | `services/agent_context_manager.py` | Context accumulation, deduplication, chunk limits |
-| `TokenManagement` | `services/token_management.py` | Token counting, truncation, budget management |
-| `ParallelToolExecutor` | `services/parallel_tool_executor.py` | Parallel tool execution with async |
+| `AgenticRAGService` | `services/agent/service.py` | Main agent loop: Think → Execute → Observe → Synthesize |
+| `AgentToolRegistry` | `services/agent/tool_registry.py` | Tool lookup, schema formatting, and dispatch |
+| `FastPathHandler` | `services/agent/fast_path.py` | Fast path categories such as greeting, chitchat, guidance, and thanks |
+| `AgentContextManager` | `services/agent/context_manager.py` | Context accumulation, deduplication, chunk limits |
+| `TokenManager` | `services/agent/token_management.py` | Token counting, truncation, budget management |
+| `ParallelToolExecutor` | `services/agent/parallel_executor.py` | Parallel tool execution with async |
 
 ### Tools Available
 
@@ -759,7 +799,6 @@ User Question
 | `get_risks` | Retrieval | Risks, blockers, open questions |
 | `get_timeline` | Retrieval | Timeline and deadlines |
 | `get_participants` | Retrieval | Participant information |
-| `synthesize_answer` | Synthesis | Trigger final answer generation |
 
 ### Evidence States
 
@@ -768,14 +807,18 @@ User Question
 | `fast_path` | Immediate response without search (greeting, chitchat, guidance) |
 | `grounded` | Answer based on sufficient context with citations |
 | `partial` | Answer based on partial context |
-| `not_enough_evidence` | No relevant context found after N iterations |
+| `not_enough_evidence` | No relevant context or required fields found after the bounded retrieval flow |
 | `blocked` | Blocked by input/output guardrail |
 | `error` | System error |
 
 ### Configuration
 
 ```env
-AGENTIC_RAG_MAX_ITERATIONS=3
+AGENTIC_RAG_MAX_ITERATIONS=2
+AGENTIC_RAG_MAX_REPLANS=1
+AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION=4
+AGENTIC_RAG_MAX_CHUNKS_PER_TOOL=5
+AGENTIC_RAG_MAX_TOTAL_CHUNKS=12
 AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS=30.0
 AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS=60.0
 ```
@@ -785,7 +828,10 @@ AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS=60.0
 | Event | Description |
 |-------|-------------|
 | `agent_think` | Agent thinking with iteration number |
+| `agent_plan` | Sanitized intent, sections, and sub-query count |
 | `agent_search` | Tools being called |
 | `observation` | Tool results (chunks found) |
+| `agent_verify` | Evidence sufficiency and missing fields |
+| `agent_replan` | Bounded replan status and missing fields |
 | `agent_synthesize` | Final answer generation |
 | `fast_path` | Immediate response without search |

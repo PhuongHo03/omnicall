@@ -31,6 +31,24 @@ CHAT_MESSAGES_TOTAL = Gauge(
     "Chat messages grouped by role.",
     ["role"],
 )
+AGENT_ITERATIONS = Histogram(
+    "omnicall_agent_iterations",
+    "Agentic RAG iterations used per answer.",
+    buckets=(0, 1, 2, 3, 5, 10),
+)
+AGENT_REPLANS = Counter(
+    "omnicall_agent_replans_total",
+    "Bounded Agentic RAG replans.",
+)
+AGENT_TOOL_CALLS_TOTAL = Counter(
+    "omnicall_agent_tool_calls_total",
+    "Agentic RAG retrieval tool calls.",
+    ["tool"],
+)
+AGENT_FAST_PATH_TOTAL = Counter(
+    "omnicall_agent_fast_path_total",
+    "Fast-path answers that bypass retrieval.",
+)
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):

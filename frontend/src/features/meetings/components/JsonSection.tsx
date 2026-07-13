@@ -8,6 +8,8 @@ import {
   MessageSquareQuote,
   ShieldQuestion,
   Users,
+  Network,
+  Sparkles,
 } from "lucide-react";
 
 import { getArrayOrObjectCount, labelize } from "../utils/jsonDisplay";
@@ -21,12 +23,22 @@ type SectionMeta = {
 const SECTION_META: Record<string, SectionMeta> = {
   meeting: { icon: Calendar, label: "Meeting" },
   source: { icon: FileText, label: "Source" },
+  evidence: { icon: ShieldQuestion, label: "Evidence" },
+  speakers: { icon: MessageSquareQuote, label: "Speakers" },
   participants: { icon: Users, label: "Participants" },
-  summary: { icon: BookOpen, label: "Summary" },
-  analysis: { icon: Brain, label: "Analysis" },
+  entities: { icon: Brain, label: "Entities" },
+  facts: { icon: CheckCircle2, label: "Facts" },
+  events: { icon: Calendar, label: "Events" },
+  relationships: { icon: Network, label: "Relationships" },
+  topics: { icon: BookOpen, label: "Topics" },
+  summaries: { icon: BookOpen, label: "Summaries" },
+  actions: { icon: CheckCircle2, label: "Actions" },
+  decisions: { icon: CheckCircle2, label: "Decisions" },
+  risks: { icon: ShieldQuestion, label: "Risks" },
+  questions: { icon: MessageSquareQuote, label: "Questions" },
   transcript: { icon: MessageSquareQuote, label: "Transcript" },
-  citations: { icon: ShieldQuestion, label: "Citations" },
   quality: { icon: CheckCircle2, label: "Quality" },
+  extraction: { icon: Sparkles, label: "Extraction" },
 };
 
 export function JsonSection({

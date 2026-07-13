@@ -110,7 +110,7 @@ export function MeetingActionPanel({
           {isDraft ? (
             <>
               <IconButton icon={<Upload size={16} />} label="Upload" disabled={!canUpload} variant="primary" onClick={() => fileInputRef.current?.click()} />
-              <input ref={fileInputRef} type="file" hidden accept="audio/*,video/mp4,video/webm,.txt,.md,.vtt,.srt,text/plain,text/markdown,text/vtt,application/x-subrip" onChange={(event) => { const file = event.target.files?.[0]; if (file) { onFileUpload(file); event.target.value = ""; } }} />
+              <input ref={fileInputRef} type="file" hidden accept="audio/*,video/mp4,video/webm" onChange={(event) => { const file = event.target.files?.[0]; if (file) { onFileUpload(file); event.target.value = ""; } }} />
               <IconButton icon={isRecording ? <Pause size={16} /> : <Mic size={16} />} label={isRecording ? "Stop" : "Record"} disabled={!canUpload && !isRecording} onClick={isRecording ? onStopRecording : onStartRecording} variant={isRecording ? "danger" : "primary"} />
             </>
           ) : canViewResult ? (

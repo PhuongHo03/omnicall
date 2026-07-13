@@ -1,6 +1,6 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import type { MeetingAsset } from "../types/meetingTypes";
+import type { MeetingAsset, PlaybackSeekRequest } from "../types/meetingTypes";
 import { AssetMetadataBar } from "./AssetMetadataBar";
 import { PlayerControls } from "./PlayerControls";
 import { TranscriptTrack } from "./TranscriptTrack";
@@ -15,6 +15,7 @@ type AssetPlaybackPanelProps = {
   playbackUrl: string | null;
   transcriptEntries: TranscriptEntry[];
   onDownload: () => void;
+  seekRequest: PlaybackSeekRequest | null;
 };
 
 export function AssetPlaybackPanel({
@@ -22,9 +23,11 @@ export function AssetPlaybackPanel({
   playbackUrl,
   transcriptEntries,
   onDownload,
+  seekRequest,
 }: AssetPlaybackPanelProps) {
   const engine = useAudioEngine(playbackUrl);
   const transcript = useTranscriptSync(transcriptEntries, engine.currentTime);
+  const [focusedSegmentId, setFocusedSegmentId] = useState<string | null>(null);
   const mediaKind = resolveMediaKind(asset);
   const isVideo = mediaKind === "video";
   const progress = engine.duration > 0 ? engine.currentTime / engine.duration : 0;
@@ -43,6 +46,16 @@ export function AssetPlaybackPanel({
     [engine]
   );
 
+  useEffect(() => {
+    if (!seekRequest) {
+      return;
+    }
+    if (seekRequest.startMs !== null) {
+      engine.seek(seekRequest.startMs / 1000);
+    }
+    setFocusedSegmentId(seekRequest.segmentIds[0] ?? null);
+  }, [engine.seek, playbackUrl, seekRequest]);
+
   const isEmpty = transcriptEntries.length === 0 && !playbackUrl;
 
   if (isEmpty) {
@@ -53,6 +66,7 @@ export function AssetPlaybackPanel({
           activeIndex={transcript.activeIndex}
           progressWithinEntry={transcript.progressWithinEntry}
           onSeekToEntry={handleTranscriptSeek}
+          focusedSegmentId={focusedSegmentId}
         />
       </section>
     );
@@ -123,6 +137,7 @@ export function AssetPlaybackPanel({
         activeIndex={transcript.activeIndex}
         progressWithinEntry={transcript.progressWithinEntry}
         onSeekToEntry={handleTranscriptSeek}
+        focusedSegmentId={focusedSegmentId}
       />
     </section>
   );

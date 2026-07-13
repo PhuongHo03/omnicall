@@ -7,7 +7,13 @@ from backend.configs.settings import Settings, get_settings
 from backend.providers.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from backend.utils.exceptions import ApplicationError
 
-_storage_breaker = CircuitBreaker("minio", failure_threshold=5, recovery_seconds=30)
+_storage_settings = get_settings()
+_storage_breaker = CircuitBreaker(
+    "minio",
+    failure_threshold=_storage_settings.circuit_breaker_failure_threshold,
+    recovery_seconds=_storage_settings.circuit_breaker_recovery_seconds,
+    enabled=_storage_settings.circuit_breaker_enabled,
+)
 
 
 class ObjectStorageProvider:

@@ -40,8 +40,8 @@
 - [x] Remove `_append_guardrail_metadata(result_json, "transcript", transcript_guardrail)`.
 - [x] Remove the `_check_transcript_guardrail(...)` helper method.
 - [x] Remove the transcript guardrail provider/model resolver branch from the internal stage resolver, if it becomes dead code.
-- [x] Keep the existing `source.guardrails` indexing logic in `backend/services/retrieval_index_service.py` so previously saved metadata remains searchable.
-- [x] Keep existing `source.guardrails` section routing in `backend/services/retrieval_search_service.py` so older meetings remain queryable.
+- [x] Keep the existing `source.guardrails` indexing logic in `backend/services/retrieval/index_service.py` so previously saved metadata remains searchable.
+- [x] Keep existing `source.guardrails` section routing in `backend/services/retrieval/search_service.py` so older meetings remain queryable.
 
 ### Chat pipeline
 

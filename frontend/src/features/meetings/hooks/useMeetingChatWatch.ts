@@ -2,7 +2,7 @@ import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction
 
 import { getMeetingChatHistory } from "../api/meetingApi";
 import { streamChatEvents, type ChatStreamEvent } from "../api/chatStreamApi";
-import { completedAssistantMessageIds, formatAgentSearchMessage } from "../states/chatState";
+import { completedAssistantMessageIds, formatAgentObservationMessage, formatAgentSearchMessage } from "../states/chatState";
 import type { MeetingChatMessage } from "../types/meetingTypes";
 
 type UseMeetingChatWatchArgs = {
@@ -111,12 +111,57 @@ export function useMeetingChatWatch({
                   : item
               )
             );
+          } else if (event.type === "agent_plan" && statusMessageId) {
+            setChatMessages((current) =>
+              current.map((item) => item.id === statusMessageId ? {
+                ...item,
+                content: "Đang lập kế hoạch tìm dữ liệu liên quan...",
+                agentMetadata: {
+                  ...item.agentMetadata,
+                  iterations: event.iteration,
+                  intent: event.intent,
+                  sections: event.sections,
+                },
+              } : item)
+            );
+          } else if (event.type === "agent_verify" && statusMessageId) {
+            const missing = event.missingFields ?? [];
+            setChatMessages((current) =>
+              current.map((item) => item.id === statusMessageId ? {
+                ...item,
+                content: event.sufficient
+                  ? "Đã kiểm tra, bằng chứng đã đủ để trả lời."
+                  : missing.length > 0
+                    ? `Đang kiểm tra và bổ sung: ${missing.join(", ")}`
+                    : "Đang kiểm tra kết quả tìm kiếm...",
+                agentMetadata: {
+                  ...item.agentMetadata,
+                  iterations: event.iteration,
+                  missingFields: missing,
+                  evidenceCount: event.evidenceCount,
+                },
+              } : item)
+            );
+          } else if (event.type === "agent_replan" && statusMessageId) {
+            setChatMessages((current) =>
+              current.map((item) => item.id === statusMessageId ? {
+                ...item,
+                content: "Chưa đủ bằng chứng, đang tìm bổ sung...",
+                agentMetadata: {
+                  ...item.agentMetadata,
+                  iterations: event.iteration,
+                  replans: event.replanCount,
+                  missingFields: event.missingFields,
+                },
+              } : item)
+            );
           } else if (event.type === "observation" && statusMessageId) {
             const resultCount = event.total_chunks ?? event.resultCount ?? 0;
+            const message = formatAgentObservationMessage(resultCount);
             setChatMessages((current) =>
               current.map((item) =>
                 item.id === statusMessageId
-                  ? { ...item, content: `Đã tìm thấy ${resultCount} đoạn liên quan` }
+                  ? { ...item, content: message }
                   : item
               )
             );

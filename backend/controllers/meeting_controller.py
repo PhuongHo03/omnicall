@@ -73,6 +73,7 @@ def get_meeting_deletion_service(
     lock_provider: RedisLockProvider = Depends(get_redis_lock_provider),
     queue_provider: ProcessingQueueProvider = Depends(get_processing_queue_provider),
     cache_provider: JsonCacheProvider = Depends(get_json_cache_provider),
+    operational_logs: OperationalLogService = Depends(get_operational_log_service),
 ) -> AdminMeetingService:
     return AdminMeetingService(
         session,
@@ -81,6 +82,7 @@ def get_meeting_deletion_service(
         lock_provider=lock_provider,
         queue_provider=queue_provider,
         cache_provider=cache_provider,
+        operational_logs=operational_logs,
     )
 
 

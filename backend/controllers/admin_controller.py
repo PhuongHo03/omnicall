@@ -26,8 +26,9 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def get_admin_account_service(
     session: Session = Depends(get_db_session),
     storage_provider: ObjectStorageProvider = Depends(get_object_storage_provider),
+    operational_logs: OperationalLogService = Depends(get_operational_log_service),
 ) -> AdminAccountService:
-    return AdminAccountService(session, storage_provider)
+    return AdminAccountService(session, storage_provider, operational_logs=operational_logs)
 
 
 @router.get("/metrics", response_model=AdminMetricsResponse)

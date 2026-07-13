@@ -1,6 +1,6 @@
 import { Drawer } from "../../../shared/components/Drawer";
 import { AssetPlaybackPanel } from "./AssetPlaybackPanel";
-import type { MeetingAsset, TranscriptEntry } from "../types/meetingTypes";
+import type { MeetingAsset, PlaybackSeekRequest, TranscriptEntry } from "../types/meetingTypes";
 
 type PlaybackDrawerProps = {
   isOpen: boolean;
@@ -9,9 +9,10 @@ type PlaybackDrawerProps = {
   transcriptEntries: TranscriptEntry[];
   onDownload: () => void;
   onClose: () => void;
+  seekRequest: PlaybackSeekRequest | null;
 };
 
-export function PlaybackDrawer({ isOpen, asset, playbackUrl, transcriptEntries, onDownload, onClose }: PlaybackDrawerProps) {
+export function PlaybackDrawer({ isOpen, asset, playbackUrl, transcriptEntries, onDownload, onClose, seekRequest }: PlaybackDrawerProps) {
   return (
     <Drawer isOpen={isOpen} title="Playback" ariaLabel="Playback panel" onClose={onClose}>
       <AssetPlaybackPanel
@@ -19,6 +20,7 @@ export function PlaybackDrawer({ isOpen, asset, playbackUrl, transcriptEntries, 
         playbackUrl={playbackUrl}
         transcriptEntries={transcriptEntries}
         onDownload={onDownload}
+        seekRequest={seekRequest}
       />
     </Drawer>
   );

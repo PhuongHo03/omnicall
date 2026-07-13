@@ -8,6 +8,7 @@ import { MeetingActionPanel } from "../components/MeetingActionPanel";
 import { MeetingChatPanel } from "../components/MeetingChatPanel";
 import { MeetingList } from "../components/MeetingList";
 import { useMeetingWorkspace } from "../hooks/useMeetingWorkspace";
+import type { MeetingChatCitation, PlaybackSeekRequest } from "../types/meetingTypes";
 
 type MeetingsScreenProps = {
   requestedMeetingId: string | null;
@@ -31,8 +32,17 @@ export function MeetingsScreen({
   const closeResultDrawer = useCallback(() => setIsResultDrawerOpen(false), []);
 
   const [isPlaybackDrawerOpen, setIsPlaybackDrawerOpen] = useState(false);
+  const [seekRequest, setSeekRequest] = useState<PlaybackSeekRequest | null>(null);
   const openPlaybackDrawer = useCallback(() => setIsPlaybackDrawerOpen(true), []);
   const closePlaybackDrawer = useCallback(() => setIsPlaybackDrawerOpen(false), []);
+  const openCitationPlayback = useCallback((citation: MeetingChatCitation) => {
+    setSeekRequest({
+      startMs: citation.startMs,
+      endMs: citation.endMs,
+      segmentIds: citation.segmentIds,
+    });
+    setIsPlaybackDrawerOpen(true);
+  }, []);
 
   const { setExtraContent, setOnCreateMeeting } = useSidebarSlot();
 
@@ -96,6 +106,7 @@ export function MeetingsScreen({
           typewriterMessageIds={workspace.typewriterMessageIds}
           onTypewriterComplete={workspace.clearTypewriterId}
           onSubmitQuestion={workspace.submitChatQuestion}
+          onCitationClick={openCitationPlayback}
           />
         ) : (
           <EmptyState message="Upload and process a meeting to start chatting." />
@@ -113,6 +124,7 @@ export function MeetingsScreen({
           transcriptEntries={workspace.transcriptEntries}
           onDownload={workspace.downloadAsset}
           onClose={closePlaybackDrawer}
+          seekRequest={seekRequest}
         />
       </div>
     </div>

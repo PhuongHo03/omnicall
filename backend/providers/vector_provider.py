@@ -18,6 +18,7 @@ class VectorProviderError(RuntimeError):
 class VectorSearchHit:
     chunk_id: str
     score: float
+    generation: str | None = None
 
 
 class VectorProvider(Protocol):
@@ -30,14 +31,13 @@ class VectorProvider(Protocol):
     def search_chunk_ids(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         query_vector: list[float],
         limit: int,
     ) -> list[VectorSearchHit]:
         ...
 
-    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
+    def delete_meeting(self, *, meeting_id: str) -> dict:
         ...
 
 
@@ -51,18 +51,23 @@ class NoopVectorProvider:
     def search_chunk_ids(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         query_vector: list[float],
         limit: int,
     ) -> list[VectorSearchHit]:
         return []
 
-    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
+    def delete_meeting(self, *, meeting_id: str) -> dict:
         return {"provider": self.provider_name, "status": "skipped"}
 
 
-_milvus_breaker = CircuitBreaker("milvus", failure_threshold=5, recovery_seconds=30)
+_milvus_settings = get_settings()
+_milvus_breaker = CircuitBreaker(
+    "milvus",
+    failure_threshold=_milvus_settings.circuit_breaker_failure_threshold,
+    recovery_seconds=_milvus_settings.circuit_breaker_recovery_seconds,
+    enabled=_milvus_settings.circuit_breaker_enabled,
+)
 
 
 class MilvusVectorProvider:
@@ -103,7 +108,6 @@ class MilvusVectorProvider:
     def search_chunk_ids(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         query_vector: list[float],
         limit: int,
@@ -119,7 +123,7 @@ class MilvusVectorProvider:
                 "annsField": "embedding",
                 "filter": self._meeting_filter(meeting_id),
                 "limit": limit,
-                "outputFields": ["chunk_id"],
+                "outputFields": ["chunk_id", "vector_generation"],
                 "searchParams": {"metricType": "COSINE", "params": {}},
             },
         )
@@ -127,10 +131,16 @@ class MilvusVectorProvider:
         for item in response.get("data", []):
             chunk_id = item.get("chunk_id")
             if isinstance(chunk_id, str):
-                hits.append(VectorSearchHit(chunk_id=chunk_id, score=float(item.get("distance", 0.0))))
+                hits.append(
+                    VectorSearchHit(
+                        chunk_id=chunk_id,
+                        score=float(item.get("distance", 0.0)),
+                        generation=item.get("vector_generation"),
+                    )
+                )
         return hits
 
-    def delete_meeting(self, *, workspace_id: str, meeting_id: str) -> dict:
+    def delete_meeting(self, *, meeting_id: str) -> dict:
         self._ensure_collection()
         self._post(
             "v2/vectordb/entities/delete",
@@ -166,6 +176,7 @@ class MilvusVectorProvider:
                             _varchar_field("meeting_id", max_length=80),
                             _varchar_field("result_id", max_length=80),
                             _varchar_field("chunk_id", max_length=180),
+                            _varchar_field("vector_generation", max_length=180),
                             _varchar_field("json_pointer", max_length=600),
                             _varchar_field("source_type", max_length=80),
                             _varchar_field("section_type", max_length=180),
@@ -193,7 +204,7 @@ class MilvusVectorProvider:
         )
         fields = response.get("data", {}).get("fields", [])
         names = {field.get("name") for field in fields}
-        if "workspace_id" in names or "meeting_id" not in names:
+        if "meeting_id" not in names or "vector_generation" not in names:
             return False
         for field in fields:
             if field.get("name") != "embedding":
@@ -213,6 +224,7 @@ class MilvusVectorProvider:
             "meeting_id": chunk.meeting_id,
             "result_id": chunk.intelligence_result_id,
             "chunk_id": chunk.chunk_id,
+            "vector_generation": (chunk.metadata_json or {}).get("indexGeneration", "legacy"),
             "json_pointer": chunk.json_pointer,
             "source_type": chunk.source_type,
             "section_type": chunk.section_type,

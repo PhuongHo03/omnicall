@@ -82,8 +82,10 @@ class ParallelToolExecutor:
         self,
         *,
         tool_timeout_seconds: float = _DEFAULT_TOOL_TIMEOUT_SECONDS,
+        max_concurrency: int = 4,
     ) -> None:
         self.tool_timeout_seconds = tool_timeout_seconds
+        self.max_concurrency = max(1, int(max_concurrency))
 
     async def execute_parallel(
         self,
@@ -115,10 +117,13 @@ class ParallelToolExecutor:
         )
 
         try:
-            tasks = [
-                self._run_single_tool(call, tool_map)
-                for call in tool_calls
-            ]
+            semaphore = asyncio.Semaphore(self.max_concurrency)
+
+            async def run_limited(call: dict[str, Any]) -> ToolResult:
+                async with semaphore:
+                    return await self._run_single_tool(call, tool_map)
+
+            tasks = [run_limited(call) for call in tool_calls]
             results = await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as exc:
             logger.warning(

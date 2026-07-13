@@ -9,6 +9,7 @@ type TranscriptTrackProps = {
   activeIndex: number;
   progressWithinEntry: number;
   onSeekToEntry: (entry: TranscriptEntry) => void;
+  focusedSegmentId?: string | null;
 };
 
 export function TranscriptTrack({
@@ -16,6 +17,7 @@ export function TranscriptTrack({
   activeIndex,
   progressWithinEntry,
   onSeekToEntry,
+  focusedSegmentId = null,
 }: TranscriptTrackProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<HTMLDivElement>(null);
@@ -33,6 +35,14 @@ export function TranscriptTrack({
       }
     }
   }, [activeIndex]);
+
+  useEffect(() => {
+    if (!focusedSegmentId || !listRef.current) {
+      return;
+    }
+    const element = listRef.current.querySelector<HTMLElement>(`[data-segment-id="${CSS.escape(focusedSegmentId)}"]`);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusedSegmentId]);
 
   return (
     <div className="apb-transcript">
@@ -52,6 +62,7 @@ export function TranscriptTrack({
                   key={entry.id}
                   ref={isActive ? activeRef : undefined}
                   className={`apb-transcript__entry${isActive ? " apb-transcript__entry--active" : ""}`}
+                  data-segment-id={entry.id}
                   role="button"
                   tabIndex={0}
                   onClick={() => onSeekToEntry(entry)}

@@ -3,13 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useFormattedTypewriter } from "../hooks/useFormattedTypewriter";
 import type { MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
-import { formatCitationKind, formatSectionType } from "../utils/citationFormatters";
+import { formatCitationKind, formatRange, formatSectionType } from "../utils/citationFormatters";
 
 type ChatMessageBubbleProps = {
   enableTypewriter: boolean;
   message: MeetingChatMessage;
   onTypewriterComplete: (id: string) => void;
   threadRef: React.RefObject<HTMLDivElement | null>;
+  onCitationClick: (citation: MeetingChatCitation) => void;
 };
 
 export function ChatMessageBubble({
@@ -17,6 +18,7 @@ export function ChatMessageBubble({
   message,
   onTypewriterComplete,
   threadRef,
+  onCitationClick,
 }: ChatMessageBubbleProps) {
   const evidenceState = typeof message.metadata.evidenceState === "string" ? message.metadata.evidenceState : null;
   const isStreaming = message.metadata.streaming === true;
@@ -64,13 +66,13 @@ export function ChatMessageBubble({
         <div className="chat-message__body" dangerouslySetInnerHTML={{ __html: displayed }} />
       )}
       {message.citations.length > 0 ? (
-        <SourcesBadge citations={message.citations} messageId={message.id} />
+        <CitationsBadge citations={message.citations} messageId={message.id} onCitationClick={onCitationClick} />
       ) : null}
     </article>
   );
 }
 
-function SourcesBadge({ citations, messageId }: { citations: MeetingChatCitation[]; messageId: string }) {
+function CitationsBadge({ citations, messageId, onCitationClick }: { citations: MeetingChatCitation[]; messageId: string; onCitationClick: (citation: MeetingChatCitation) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const sourcesRef = useRef<HTMLDivElement>(null);
 
@@ -84,13 +86,13 @@ function SourcesBadge({ citations, messageId }: { citations: MeetingChatCitation
   return (
     <div className="sources" ref={sourcesRef}>
       <button className="sources__badge" type="button" onClick={() => setIsOpen(!isOpen)}>
-        <span>Sources ({citations.length})</span>
+        <span>Citations ({citations.length})</span>
         <span className={"sources__chevron" + (isOpen ? " sources__chevron--open" : "")}>&#9662;</span>
       </button>
       {isOpen ? (
         <div className="sources__list">
           {citations.map((citation) => (
-            <CitationCard key={messageId + "-" + citation.chunkId} citation={citation} />
+            <CitationCard key={messageId + "-" + citation.citationId} citation={citation} onCitationClick={onCitationClick} />
           ))}
         </div>
       ) : null}
@@ -98,7 +100,8 @@ function SourcesBadge({ citations, messageId }: { citations: MeetingChatCitation
   );
 }
 
-function CitationCard({ citation }: { citation: MeetingChatCitation }) {
+function CitationCard({ citation, onCitationClick }: { citation: MeetingChatCitation; onCitationClick: (citation: MeetingChatCitation) => void }) {
+  const canSeek = citation.startMs !== null || citation.segmentIds.length > 0;
   return (
     <div className="citation-card">
       <div className="citation-card__topline">
@@ -106,7 +109,12 @@ function CitationCard({ citation }: { citation: MeetingChatCitation }) {
         <span>{formatCitationKind(citation)}</span>
       </div>
       <span>{citation.jsonPointer}</span>
-      <p>{citation.text}</p>
+      <p>{citation.quote}</p>
+      {canSeek ? (
+        <button className="citation-card__playback" type="button" onClick={() => onCitationClick(citation)}>
+          Play citation{citation.startMs !== null ? ` from ${formatRange(citation.startMs, citation.endMs)}` : ""}
+        </button>
+      ) : null}
     </div>
   );
 }

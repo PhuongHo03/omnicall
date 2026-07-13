@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     upload_max_bytes: int = Field(default=524288000, alias="UPLOAD_MAX_BYTES")
     upload_allowed_extensions: list[str] = Field(
-        default_factory=lambda: [".aac", ".m4a", ".mp3", ".mp4", ".wav", ".webm", ".txt", ".md", ".vtt", ".srt"],
+        default_factory=lambda: [".aac", ".m4a", ".mp3", ".mp4", ".wav", ".webm"],
         alias="UPLOAD_ALLOWED_EXTENSIONS",
     )
     upload_allowed_content_types: list[str] = Field(
@@ -68,10 +68,6 @@ class Settings(BaseSettings):
             "audio/webm",
             "video/mp4",
             "video/webm",
-            "text/plain",
-            "text/markdown",
-            "text/vtt",
-            "application/x-subrip",
         ],
         alias="UPLOAD_ALLOWED_CONTENT_TYPES",
     )
@@ -88,9 +84,15 @@ class Settings(BaseSettings):
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
     embedding_dimensions: int = Field(default=768, alias="EMBEDDING_DIMENSIONS")
     embedding_timeout_seconds: float = Field(default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
+    embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
+    embedding_max_retries: int = Field(default=2, alias="EMBEDDING_MAX_RETRIES")
+    embedding_retry_backoff_seconds: float = Field(default=0.2, alias="EMBEDDING_RETRY_BACKOFF_SECONDS")
+    embedding_contract_version: str = Field(default="v1", alias="EMBEDDING_CONTRACT_VERSION")
     rerank_top_k: int = Field(default=12, alias="RERANK_TOP_K")
     rerank_output_k: int = Field(default=6, alias="RERANK_OUTPUT_K")
     rerank_timeout_seconds: float = Field(default=30.0, alias="RERANK_TIMEOUT_SECONDS")
+    retrieval_fallback_candidate_limit: int = Field(default=48, alias="RETRIEVAL_FALLBACK_CANDIDATE_LIMIT")
+    retrieval_trigram_threshold: float = Field(default=0.12, alias="RETRIEVAL_TRIGRAM_THRESHOLD")
     guardrail_model: str = Field(default="llama-guard3:1b", alias="GUARDRAIL_MODEL")
     guardrail_timeout_seconds: float = Field(default=20.0, alias="GUARDRAIL_TIMEOUT_SECONDS")
     guardrail_max_retries: int = Field(default=0, alias="GUARDRAIL_MAX_RETRIES")
@@ -119,6 +121,10 @@ class Settings(BaseSettings):
     ollama_model: str = Field(default="qwen2.5:1.5b", alias="OLLAMA_MODEL")
     ollama_llm_timeout_seconds: float = Field(default=600.0, alias="OLLAMA_LLM_TIMEOUT_SECONDS")
     ollama_context_length: int = Field(default=8192, alias="OLLAMA_CONTEXT_LENGTH")
+    extraction_window_target_tokens: int = Field(default=2000, alias="EXTRACTION_WINDOW_TARGET_TOKENS")
+    extraction_window_hard_limit_tokens: int = Field(default=2800, alias="EXTRACTION_WINDOW_HARD_LIMIT_TOKENS")
+    extraction_window_overlap_segments: int = Field(default=1, alias="EXTRACTION_WINDOW_OVERLAP_SEGMENTS")
+    extraction_window_max_workers: int = Field(default=4, alias="EXTRACTION_WINDOW_MAX_WORKERS")
     prometheus_url: str = Field(default="http://prometheus:9090", alias="PROMETHEUS_URL")
 
     # Rate limiting
@@ -144,7 +150,11 @@ class Settings(BaseSettings):
     circuit_breaker_recovery_seconds: int = Field(default=30, alias="CIRCUIT_BREAKER_RECOVERY_SECONDS")
 
     # Agentic RAG
-    agentic_rag_max_iterations: int = Field(default=3, alias="AGENTIC_RAG_MAX_ITERATIONS")
+    agentic_rag_max_iterations: int = Field(default=2, alias="AGENTIC_RAG_MAX_ITERATIONS")
+    agentic_rag_max_replans: int = Field(default=1, alias="AGENTIC_RAG_MAX_REPLANS")
+    agentic_rag_max_tool_calls_per_iteration: int = Field(default=4, alias="AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION")
+    agentic_rag_max_chunks_per_tool: int = Field(default=5, alias="AGENTIC_RAG_MAX_CHUNKS_PER_TOOL")
+    agentic_rag_max_total_chunks: int = Field(default=12, alias="AGENTIC_RAG_MAX_TOTAL_CHUNKS")
     agentic_rag_iteration_timeout_seconds: float = Field(default=30.0, alias="AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS")
     agentic_rag_total_timeout_seconds: float = Field(default=60.0, alias="AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS")
     agentic_rag_max_context_tokens: int = Field(default=4000, alias="AGENTIC_RAG_MAX_CONTEXT_TOKENS")

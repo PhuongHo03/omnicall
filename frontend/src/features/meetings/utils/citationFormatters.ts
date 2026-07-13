@@ -12,6 +12,24 @@ export function formatCitationKind(citation: MeetingChatCitation): string {
   if (range !== "section") {
     return range;
   }
+  if (citation.sectionType.startsWith("fact.")) {
+    return "fact";
+  }
+  if (citation.sectionType.startsWith("event.")) {
+    return "event";
+  }
+  if (citation.sectionType.startsWith("participant.")) {
+    return "participant";
+  }
+  if (citation.sectionType.startsWith("entity.")) {
+    return "entity";
+  }
+  if (citation.sectionType.startsWith("relationship.")) {
+    return "relationship";
+  }
+  if (citation.sectionType.startsWith("topic.")) {
+    return "topic";
+  }
   if (citation.sourceType === "metadata") {
     return "metadata";
   }

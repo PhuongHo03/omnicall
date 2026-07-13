@@ -96,6 +96,38 @@ class MeetingIntelligenceResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+class MeetingTranscriptWindow(Base):
+    __tablename__ = "meeting_transcript_windows"
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "generation", "sequence_no", name="uq_transcript_windows_generation_sequence"),
+        UniqueConstraint("meeting_id", "generation", "window_id", name="uq_transcript_windows_generation_window"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    meeting_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    intelligence_result_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("meeting_intelligence_results.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    generation: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    window_id: Mapped[str] = mapped_column(String(140), nullable=False)
+    sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    segment_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    local_result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class MeetingChunkRecord(Base):
     __tablename__ = "meeting_chunks"
     __table_args__ = (

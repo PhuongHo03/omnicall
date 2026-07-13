@@ -25,6 +25,7 @@ export type AudioEngineState = {
 
 export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -51,6 +52,11 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
     const handlePause = () => setIsPlaying(false);
     const handleLoadedMetadata = () => {
       setDuration(media.duration);
+      if (pendingSeekRef.current !== null) {
+        const pendingTime = pendingSeekRef.current;
+        pendingSeekRef.current = null;
+        media.currentTime = Math.max(0, Math.min(pendingTime, media.duration || pendingTime));
+      }
       setCurrentTime(media.currentTime);
     };
     const handleEnded = () => setIsPlaying(false);
@@ -66,6 +72,9 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
     media.addEventListener("ended", handleEnded);
     media.addEventListener("volumechange", handleVolumeChange);
     media.addEventListener("ratechange", handleRateChange);
+    if (media.readyState >= 1) {
+      handleLoadedMetadata();
+    }
     animationRef.current = requestAnimationFrame(tick);
 
     return () => {
@@ -77,6 +86,7 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
       media.removeEventListener("ratechange", handleRateChange);
       cancelAnimationFrame(animationRef.current);
     };
+    pendingSeekRef.current = null;
   }, [playbackUrl]);
 
   // Analyze waveform via Web Audio API
@@ -143,7 +153,12 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
   const seek = useCallback((time: number) => {
     const media = mediaRef.current;
     if (!media) return;
-    media.currentTime = Math.max(0, Math.min(time, media.duration || 0));
+    const target = Math.max(0, time);
+    if (!Number.isFinite(media.duration) || media.duration <= 0) {
+      pendingSeekRef.current = target;
+      return;
+    }
+    media.currentTime = Math.min(target, media.duration);
     setCurrentTime(media.currentTime);
   }, []);
 

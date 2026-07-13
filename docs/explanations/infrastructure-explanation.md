@@ -167,6 +167,8 @@ bind IPs -> ports -> service credentials -> app config -> global
 
 Docker Compose uses the root `.env` automatically when no explicit env file override is passed. If a stack was recreated with the template env file by mistake, the running containers keep those example values until they are recreated again with the intended root `.env`.
 
+Backend and worker receive the application resilience settings and Agentic RAG budgets explicitly through Compose. This keeps changes to `RATE_LIMIT_*`, `CONCURRENCY_LIMIT_*`, `TASK_LIMIT_*`, `CIRCUIT_BREAKER_*`, and `AGENTIC_RAG_*` effective after the affected containers are recreated. Port-only variables such as `FRONTEND_PORT` and `BACKEND_PORT` remain template metadata because the local stack exposes the application through Nginx.
+
 Notable local defaults:
 
 | Variable | Value | Reason |
@@ -200,6 +202,10 @@ Notable local defaults:
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama text embedding model |
 | `EMBEDDING_DIMENSIONS` | `768` | Expected local embedding vector size |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30` | Ollama embedding request timeout |
+| `EMBEDDING_BATCH_SIZE` | `16` | Maximum chunk texts sent in one Ollama embedding request |
+| `EMBEDDING_MAX_RETRIES` | `2` | Bounded retry count for transient embedding failures |
+| `EMBEDDING_RETRY_BACKOFF_SECONDS` | `0.2` | Exponential retry backoff base for embedding requests |
+| `EMBEDDING_CONTRACT_VERSION` | `v1` | Embedding contract identity stored with indexed chunks |
 | `VECTOR_PROVIDER` | `milvus` | Enables Milvus REST vector index with PostgreSQL fallback |
 | `RERANK_TOP_K` | `12` | Retrieval candidate count before rerank |
 | `RERANK_OUTPUT_K` | `6` | Reranked output count returned to chat |
@@ -224,8 +230,8 @@ Notable local defaults:
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Ollama context window used by local LLM analysis |
 | `AUTH_SESSION_TTL_HOURS` | `168` | Local bearer-session lifetime used by backend auth |
 | `UPLOAD_MAX_BYTES` | `524288000` | Backend upload size limit |
-| `UPLOAD_ALLOWED_EXTENSIONS` | audio/video/text transcript extensions | Backend upload extension allowlist |
-| `UPLOAD_ALLOWED_CONTENT_TYPES` | audio/video/text transcript MIME types | Backend upload content-type allowlist |
+| `UPLOAD_ALLOWED_EXTENSIONS` | audio/video extensions | Backend upload extension allowlist |
+| `UPLOAD_ALLOWED_CONTENT_TYPES` | audio/video MIME types | Backend upload content-type allowlist |
 | `REDIS_PROCESSING_LOCK_TTL_SECONDS` | `900` | Meeting processing lock TTL used by workers |
 
 ## Docker Build Context
@@ -242,6 +248,8 @@ The root `.dockerignore` keeps generated JavaScript artifacts out of service bui
 ```
 
 This prevents local frontend installs and Vite output from being sent to Docker when rebuilding services. The frontend image build context was verified at `2.26kB` after these ignores were added.
+
+Generated local runtime artifacts are disposable and stay outside the source tree: Python bytecode/cache directories, pytest/tool caches, frontend `dist` output, logs, temporary files, and local data are ignored and can be removed without touching application state. Docker named volumes are intentionally different: `postgres_data`, `minio_data`, `milvus_data`, `redis_data`, `rabbitmq_data`, `ollama_data`, `model_cache`, `etcd_data`, `prometheus_data`, and `redisinsight_data` contain runtime data and are preserved by routine cleanup. Use `docker compose down -v` only for an explicit disposable reset.
 
 The backend image uses Python 3.11 and installs `ffmpeg`, `git`, `libsndfile`, `sox`, build tooling, CPU-only `torch/torchaudio`, `faster-whisper`, WeSpeaker, and SentenceTransformers dependencies. The same image is used by the API and worker containers so both can import provider code, while long-running voice processing still executes in the worker path. ffmpeg, `/models`, `/models/.hf-cache`, and `/tmp/omnicall-audio` are fixed image/runtime contracts rather than environment variables.
 
@@ -371,7 +379,7 @@ Phase 5 completion verification also confirmed:
 | Backend and worker images rebuilt after evidence guard changes | Passed |
 | Backend `unittest` suite after evidence guard | 30 tests passed |
 | Gateway `GET /api/health` after backend/NGINX recreate | `200` |
-| Manual text transcript upload, processing, chunk indexing, and chat through gateway | Passed |
+| Manual voice upload, processing, chunk indexing, and chat through gateway | Passed |
 | Action item, timeline, risk, and important-note questions | Returned meeting citations |
 | Unrelated Bitcoin question | Returned `not_enough_evidence` with no citations |
 | Citation mapping against processed JSON transcript/analysis pointers | Passed |
@@ -467,6 +475,28 @@ For local development after retrieval chunk format changes, rebuild derived retr
 python -m backend.scripts.rebuild_retrieval_index --clear-chat
 ```
 
-The command reuses backend settings, reads stored `meeting_intelligence_results`, replaces PostgreSQL `meeting_chunks`, upserts fresh Milvus vectors, and optionally clears chat messages that may cite stale chunk IDs. Use `--meeting-id <id>` to rebuild one meeting. When preserving local data is not useful, `docker compose down -v` followed by stack startup, migrations, and reprocessing remains the clean-slate path; it deletes local PostgreSQL, Redis, RabbitMQ, MinIO, Milvus, and model/runtime volumes.
+The command reuses backend settings, reads stored `meeting_intelligence_results`, replaces PostgreSQL `meeting_chunks`, assigns an index generation, upserts fresh Milvus vectors, and optionally clears chat messages that may cite stale chunk IDs. The PostgreSQL trigram fallback index is created by the retrieval migration. Phase 22 rebuilds only the RAG-first intelligence schema; obsolete local JSON documents from the previous `summary`/`analysis`/`citations` contract are rejected and must be reprocessed or removed. Use `--meeting-id <id>` to rebuild one meeting. When preserving local data is not useful, `docker compose down -v` followed by stack startup, migrations, and reprocessing remains the clean-slate path; it deletes local PostgreSQL, Redis, RabbitMQ, MinIO, Milvus, and model/runtime volumes.
 
-*Document reflects project state after Phase 15 guardrail simplification on **2026-07-06**. Compose now exposes only operator-facing model controls; specialized model sources, runner commands, and internal model paths are repository-owned runtime contracts. The gateway keeps `/api/` connections open long enough for long RAG chat answers, and the previously documented monitoring, operational-log, and local retrieval rebuild flows remain available.*
+MinIO object cleanup is available through `python -m backend.scripts.cleanup_orphaned_objects`. It compares bucket objects with PostgreSQL `meeting_assets.object_key`, reports orphaned objects by default, and requires `--apply` for deletion. This is the recovery path for objects left behind by interrupted or older cleanup flows.
+
+Phase 6 runtime verification also confirmed:
+
+| Check | Result |
+|---|---|
+| `docker compose config --quiet` | Passed |
+| `.env` and `.env.example` key sets | Identical; no duplicate keys |
+| Gateway health | `GET /api/health` returned `{"app":"Omnicall API","status":"ok"}` |
+| Milvus WebUI | Port `8083` reachable and redirected to `/webui/` |
+| Frontend production build | `tsc -b && vite build` passed |
+| Backend unittest discovery | `225` tests passed |
+
+The final Docker/Compose cleanup audit found no unused service or volume declaration across the `21` declared services: application dependencies, Milvus/etcd/MinIO storage, model bootstrap services, local admin UIs, and Prometheus exporters are all referenced by the runtime topology. The repository now contains only the two active backend maintenance commands, `rebuild_retrieval_index` and `cleanup_orphaned_objects`; generated Python and frontend artifacts were removed from the workspace after verification.
+
+| Extraction window target tokens | `EXTRACTION_WINDOW_TARGET_TOKENS` | `2000` | Target input size for bounded LLM extraction windows |
+| Extraction window hard limit | `EXTRACTION_WINDOW_HARD_LIMIT_TOKENS` | `2800` | Hard prompt window limit before a new window is started |
+| Extraction window overlap | `EXTRACTION_WINDOW_OVERLAP_SEGMENTS` | `1` | Number of previous speaker turns retained as overlap |
+| Extraction window workers | `EXTRACTION_WINDOW_MAX_WORKERS` | `4` | Maximum bounded parallel local extraction calls |
+
+Phase 25 adds the `meeting_transcript_windows` PostgreSQL table. It stores window references and local extraction state; it does not replace the full transcript and is not written directly to Milvus. Retrieval chunks remain authoritative in PostgreSQL and their derived vectors remain generation-validated in Milvus.
+
+*Document reflects project state after **Phase 25 Codex-Style Hierarchical Intelligence Extraction**. Compose infrastructure remains intentionally unchanged; PostgreSQL stores full transcript/result/window/retrieval state, while Milvus stores rebuildable vector embeddings.*

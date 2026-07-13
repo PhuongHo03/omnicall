@@ -33,6 +33,7 @@ type RawAsset = {
 
 
 type RawChatCitation = {
+  citation_id?: unknown;
   chunk_id?: unknown;
   source_type?: unknown;
   section_type?: unknown;
@@ -41,6 +42,7 @@ type RawChatCitation = {
   segment_ids?: unknown;
   start_ms?: unknown;
   end_ms?: unknown;
+  quote?: unknown;
   text?: unknown;
 };
 
@@ -185,8 +187,18 @@ function mapChatMessage(raw: RawChatMessage): MeetingChatMessage {
   const agentToolCalls = Array.isArray((metadata as Record<string, unknown>).agentToolCalls) 
     ? (metadata as Record<string, unknown>).agentToolCalls as Array<{tool: string}>
     : undefined;
-  const agentMetadata = agentToolCalls && agentToolCalls.length > 0
-    ? { toolCalls: agentToolCalls.map(tc => tc.tool) }
+  const agentReplans = typeof metadata.agentReplans === "number" ? metadata.agentReplans : undefined;
+  const agentIterations = typeof metadata.agentIterations === "number" ? metadata.agentIterations : undefined;
+  const queryPlan = isRecord(metadata.agentQueryPlan) ? metadata.agentQueryPlan : {};
+  const planSections = Array.isArray(queryPlan.sections) ? queryPlan.sections.filter((item): item is string => typeof item === "string") : undefined;
+  const agentMetadata = agentToolCalls || agentReplans !== undefined || agentIterations !== undefined || planSections
+    ? {
+        iterations: agentIterations,
+        replans: agentReplans,
+        toolCalls: agentToolCalls?.map(tc => tc.tool),
+        intent: typeof queryPlan.intent === "string" ? queryPlan.intent : undefined,
+        sections: planSections,
+      }
     : undefined;
   
   return {
@@ -207,16 +219,22 @@ function mapCitations(raw: unknown): MeetingChatCitation[] {
   }
   return raw.map((item) => {
     const citation = item as RawChatCitation;
+    const legacyCitationIds = citation.citation_ids;
+    const citationId = citation.citation_id ?? (
+      Array.isArray(legacyCitationIds) && typeof legacyCitationIds[0] === "string"
+        ? legacyCitationIds[0]
+        : null
+    );
     return {
+      citationId: requireString(citationId, "chat_citation.citation_id"),
       chunkId: requireString(citation.chunk_id, "chat_citation.chunk_id"),
       sourceType: requireString(citation.source_type, "chat_citation.source_type"),
       sectionType: requireString(citation.section_type, "chat_citation.section_type"),
       jsonPointer: requireString(citation.json_pointer, "chat_citation.json_pointer"),
-      citationIds: stringList(citation.citation_ids, "chat_citation.citation_ids"),
       segmentIds: stringList(citation.segment_ids, "chat_citation.segment_ids"),
       startMs: nullableNumber(citation.start_ms, "chat_citation.start_ms"),
       endMs: nullableNumber(citation.end_ms, "chat_citation.end_ms"),
-      text: requireString(citation.text, "chat_citation.text")
+      quote: requireString(citation.quote ?? citation.text, "chat_citation.quote")
     };
   });
 }
@@ -231,5 +249,3 @@ export function parseMeetingIntelligenceResult(raw: unknown): MeetingIntelligenc
   }
   return raw;
 }
-
-

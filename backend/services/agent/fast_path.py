@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from urllib.error import URLError
 
-from backend.providers.llm_provider import LLMProvider, LLMProviderError
+from backend.providers.llm import LLMProvider, LLMProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,11 @@ class FastPathHandler:
             logger.debug("fast_path.llm_failed unexpected error=%s — falling through to RAG", str(exc))
             return None
 
+        if not isinstance(response, dict):
+            return None
         needs_rag = response.get("needsRag", True)
+        if not isinstance(needs_rag, bool):
+            return None
         if needs_rag:
             return None
 

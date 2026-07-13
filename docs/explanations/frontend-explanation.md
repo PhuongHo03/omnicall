@@ -183,7 +183,7 @@ Implemented frontend routes:
 | Meeting list and creation | `MeetingList` | Lives in the shared sidebar slot, lists meetings, creates a new analysis, and selects the current meeting |
 | Meeting actions | `MeetingActionPanel` | Shows the selected meeting, inline rename control, one-file upload/record controls, process/retry button, playback/result actions, refresh actions, and delete action |
 | Playback drawer | `PlaybackDrawer`, `AssetPlaybackPanel`, `PlayerControls`, `TranscriptTrack`, `WaveformDisplay` | Loads the selected meeting asset into a temporary browser Blob URL, provides playback controls, transcript navigation, and download |
-| Processed JSON result | `ResultDrawer`, `MeetingIntelligenceResultPanel`, `JsonSection`, `JsonValue` | Renders the complete `meeting-intelligence-result.v1` as readable collapsible sections and remembers each section's open/closed UI preference in browser storage |
+| Processed JSON result | `ResultDrawer`, `MeetingIntelligenceResultPanel`, `JsonSection`, `JsonValue` | Renders the RAG-first `meeting-intelligence-result.v1` as readable collapsible sections ordered around transcript evidence, speakers, participants, facts, events, relationships, topics, summaries, actions, decisions, risks, questions, quality, and extraction |
 | Meeting chat | `MeetingChatPanel`, `ChatMessageBubble` | Asks questions against a ready meeting, renders immediate user bubbles, pending assistant state, streamed answer text, saved evidence state, citations, and source expansion |
 | Status display | `StatusPill` | Displays meeting and job state |
 
@@ -225,9 +225,9 @@ The accounts page renders `AdminAccountsTable`, backed by `GET /api/admin/accoun
 
 The recording entry point uses `MediaRecorder` to produce a completed `audio/webm` file and uploads it through the same asset endpoint as normal file uploads. It is not live transcription.
 
-`MeetingActionPanel` follows the one-analysis-per-meeting rule. Upload and recording are shown only while the selected meeting is `DRAFT` and has no asset. Once a file is uploaded, the intake box is hidden and the meeting is locked to that asset whether processing later succeeds or fails. Processing remains available for an uploaded asset and retryable after a failed job. These controls are UI affordances only; backend state validation remains authoritative and returns `409 Conflict` for stale or direct requests that try to upload another file.
+`MeetingActionPanel` follows the one-analysis-per-meeting rule. Upload and recording are shown only while the selected meeting is `DRAFT` and has no asset. The file picker accepts audio and supported video files only, matching the backend voice-only meeting processing allowlist. Once a file is uploaded, the intake box is hidden and the meeting is locked to that asset whether processing later succeeds or fails. Processing remains available for an uploaded asset and retryable after a failed job. These controls are UI affordances only; backend state validation remains authoritative and returns `409 Conflict` for stale or direct requests that try to upload another file.
 
-The central workspace no longer uses operation/chat tabs. It is a chatbot-style flow: meeting controls stay at the top, playback and processed-result details open in drawers, and the meeting chat composer/thread fills the selected meeting workspace after the meeting is `READY`. The processed JSON panel remembers open/closed section state locally in the browser so switching meetings does not force `Summary`, `Analysis`, or `Quality` back open after the user closes them. The shared app sidebar behaves like a modern chat history rail for selecting or creating analyses.
+The central workspace no longer uses operation/chat tabs. It is a chatbot-style flow: meeting controls stay at the top, playback and processed-result details open in drawers, and the meeting chat composer/thread fills the selected meeting workspace after the meeting is `READY`. The processed JSON panel remembers open/closed section state locally in the browser so switching meetings does not force sections back open after the user closes them. Phase 22 updated the preferred section order and labels for the RAG-first schema: evidence, speakers, facts, events, relationships, topics, summaries, actions, decisions, risks, questions, and extraction are first-class sections. The shared app sidebar behaves like a modern chat history rail for selecting or creating analyses.
 
 The current visual system uses a neutral operational surface, white raised panels, and multiple restrained accents: green for primary actions/ready states, indigo for queued states, amber for in-progress or partial states, and coral for destructive/error states. Cards and controls keep the existing 8px radius limit while using slightly stronger spacing, panel shadows, and focus states for a more modern workspace feel.
 
@@ -247,7 +247,7 @@ Meeting chat calls are handled through the same feature boundary:
 MeetingChatPanel -> useMeetingWorkspace -> meetingApi/chatStreamApi -> /api/meetings/{meetingId}/chat
 ```
 
-Chat request building and response/history mapping live in `meetingDtos.ts`. REST chat calls remain in `meetingApi.ts`, while SSE parsing and stream-event typing live in `chatStreamApi.ts`. The frontend keeps only lightweight UI state: current question text, temporary optimistic messages while an answer is pending, and the message list returned by the backend. It does not create, store, or send a chat-session ID. When a question is submitted, `useMeetingWorkspace` immediately adds the user bubble and a local assistant `Đang chờ xử lý...` bubble. `useMeetingChatWatch` then consumes backend SSE status, agent, done, blocked, and error events, updates Vietnamese assistant status text, and replaces local optimistic state with persisted chat history from `GET /api/meetings/{meetingId}/chat`. If streaming cannot finish cleanly, the same recovery path polls history briefly and applies typewriter IDs to recovered assistant answers.
+Chat request building and response/history mapping live in `meetingDtos.ts`. REST chat calls remain in `meetingApi.ts`, while SSE parsing and stream-event typing live in `chatStreamApi.ts`. The frontend keeps only lightweight UI state: current question text, temporary optimistic messages while an answer is pending, and the message list returned by the backend. It does not create, store, or send a chat-session ID. When a question is submitted, `useMeetingWorkspace` immediately adds the user bubble and a local assistant `Đang chờ xử lý...` bubble. `useMeetingChatWatch` consumes the legacy status/search/observation/synthesis events plus Phase 26 `agent_plan`, `agent_verify`, and `agent_replan` events. It renders sanitized Vietnamese status text and replaces local optimistic state with persisted chat history from `GET /api/meetings/{meetingId}/chat`. Unknown or missing optional event fields remain safe, and a failed stream recovers through history polling.
 
 ### Resilience Hooks and States
 
@@ -258,7 +258,9 @@ Chat request building and response/history mapping live in `meetingDtos.ts`. RES
 - `useAuthSession.refreshAccount()` distinguishes transient network errors from real auth failures: network errors keep the session token; only server 401 removes it.
 - Meeting API functions (`listMeetings`, `getMeeting`, etc.) accept an optional `AbortSignal` for request cancellation.
 
-Assistant messages display the backend evidence state and citations. During the local typewriter effect, citations are hidden so the answer reads progressively; after streaming completes, all citations returned by the backend are shown under a `Sources` heading. Citations include processed JSON section pointers, transcript time ranges when available, metadata/section labels for non-timestamped sources such as participants, meeting metadata, source metadata, quality warnings, and empty-section notes, and the citation text returned by the backend. Unsupported answers are shown as normal assistant messages with the backend `not_enough_evidence` state rather than optimistic certainty.
+Assistant messages display the backend evidence state and citation-level evidence. After streaming completes, unique verified citations are shown under a `Citations (n)` badge. Each citation displays its quote, processed JSON section pointer, source label, and transcript time range when available. Transcript citations expose a playback action that opens the playback drawer, seeks to `startMs`, and focuses the matching transcript segment when `segmentIds` are available. Structured sources such as facts, events, participants, relationships, topics, meeting metadata, quality warnings, and extraction warnings remain readable without a playback action when no transcript location exists. Legacy persisted citation records are normalized by the DTO mapper. Unsupported answers are shown as normal assistant messages with the backend `not_enough_evidence` state rather than optimistic certainty.
+
+Transcript playback extracts entries from `transcript.segments` and now prefers `speakerLabel` while keeping `speaker` as a fallback for renderer compatibility. The frontend does not infer participant counts, events, facts, or relationships; those remain backend-owned intelligence records.
 
 For selected meetings, the hook loads `GET /api/meetings/{meetingId}/processing-status` to retrieve the latest job and latest asset, then loads `GET /api/meetings/{meetingId}/intelligence-result` when the meeting is `READY`. When the latest asset is playable audio or video, the hook fetches `GET /api/meetings/{meetingId}/assets/{assetId}/content` with the bearer token, creates a temporary browser Blob URL, and revokes it when the selected meeting or asset changes. While a meeting is `QUEUED` or `PROCESSING`, the hook polls processing status every 3 seconds. The frontend does not parse or recompute intelligence sections; it renders the JSON returned by the backend.
 
@@ -317,7 +319,7 @@ Earlier phase screenshots were generated under ignored `tmp/screenshots/`.
 
 Playwright screenshot re-verification was attempted on 2026-06-17, but the local Playwright package could not install Chromium because the current environment reports `ubuntu26.04-x64`, which Playwright did not support for that browser build. The verified fallback for the Phase 20 design-token cleanup pass is TypeScript/Vite build, static source review, and frontend style scans.
 
-## Agentic RAG Frontend (Phase 16)
+## Agentic RAG Frontend (Phase 26)
 
 ### New SSE Events
 
@@ -326,8 +328,11 @@ The frontend now handles additional SSE events for the Agentic RAG agent loop:
 | Event | Type | Description |
 |-------|------|-------------|
 | `agent_think` | `{ type, iteration, message }` | Shows agent iteration progress |
+| `agent_plan` | `{ type, iteration, intent, sections }` | Shows sanitized retrieval plan status |
 | `agent_search` | `{ type, iteration, tools, message }` | Shows tools being called |
 | `observation` | `{ type, iteration, tool_results, total_chunks }` | Shows chunks found |
+| `agent_verify` | `{ type, iteration, sufficient, missingFields }` | Shows evidence sufficiency |
+| `agent_replan` | `{ type, iteration, replanCount, missingFields }` | Shows bounded evidence replan |
 | `agent_synthesize` | `{ type, message }` | Shows final-answer generation status |
 | `fast_path` | `{ type, intent, message }` | Shows immediate response |
 | `connected` | `{ type: "connected", status: "connected" }` | Initial stream handshake |
@@ -341,8 +346,13 @@ interface MeetingChatMessage {
   // ... existing fields
   agentMetadata?: {
     iterations?: number;      // Number of agent iterations used
+    replans?: number;          // Number of evidence replans used
     toolCalls?: string[];     // Tools called during processing
     agentThoughts?: string[]; // Agent reasoning messages
+    intent?: string;           // Sanitized plan intent
+    sections?: string[];       // Planned JSON sections
+    missingFields?: string[];  // Fields still missing during verification
+    evidenceCount?: number;    // Accumulated evidence count
   };
 }
 ```
@@ -417,4 +427,4 @@ All evidence states display a badge with appropriate styling:
 - `blocked`: Muted badge
 - `error`: Red badge
 
-*Document reflects project state after **Phase 20 Frontend Design Token Cleanup**. Frontend source follows feature-layer boundaries, `useMeetingWorkspace` is a facade over workflow hooks, shared HTTP/polling helpers own cross-feature mechanics, global CSS is split by domain meaning behind `global.css`, and shared visual primitives are centralized in `tokens.css`.*
+*Document reflects project state during **Phase 27 Citation Playback Links**. Frontend source follows feature-layer boundaries and renders verified citation cards with transcript/playback seeking while preserving backward-compatible Agentic RAG SSE progress.*

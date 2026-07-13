@@ -10,6 +10,9 @@ export type ChatStreamEvent =
   | { type: "agent_think"; iteration: number; message: string }
   | { type: "agent_search"; iteration: number; tools: string[]; message?: string }
   | { type: "observation"; iteration: number; resultCount?: number; successCount?: number; failureCount?: number; tool_results?: Record<string, number>; total_chunks?: number }
+  | { type: "agent_plan"; iteration: number; intent?: string; sections?: string[]; subQueryCount?: number }
+  | { type: "agent_verify"; iteration: number; sufficient: boolean; missingFields?: string[]; evidenceCount?: number }
+  | { type: "agent_replan"; iteration: number; replanCount?: number; reason?: string; missingFields?: string[] }
   | { type: "agent_synthesize"; iteration?: number; forced?: boolean; message?: string }
   | { type: "fast_path"; intent?: string; message: string };
 

@@ -33,7 +33,7 @@ Primary user flows:
 | Account access | Register or login to Omnicall | Backend creates or validates the account and returns authenticated account context with `Admin` or `User` role |
 | Account administration | Promote or demote local accounts | Admin dashboard lists accounts and changes another account's role while preventing self-role changes |
 | Account deletion | Remove a local account | Admin-only backend flow deletes another account, blocks self-deletion, blocks active processing races, revokes queued jobs by ID, invalidates admin metrics cache, and cascades cleanup to target-owned sessions, meetings, and stored files |
-| Upload meeting | Add one existing audio/video file, transcript, or meeting notes file to a meeting | Private object is stored, metadata is saved, and the meeting is locked to that file for one analysis lineage |
+| Upload meeting | Add one existing audio/video file to a meeting | Private object is stored, metadata is saved, and the meeting is locked to that file for one analysis lineage |
 | Record meeting | Capture a live meeting from the browser | Recording is uploaded as the meeting asset and enters the same processing pipeline |
 | Review analysis | Understand what happened without replaying the whole meeting | Complete processed transcript result is displayed |
 | Ask meeting chat | Retrieve precise information from the processed result | Frontend chat asks the backend below the processed JSON result, which answers from processed intelligence first and cites transcript evidence |
@@ -100,12 +100,13 @@ upload/recording
 -> PostgreSQL asset + meeting status/attempt state
 -> RabbitMQ task
 -> worker lock + idempotency check
--> text extraction or voice preprocessing
--> VAD + ASR + diarization when the source is voice
+-> voice preprocessing
+-> VAD + ASR + diarization
 -> transcript segment contract
--> processed transcript JSON generation
--> schema validation, quality checks, and source linking
--> JSON-section chunking
+-> RAG-first intelligence JSON generation
+-> deterministic evidence, speaker stats, reference validation, and source linking
+-> fact/entity/event/relationship graph and hierarchical topic summaries
+-> RAG-first retrieval chunking
 -> embedding generation
 -> PostgreSQL retrieval chunk persistence
 -> Milvus vector upsert
@@ -133,44 +134,21 @@ question
 -> response with answer + citations
 ```
 
-Processed transcript JSON categories:
+RAG-first processed intelligence JSON categories:
 
 | Category | Meaning |
 |---|---|
-| Executive summary | Short, high-signal overview of the meeting outcome |
-| Detailed summary | Structured summary by topic or agenda section |
-| Key points | Important points worth remembering |
-| Decisions | Explicit or strongly implied decisions, with confidence and source evidence |
-| Action items | Tasks with owner, due date, priority, status, and source evidence when available |
-| Important notes | Items users should remember even if they are not tasks or decisions |
-| Timeline and milestones | Dates, deadlines, follow-up checkpoints, release targets, or time-sensitive commitments |
-| Risks and blockers | Risks, blockers, uncertainties, dependencies, and mitigation notes |
-| Open questions | Questions raised but not resolved |
-| Follow-ups | People, teams, or topics that require later confirmation |
-| Topics | Thematic grouping for navigation and retrieval |
-| Entities | People, teams, products, customers, projects, or systems mentioned |
-| Important quotes | Short cited excerpts only when useful for traceability |
-
-Additional useful sections:
-
-| Category | Meaning |
-|---|---|
-| Participants | Speakers, attendees, roles, teams, or inferred participants |
-| Agenda | Planned or inferred agenda items |
-| Outcomes | Final meeting outcomes, conclusions, or agreed direction |
-| Requirements | Business, product, technical, or operational requirements mentioned |
-| Constraints | Budget, timeline, technical, staffing, legal, or process constraints |
-| Assumptions | Assumptions made during discussion that may need validation |
-| Dependencies | External teams, systems, vendors, tasks, or decisions needed before progress |
-| Blockers | Items currently preventing progress |
-| Conflicts | Disagreements, tradeoffs, or competing options discussed |
-| Metrics | Numbers, KPIs, targets, estimates, or thresholds mentioned |
-| Customer/user feedback | Customer problems, user requests, objections, or satisfaction signals |
-| Decisions pending approval | Items tentatively agreed but requiring confirmation |
-| Parking lot | Important topics deferred for later |
-| Glossary | Domain terms, acronyms, product names, or internal shorthand |
-| Sentiment and tone | Optional high-level meeting tone, tension, urgency, or confidence signals |
-| Quality warnings | Missing audio, unknown speaker, low confidence, contradictory statements, or incomplete sections |
+| Transcript evidence | Authoritative transcript segments with speaker label, time range, text, and confidence |
+| Evidence citations | Canonical transcript/time-range evidence records with deterministic quotes |
+| Speaker stats | Deterministic speaker count, talk time, segment count, and participant mapping metadata |
+| Participants | Attendees and mentioned-only people with normalized names, roles, speaker labels, confidence, and citations |
+| Facts | Atomic queryable claims such as participant count, deadlines, statuses, dates, amounts, owners, and outcomes |
+| Events | Timeline records for requests, escalations, decisions, assignments, issues, resolutions, and follow-ups |
+| Entities | People, organizations, products, services, systems, dates, amounts, locations, and domain terms |
+| Relationships | Graph edges between participants, entities, facts, events, actions, decisions, risks, questions, and topics |
+| Topics and summaries | Hierarchical topic records plus executive, topic-level, and timeline-level summaries |
+| Actions, decisions, risks, questions | Canonical operational records with status, owner/maker/assignee references, confidence, and evidence |
+| Quality and extraction | Transcript/source quality, extraction confidence, unsupported claims, and warnings |
 
 Processed JSON draft:
 
@@ -189,70 +167,84 @@ Processed JSON draft:
     "analysisProvider": "provider-name",
     "generatedAt": "2026-06-12T10:30:00Z"
   },
-  "participants": [],
   "transcript": {
     "segments": [
       {
         "id": "seg-001",
+        "speakerLabel": "Speaker 1",
         "speaker": "Speaker 1",
         "startMs": 0,
         "endMs": 12000,
         "text": "Transcript text",
         "confidence": 0.92
       }
+    ],
+    "coverage": {
+      "status": "model-derived",
+      "coveredAssetIds": ["asset-id"]
+    }
+  },
+  "evidence": {
+    "citations": [
+      {
+        "id": "cite-001",
+        "segmentIds": ["seg-001"],
+        "startMs": 0,
+        "endMs": 12000,
+        "speakerLabels": ["Speaker 1"],
+        "quote": "Transcript text",
+        "evidenceType": "direct_quote"
+      }
     ]
   },
-  "summary": {
-    "executive": "",
-    "detailed": [],
-    "keyPoints": []
+  "speakers": {
+    "speakerCount": 1,
+    "identifiedParticipantCount": 0,
+    "mentionedOnlyCount": 0,
+    "items": []
   },
-  "analysis": {
-    "topics": [],
-    "decisions": [],
-    "actionItems": [],
-    "importantNotes": [],
-    "timeline": [],
-    "risks": [],
-    "blockers": [],
-    "dependencies": [],
-    "openQuestions": [],
-    "followUps": [],
-    "outcomes": [],
-    "requirements": [],
-    "constraints": [],
-    "assumptions": [],
-    "conflicts": [],
-    "metrics": [],
-    "parkingLot": [],
-    "entities": [],
-    "glossary": []
+  "participants": [],
+  "entities": [],
+  "facts": [],
+  "events": [],
+  "relationships": [],
+  "topics": [],
+  "summaries": {
+    "executive": {
+      "text": "",
+      "topicIds": [],
+      "citationIds": []
+    },
+    "topicLevel": [],
+    "timelineLevel": []
   },
-  "citations": [
-    {
-      "id": "cite-001",
-      "segmentIds": ["seg-001"],
-      "startMs": 0,
-      "endMs": 12000
-    }
-  ],
+  "actions": [],
+  "decisions": [],
+  "risks": [],
+  "questions": [],
   "quality": {
     "coverage": "complete",
     "warnings": [],
     "confidence": 0.86
+  },
+  "extraction": {
+    "overallConfidence": 0.86,
+    "method": "llm_with_deterministic_verification",
+    "unsupportedClaims": [],
+    "warnings": []
   }
 }
 ```
 
 Processed JSON quality requirements:
 
-- Every structured item should include citation IDs or source transcript segment IDs when evidence exists.
-- Important items should include confidence or extraction quality where useful.
-- Action items should separate `owner`, `task`, `dueDate`, `priority`, and `status` instead of storing only prose.
-- Timeline items should normalize dates when possible while preserving original wording.
-- Risks should distinguish blocker, dependency, uncertainty, and mitigation if present.
+- Every important extracted record should include citation IDs or an explicit deterministic source such as `speakers`.
+- Deterministic `transcript`, `source`, `evidence`, and `speakers` fields must not be overwritten by LLM output.
+- Actions should separate owner, task, due date, priority, status, confidence, and source evidence.
+- Events should normalize type, status, participants, entities, transcript time range, and citations.
+- Risks should distinguish blocker, dependency, uncertainty, impact, mitigation, owner, status, and citations when available.
 - Chat retrieval should prefer structured JSON sections over plain transcript text.
-- Transcript entries inside the JSON remain available for audit, source citations, and fallback retrieval.
+- Transcript entries inside the JSON remain available for audit, source citations, and fallback transcript-window retrieval.
 
 ## Model Provider Strategy
 
@@ -315,6 +307,20 @@ PROCESSING_RECONCILIATION_BATCH_SIZE=100
 LLM_FALLBACK_PROVIDER=ollama
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=qwen2.5:1.5b
+
+AGENTIC_RAG_MAX_ITERATIONS=2
+AGENTIC_RAG_MAX_REPLANS=1
+AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION=4
+AGENTIC_RAG_MAX_CHUNKS_PER_TOOL=5
+AGENTIC_RAG_MAX_TOTAL_CHUNKS=12
+AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS=30.0
+AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS=60.0
+AGENTIC_RAG_MAX_CONTEXT_TOKENS=4000
+
+RATE_LIMIT_ENABLED=true
+CONCURRENCY_LIMIT_MEETINGS=5
+TASK_LIMIT_PER_MEETING=2
+CIRCUIT_BREAKER_ENABLED=true
 
 ASR_TIMEOUT_SECONDS=120
 ASR_TIMEOUT_REALTIME_FACTOR=1.0
@@ -548,8 +554,15 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 19 | Frontend refactor safety cleanup | Done |
 | 20 | Frontend design token cleanup | Done |
 | 21 | Fast path temperature tuning | Done |
+| 22 | RAG first intelligence schema | Done |
+| 23 | Embedding flow upgrade | Done |
+| 24 | Retrieval reliability hardening | Done |
+| 25 | Codex-style hierarchical intelligence extraction | Done |
+| 26 | Hybrid Agentic RAG planner and evidence verification | Done |
+| 27 | Citation playback links | In Progress |
+| Refactor 1-6 | Backend layered refactor and runtime cleanup | Done |
 
-## Agentic RAG Architecture (Phase 16)
+## Agentic RAG Architecture (Phase 26)
 
 ### Overview
 
@@ -561,20 +574,20 @@ The system uses an Agentic RAG approach where an AI agent dynamically selects to
 Question → Fast Path Check → Immediate Response (greeting/chitchat)
                 │
                 ▼ Meeting Question
-         Agent Loop (max 3 iterations)
-         ├── Think: LLM analyzes question
-         ├── Execute: Call tools (parallel)
-         └── Observe: Evaluate results
+         Query Planner → parallel retrieval
+         ├── Evidence Verifier
+         ├── one bounded replan when fields are missing
+         └── AnswerSynthesizer from verified JSON-derived evidence
                 │
                 ▼
-         Synthesize → Answer with citations
+         Synthesize → Verified citations → Transcript/playback links
 ```
 
 ### Tools
 
 - **Search**: semantic, keyword, section, speaker
 - **Retrieval**: summary, action_items, decisions, risks, timeline, participants
-- **Synthesis**: synthesize_answer
+- **Synthesis**: backend `AnswerSynthesizer` service boundary
 
 ### Evidence States
 

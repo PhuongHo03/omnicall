@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from backend.providers.embedding_provider import TextEmbedding
 from backend.providers.guardrail_provider import GuardrailResult
 
@@ -7,9 +9,11 @@ from backend.providers.guardrail_provider import GuardrailResult
 class TestEmbeddingProvider:
     provider_name = "test-model-embedding"
     model_name = "test-embedding-model"
+    contract_version = "v1"
 
     def __init__(self, dimensions: int = 8) -> None:
         self.dimensions = dimensions
+        self.batch_calls = 0
 
     def embed_text(self, text: str) -> TextEmbedding:
         vector = [0.0] * self.dimensions
@@ -21,6 +25,10 @@ class TestEmbeddingProvider:
             model_name=self.model_name,
             vector=[round(value / norm, 6) for value in vector],
         )
+
+    def embed_texts(self, texts: Sequence[str]) -> list[TextEmbedding]:
+        self.batch_calls += 1
+        return [self.embed_text(text) for text in texts]
 
 
 class TestGuardrailProvider:

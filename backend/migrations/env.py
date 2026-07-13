@@ -12,6 +12,7 @@ from backend.models import (
     MeetingAsset,
     MeetingChunkRecord,
     MeetingIntelligenceResult,
+    MeetingTranscriptWindow,
     User,
 )
 

@@ -23,15 +23,21 @@ export type MeetingAsset = {
 };
 
 export type MeetingChatCitation = {
+  citationId: string;
   chunkId: string;
   sourceType: string;
   sectionType: string;
   jsonPointer: string;
-  citationIds: string[];
   segmentIds: string[];
   startMs: number | null;
   endMs: number | null;
-  text: string;
+  quote: string;
+};
+
+export type PlaybackSeekRequest = {
+  startMs: number | null;
+  endMs: number | null;
+  segmentIds: string[];
 };
 
 export type MeetingChatMessage = {
@@ -43,8 +49,13 @@ export type MeetingChatMessage = {
   metadata: Record<string, unknown>;
   agentMetadata?: {
     iterations?: number;
+    replans?: number;
     toolCalls?: string[];
     agentThoughts?: string[];
+    intent?: string;
+    sections?: string[];
+    missingFields?: string[];
+    evidenceCount?: number;
   };
   createdAt: string;
 };

@@ -16,7 +16,12 @@ settings = get_settings()
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
-_db_breaker = CircuitBreaker("postgres", failure_threshold=5, recovery_seconds=30)
+_db_breaker = CircuitBreaker(
+    "postgres",
+    failure_threshold=settings.circuit_breaker_failure_threshold,
+    recovery_seconds=settings.circuit_breaker_recovery_seconds,
+    enabled=settings.circuit_breaker_enabled,
+)
 
 
 def get_db_session() -> Generator[Session, None, None]:

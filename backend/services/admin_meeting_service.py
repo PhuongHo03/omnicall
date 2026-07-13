@@ -17,6 +17,7 @@ from backend.providers.storage_provider import ObjectStorageProvider
 from backend.providers.vector_provider import VectorProvider, get_vector_provider
 from backend.repositories.auth_repository import AuditEventRepository
 from backend.repositories.meeting_repository import MeetingRepository
+from backend.services.operational_log_service import OperationalLogService
 from backend.utils.exceptions import ApplicationError
 
 
@@ -29,6 +30,7 @@ class AdminMeetingService:
         lock_provider: RedisLockProvider | None = None,
         queue_provider: ProcessingQueueProvider | None = None,
         cache_provider: JsonCacheProvider | None = None,
+        operational_logs: OperationalLogService | None = None,
         settings: Settings | None = None,
     ) -> None:
         self.session = session
@@ -37,6 +39,7 @@ class AdminMeetingService:
         self.lock_provider = lock_provider or get_redis_lock_provider()
         self.queue_provider = queue_provider or get_processing_queue_provider()
         self.cache_provider = cache_provider or get_json_cache_provider()
+        self.operational_logs = operational_logs
         self.settings = settings or get_settings()
         self.meetings = MeetingRepository(session)
         self.audit = AuditEventRepository(session)
@@ -65,10 +68,20 @@ class AdminMeetingService:
             if commit:
                 self.session.commit()
                 self._invalidate_admin_metrics_cache()
+                self._clear_operational_logs(meeting_id)
             return response
         finally:
             if lock_token is not None:
                 self.lock_provider.release(lock_key, lock_token)
+
+    def _clear_operational_logs(self, meeting_id: str) -> None:
+        if self.operational_logs is None:
+            return
+        try:
+            self.operational_logs.clear_by_meeting(meeting_id)
+        except Exception:
+            # Log cleanup is best effort and must not turn a successful deletion into a failure.
+            return
 
     def _delete_meeting_without_lock(
         self,
@@ -94,8 +107,14 @@ class AdminMeetingService:
             raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
 
         queue_metadata = self.queue_provider.revoke_meeting_processing(meeting_ids=[meeting.id])
+        if queue_metadata.get("status") != "requested":
+            raise ApplicationError(
+                503,
+                "processing_queue_unavailable",
+                "Processing tasks could not be revoked. Please retry the deletion.",
+            )
         object_keys = [asset.object_key for asset in meeting.assets]
-        self._delete_vectors(meeting.owner_user_id, meeting.id)
+        self._delete_vectors(meeting.id)
         self.session.execute(delete(ChatMessage).where(ChatMessage.meeting_id == meeting.id))
         self.session.execute(delete(MeetingChunkRecord).where(MeetingChunkRecord.meeting_id == meeting.id))
         self.session.execute(delete(MeetingIntelligenceResult).where(MeetingIntelligenceResult.meeting_id == meeting.id))
@@ -120,11 +139,15 @@ class AdminMeetingService:
         )
         return DeleteResponse(id=meeting_id, deleted=True)
 
-    def _delete_vectors(self, workspace_id: str, meeting_id: str) -> None:
+    def _delete_vectors(self, meeting_id: str) -> None:
         try:
-            self.vector_provider.delete_meeting(workspace_id=workspace_id, meeting_id=meeting_id)
-        except Exception:
-            return
+            self.vector_provider.delete_meeting(meeting_id=meeting_id)
+        except Exception as exc:
+            raise ApplicationError(
+                503,
+                "vector_index_unavailable",
+                "Meeting vectors could not be removed. Please retry the deletion.",
+            ) from exc
 
     def _invalidate_admin_metrics_cache(self) -> None:
         try:

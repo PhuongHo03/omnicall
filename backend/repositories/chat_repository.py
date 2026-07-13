@@ -54,3 +54,14 @@ class ChatMessageRepository:
             .order_by(asc(ChatMessage.created_at), asc(ChatMessage.id))
         )
         return list(self.session.scalars(statement).all())
+
+    def get_response_for_user_message(self, *, meeting_id: str, user_message_id: str) -> ChatMessage | None:
+        """Return an existing terminal assistant response for one user message."""
+        for message in self.list_for_meeting(meeting_id=meeting_id):
+            metadata = message.metadata_json or {}
+            if (
+                message.role == "assistant"
+                and metadata.get("userMessageId") == user_message_id
+            ):
+                return message
+        return None

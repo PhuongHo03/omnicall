@@ -23,7 +23,7 @@
 
 ### Agent Core
 
-- [x] Create `backend/services/agentic_rag_service.py` with agent loop logic.
+- [x] Create `backend/services/agent/service.py` with agent loop logic.
 - [x] Implement `Think` step: LLM analyzes question and decides which tools to call.
 - [x] Implement `Observe` step: Agent evaluates tool results and decides next action.
 - [x] Implement `Synthesize` step: Generate final answer from accumulated context.
@@ -38,7 +38,7 @@
 
 ### Tool Registry
 
-- [x] Create `backend/services/agent_tool_registry.py` with tool definitions.
+- [x] Create `backend/services/agent/tool_registry.py` with tool definitions.
 - [x] Implement `search_semantic` tool: vector embedding search via existing `RetrievalSearchService`.
 - [x] Implement `search_keyword` tool: PostgreSQL full-text ILIKE search.
 - [x] Implement `search_section` tool: filter chunks by section type.
@@ -112,7 +112,7 @@
 
 ### Fast Path Handler
 
-- [x] Create `backend/services/fast_path_handler.py` for non-search responses.
+- [x] Create `backend/services/agent/fast_path.py` for non-search responses.
 - [x] Implement response templates for 14 fast path categories.
 - [x] Handle `greeting` responses: friendly hello messages.
 - [x] Handle `farewell` responses: goodbye messages.
@@ -134,7 +134,7 @@
 
 ### Agent Context Manager
 
-- [x] Create `backend/services/agent_context_manager.py` for context accumulation.
+- [x] Create `backend/services/agent/context_manager.py` for context accumulation.
 - [x] Implement chunk deduplication by `chunk_id`.
 - [x] Enforce max chunks per tool call (default: 5).
 - [x] Enforce max total chunks in context (default: 15).
@@ -332,7 +332,7 @@
 
 ## Notes for future sessions
 
-- 2026-07-09 recovery note: `backend/services/agentic_rag_service.py` was restored as the service-layer orchestrator for fast path detection, bounded agent tool execution, context accumulation, token budgeting, synthesis, and retrieval fallback. `MeetingChatService` now injects and calls the restored agent service, persists agent metadata, and no longer references the removed context guardrail setting.
+- 2026-07-09 recovery note: the canonical `backend/services/agent/service.py` owns fast path detection, bounded agent tool execution, context accumulation, token budgeting, synthesis, and retrieval fallback. `MeetingChatService` injects and calls the agent service, persists agent metadata, and no longer references the removed context guardrail setting.
 - 2026-07-09 worker follow-up: `MeetingChatService` was aligned with the simplified guardrail provider contract (`allowed`/`blocked` only). The chat task no longer reads removed `redacted_text`, `redact`, or `warn` fields/actions, and failed pending greeting tasks were retried successfully in the local stack.
 - Agent system prompt will need iteration based on real-world behavior.
 - Tool definitions may expand based on user feedback.

@@ -1,6 +1,6 @@
 from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.providers.transcript_types import TranscriptSegment
-from backend.providers.voice_provider import (
+from backend.providers.voice import (
     ASRProvider,
     AudioPreprocessor,
     DiarizationProvider,

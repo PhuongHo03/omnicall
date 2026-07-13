@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from backend.models.enums import MeetingStatus
 from backend.configs.settings import Settings, get_settings
-from backend.providers.analysis_provider import SCHEMA_VERSION, AnalysisProvider
+from backend.providers.analysis import SCHEMA_VERSION, AnalysisProvider
 from backend.providers.lock_provider import RedisLockProvider
 from backend.providers.transcription_provider import LocalTranscriptionProvider
 from backend.repositories.meeting_repository import (
@@ -12,8 +12,16 @@ from backend.repositories.meeting_repository import (
     MeetingIntelligenceResultRepository,
     MeetingRepository,
 )
-from backend.services.retrieval_index_service import RetrievalIndexService
+from backend.services.retrieval.index_service import RetrievalIndexService
 from backend.services.operational_log_service import OperationalLogService
+from backend.services.processing.observability import asset_log_context, elapsed_ms
+from backend.services.processing.result_validation import validate_result_json
+from backend.services.processing.analysis_stage import AnalysisStage
+from backend.services.processing.persistence_stage import PersistenceStage
+from backend.services.processing.retrieval_index_stage import RetrievalIndexStage
+from backend.services.processing.transcription_stage import TranscriptionStage
+from backend.services.processing.hierarchical_extraction_service import HierarchicalExtractionService
+from backend.repositories.transcript_window_repository import TranscriptWindowRepository
 
 
 class ProcessingPipelineService:
@@ -37,6 +45,31 @@ class ProcessingPipelineService:
         self.results = MeetingIntelligenceResultRepository(session)
         self.retrieval_index = retrieval_index or RetrievalIndexService(session)
         self.operational_logs = operational_logs
+        self.transcription_stage = TranscriptionStage(
+            provider=self.transcription_provider,
+            emit=self._emit,
+            emit_stage_started=self._emit_stage_started,
+        )
+        self.analysis_stage = AnalysisStage(
+            provider=self.analysis_provider,
+            emit=self._emit,
+            emit_stage_started=self._emit_stage_started,
+            extraction_service=HierarchicalExtractionService(
+                session=session,
+                analysis_provider=self.analysis_provider,
+                settings=self.settings,
+            ),
+        )
+        self.persistence_stage = PersistenceStage(
+            results_repository=self.results,
+            emit=self._emit,
+        )
+        self.retrieval_index_stage = RetrievalIndexStage(
+            retrieval_index=self.retrieval_index,
+            settings=self.settings,
+            emit=self._emit,
+        )
+        self.transcript_windows = TranscriptWindowRepository(session)
 
     def process_meeting(self, *, meeting_id: str) -> dict[str, str]:
         lock_key = f"lock:meeting-processing:{meeting_id}"
@@ -104,7 +137,7 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id if meeting else None,
                 meeting_id=meeting_id,
                 meeting_name=meeting.title if meeting is not None else None,
-                file=_asset_log_context(asset),
+                file=asset_log_context(asset),
                 provider="celery",
                 error_type="MissingMeetingAsset",
                 error_message="Meeting or uploaded asset was not found.",
@@ -120,7 +153,7 @@ class ProcessingPipelineService:
             workspace_id=meeting.owner_user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            file=_asset_log_context(asset),
+            file=asset_log_context(asset),
             provider="celery",
         )
         self.meetings.update_status(meeting, MeetingStatus.PROCESSING)
@@ -135,113 +168,30 @@ class ProcessingPipelineService:
             workspace_id=meeting.owner_user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            file=_asset_log_context(asset),
+            file=asset_log_context(asset),
         )
 
         processing_started = time.perf_counter()
         current_stage = "transcription"
         stage_started = time.perf_counter()
         try:
-            transcription_route = self._transcription_route(asset)
-            self._emit_stage_started(
-                stage=current_stage,
-                message="Transcript extraction started.",
-                meeting=meeting,
-                asset=asset,
-                provider=transcription_route["provider"],
-                model=transcription_route["model"],
-                details=transcription_route["details"],
-            )
-            transcript_segments = self.transcription_provider.transcribe(meeting, asset)
-            detected_language = self.transcription_provider.last_voice_metadata.get("detectedLanguage")
-            transcription_duration_ms = _elapsed_ms(stage_started)
-            self._emit(
-                level="info",
-                flow="processing",
-                stage="transcription",
-                status="succeeded",
-                message="Transcript extraction completed.",
-                workspace_id=meeting.owner_user_id,
-                meeting_id=meeting.id,
-                meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                provider=self.transcription_provider.last_provider_name,
-                model=self.transcription_provider.last_provider_model,
-                duration_ms=transcription_duration_ms,
-                details={"segmentCount": len(transcript_segments)},
-            )
-            self._emit_voice_stage_results(
-                meeting=meeting,
-                asset=asset,
-                transcript_segments=transcript_segments,
-                transcription_duration_ms=transcription_duration_ms,
-            )
+            transcription_result = self.transcription_stage.run(meeting=meeting, asset=asset)
+            transcript_segments = transcription_result.segments
+            detected_language = transcription_result.detected_language
 
             current_stage = "analysis"
             stage_started = time.perf_counter()
-            self._emit_stage_started(
-                stage=current_stage,
-                message="Meeting intelligence analysis started.",
-                meeting=meeting,
-                asset=asset,
-                provider=self.analysis_provider.provider_name,
-                model=self.analysis_provider.provider_model,
-            )
-            result_json = self.analysis_provider.build_result(
+            analysis_result = self.analysis_stage.run(
                 meeting=meeting,
                 asset=asset,
                 transcript_segments=transcript_segments,
                 detected_language=detected_language,
+                transcription_provider=self.transcription_provider,
             )
-            analysis_llm = getattr(self.analysis_provider, "llm_provider", None)
-            if getattr(analysis_llm, "last_fallback_used", False):
-                primary = getattr(analysis_llm, "primary", None)
-                self._emit(
-                    level="error",
-                    flow="processing",
-                    stage="analysis_llm_primary",
-                    status="failed",
-                    message="Primary analysis LLM failed; Ollama fallback was activated.",
-                    workspace_id=meeting.owner_user_id,
-                    meeting_id=meeting.id,
-                    meeting_name=meeting.title,
-                    file=_asset_log_context(asset),
-                    provider=getattr(primary, "provider_name", None),
-                    model=getattr(primary, "model_name", None),
-                    duration_ms=_elapsed_ms(stage_started),
-                    error_type=getattr(analysis_llm, "last_primary_error_type", "LLMProviderError"),
-                    error_message=getattr(analysis_llm, "last_primary_error_message", "Primary LLM provider failed."),
-                )
-            runtime_provider = result_json.get("source", {}).get("llmProvider") or self.analysis_provider.last_provider_name
-            runtime_model = result_json.get("source", {}).get("analysisModel") or self.analysis_provider.last_provider_model
-            self._emit(
-                level="info",
-                flow="processing",
-                stage=current_stage,
-                status="succeeded",
-                message="Meeting intelligence analysis completed.",
-                workspace_id=meeting.owner_user_id,
-                meeting_id=meeting.id,
-                meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                provider=runtime_provider,
-                model=runtime_model,
-                duration_ms=_elapsed_ms(stage_started),
-                details={
-                    "schemaVersion": result_json.get("schemaVersion"),
-                    "summaryPresent": bool(result_json.get("summary", {}).get("executive")),
-                    "analysisSections": len(result_json.get("analysis", {})),
-                },
-            )
-            result_json.setdefault("source", {})
-            result_json["source"]["transcriptionProvider"] = self.transcription_provider.last_provider_name
-            result_json["source"]["transcriptionModel"] = self.transcription_provider.last_provider_model
-            if getattr(self.transcription_provider, "last_voice_metadata", None):
-                result_json["source"]["voiceMetadata"] = self.transcription_provider.last_voice_metadata
-                _append_voice_quality_warnings(result_json, self.transcription_provider.last_voice_metadata)
+            result_json = analysis_result.result_json
             current_stage = "result_validation"
             stage_started = time.perf_counter()
-            self._validate_result_json(result_json)
+            validate_result_json(result_json)
             self._emit(
                 level="info",
                 flow="processing",
@@ -251,76 +201,37 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                duration_ms=_elapsed_ms(stage_started),
+                file=asset_log_context(asset),
+                duration_ms=elapsed_ms(stage_started),
                 details={"schemaVersion": SCHEMA_VERSION, "segmentCount": len(transcript_segments)},
             )
 
             current_stage = "result_persistence"
             stage_started = time.perf_counter()
-            result = self.results.upsert(
-                meeting_id=meeting.id,
-                
-                schema_version=SCHEMA_VERSION,
+            persistence_result = self.persistence_stage.run(
+                meeting=meeting,
+                asset=asset,
+                result_json=result_json,
                 provider_name=self.analysis_provider.last_provider_name,
                 provider_model=self.analysis_provider.last_provider_model,
-                result_json=result_json,
             )
-            self._emit(
-                level="info",
-                flow="processing",
-                stage=current_stage,
-                status="succeeded",
-                message="Processed meeting intelligence JSON persisted.",
-                workspace_id=meeting.owner_user_id,
-                meeting_id=meeting.id,
-                meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                duration_ms=_elapsed_ms(stage_started),
-                details={
-                    "resultId": result.id,
-                    "segmentCount": len(result_json["transcript"]["segments"]),
-                },
-            )
+            result = persistence_result.result
+            extraction_generation = result_json.get("extraction", {}).get("generation")
+            if extraction_generation:
+                self.transcript_windows.attach_result(
+                    meeting_id=meeting.id,
+                    generation=extraction_generation,
+                    result_id=result.id,
+                )
 
             current_stage = "retrieval_index"
             stage_started = time.perf_counter()
-            retrieval_chunks = self.retrieval_index.rebuild_for_result(result)
-            index_metadata = self.retrieval_index.last_index_metadata
-            self._emit(
-                level="info",
-                flow="processing",
-                stage="embedding",
-                status="succeeded",
-                message="Retrieval chunks and text embeddings generated.",
-                workspace_id=meeting.owner_user_id,
-                meeting_id=meeting.id,
-                meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                provider=index_metadata.get("embeddingProvider"),
-                model=index_metadata.get("embeddingModel"),
-                duration_ms=index_metadata.get("embeddingDurationMs"),
-                details={"chunkCount": len(retrieval_chunks)},
+            retrieval_result = self.retrieval_index_stage.run(
+                meeting=meeting,
+                asset=asset,
+                result=result,
             )
-            vector_metadata = index_metadata.get("vector", {})
-            vector_failed = vector_metadata.get("status") == "failed"
-            self._emit(
-                level="error" if vector_failed else "info",
-                flow="processing",
-                stage="vector_upsert",
-                status="failed" if vector_failed else "succeeded",
-                message="Vector index update failed." if vector_failed else "Vector index updated.",
-                workspace_id=meeting.owner_user_id,
-                meeting_id=meeting.id,
-                meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                provider=index_metadata.get("vectorProvider"),
-                model=self.settings.milvus_collection,
-                duration_ms=index_metadata.get("vectorDurationMs"),
-                details=vector_metadata,
-                error_type="VectorProviderError" if vector_failed else None,
-                error_message=vector_metadata.get("error") if vector_failed else None,
-            )
+            retrieval_chunks = retrieval_result.chunks
 
             self.meetings.update_status(meeting, MeetingStatus.READY)
             self.session.commit()
@@ -333,8 +244,8 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                file=_asset_log_context(asset),
-                duration_ms=_elapsed_ms(processing_started),
+                file=asset_log_context(asset),
+                duration_ms=elapsed_ms(processing_started),
                 details={
                     "resultId": result.id,
                     "schemaVersion": SCHEMA_VERSION,
@@ -362,10 +273,10 @@ class ProcessingPipelineService:
                 workspace_id=meeting.owner_user_id,
                 meeting_id=meeting.id,
                 meeting_name=meeting.title,
-                file=_asset_log_context(asset),
+                file=asset_log_context(asset),
                 provider=provider,
                 model=model,
-                duration_ms=_elapsed_ms(stage_started),
+                duration_ms=elapsed_ms(stage_started),
                 details={"safeReason": safe_reason},
                 error_type=type(exc).__name__,
                 error_message=str(exc),
@@ -392,89 +303,11 @@ class ProcessingPipelineService:
             workspace_id=meeting.owner_user_id,
             meeting_id=meeting.id,
             meeting_name=meeting.title,
-            file=_asset_log_context(asset),
+            file=asset_log_context(asset),
             provider=provider,
             model=model,
             details=details or {},
         )
-
-    def _transcription_route(self, asset) -> dict:
-        return {
-            "provider": self.transcription_provider.provider_name,
-            "model": self.transcription_provider.provider_model,
-            "details": {},
-        }
-
-    def _emit_voice_stage_results(
-        self,
-        *,
-        meeting,
-        asset,
-        transcript_segments: list,
-        transcription_duration_ms: int,
-    ) -> None:
-        metadata = getattr(self.transcription_provider, "last_voice_metadata", {}) or {}
-        if metadata.get("sourceKind") != "voice":
-            return
-        segment_count = len(transcript_segments)
-        common = {
-            "level": "info",
-            "flow": "processing",
-            "status": "succeeded",
-            "workspace_id": meeting.owner_user_id,
-            "meeting_id": meeting.id,
-            "meeting_name": meeting.title,
-            "file": _asset_log_context(asset),
-        }
-        self._emit(
-            **common,
-            stage="audio_preprocessing",
-            message="Audio preprocessing completed.",
-            provider=metadata.get("audioPreprocessor"),
-            model=metadata.get("audioPreprocessorModel"),
-            details={
-                "durationMs": metadata.get("durationMs"),
-                "sampleRateHz": metadata.get("sampleRateHz"),
-                "channelCount": metadata.get("channelCount"),
-                "warnings": metadata.get("warnings", []),
-            },
-        )
-        self._emit(
-            **common,
-            stage="vad",
-            message="Voice activity detection completed.",
-            provider=metadata.get("vadProvider"),
-            model=metadata.get("vadModel"),
-            details={
-                "speechRegionCount": metadata.get("speechRegionCount", 0),
-                "speechRegions": metadata.get("speechRegions", []),
-            },
-        )
-        self._emit(
-            **common,
-            stage="asr",
-            message="Automatic speech recognition completed.",
-            provider=metadata.get("asrProvider") or self.transcription_provider.last_provider_name,
-            model=metadata.get("asrModel") or self.transcription_provider.last_provider_model,
-            duration_ms=transcription_duration_ms,
-            details={"segmentCount": segment_count, "audioDurationMs": metadata.get("durationMs")},
-        )
-        if metadata.get("diarizationProvider"):
-            speakers = len(
-                {
-                    segment.speaker
-                    for segment in transcript_segments
-                    if getattr(segment, "speaker", None)
-                }
-            )
-            self._emit(
-                **common,
-                stage="diarization",
-                message="Speaker diarization completed.",
-                provider=metadata.get("diarizationProvider"),
-                model=metadata.get("diarizationModel"),
-                details={"segmentCount": segment_count, "speakerCount": speakers or None},
-            )
 
     def _stage_model(self, stage: str) -> tuple[str | None, str | None]:
         voice_metadata = getattr(self.transcription_provider, "last_voice_metadata", {}) or {}
@@ -523,138 +356,4 @@ class ProcessingPipelineService:
 
     @staticmethod
     def _validate_result_json(result_json: dict) -> None:
-        required_top_level = {"schemaVersion", "meeting", "source", "transcript", "summary", "analysis", "citations", "quality"}
-        missing = required_top_level.difference(result_json)
-        if missing:
-            raise ValueError(f"Processed result missing sections: {', '.join(sorted(missing))}")
-
-        segments = result_json.get("transcript", {}).get("segments", [])
-        if not segments:
-            raise ValueError("Processed result must include at least one transcript segment.")
-
-        summary = result_json.get("summary", {})
-        if not summary.get("executive"):
-            raise ValueError("Processed result must include an executive summary.")
-
-        segment_ids = {segment.get("id") for segment in segments}
-        citations = {citation.get("id"): citation for citation in result_json.get("citations", [])}
-        for citation in citations.values():
-            for segment_id in citation.get("segmentIds", []):
-                if segment_id not in segment_ids:
-                    raise ValueError(f"Citation references unknown transcript segment: {segment_id}")
-
-        for item in _extract_indexed_insights(result_json):
-            for citation_id in item.get("citationIds", []):
-                if citation_id not in citations:
-                    raise ValueError(f"Insight references unknown citation: {citation_id}")
-
-
-def _extract_indexed_insights(result_json: dict) -> list[dict]:
-    insights: list[dict] = []
-    citations_by_id = {citation.get("id"): citation for citation in result_json.get("citations", [])}
-    summary = result_json.get("summary", {})
-    if summary.get("executive"):
-        insights.append(
-            {
-                "section": "summary.executive",
-                "itemId": "summary-executive",
-                "title": "Executive summary",
-                "text": summary["executive"],
-                "citationIds": [],
-                "segmentIds": [],
-                "payload": summary,
-            }
-        )
-    for index, item in enumerate(summary.get("detailed", []), start=1):
-        if isinstance(item, dict):
-            insights.append(_indexed_item("summary.detailed", index, item, citations_by_id))
-    for index, item in enumerate(summary.get("keyPoints", []), start=1):
-        if isinstance(item, dict):
-            insights.append(_indexed_item("summary.keyPoints", index, item, citations_by_id))
-
-    analysis = result_json.get("analysis", {})
-    for section, values in analysis.items():
-        if section == "emptySections" or not isinstance(values, list):
-            continue
-        for index, item in enumerate(values, start=1):
-            if isinstance(item, dict):
-                insights.append(_indexed_item(f"analysis.{section}", index, item, citations_by_id))
-    return [insight for insight in insights if insight["text"].strip()]
-
-
-def _indexed_item(section: str, index: int, item: dict, citations_by_id: dict[str, dict]) -> dict:
-    citation_ids = list(item.get("citationIds", []))
-    segment_ids = []
-    for citation_id in citation_ids:
-        segment_ids.extend(citations_by_id.get(citation_id, {}).get("segmentIds", []))
-    return {
-        "section": section,
-        "itemId": item.get("id") or f"{section}-{index:03d}",
-        "title": item.get("title") or item.get("name") or item.get("owner"),
-        "text": _item_text(item),
-        "citationIds": citation_ids,
-        "segmentIds": list(dict.fromkeys(segment_ids or item.get("sourceSegmentIds", []))),
-        "payload": item,
-    }
-
-
-def _item_text(item: dict) -> str:
-    for key in ("text", "summary", "task", "question", "quote", "name"):
-        value = item.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
-
-
-def _append_voice_quality_warnings(result_json: dict, voice_metadata: dict) -> None:
-    quality = result_json.setdefault("quality", {})
-    warnings = quality.setdefault("warnings", [])
-    if not isinstance(warnings, list):
-        warnings = []
-        quality["warnings"] = warnings
-
-    source_kind = voice_metadata.get("sourceKind")
-    if source_kind == "voice":
-        warnings.append("Voice input was processed through the voice provider pipeline.")
-        if voice_metadata.get("asrProvider"):
-            warnings.append("Voice transcript was produced by the configured local ASR provider.")
-        if voice_metadata.get("diarizationProvider"):
-            warnings.append("Speaker labels were assigned by the configured local diarization provider.")
-    elif source_kind == "text":
-        warnings.append("Transcript was extracted from an uploaded text transcript.")
-    elif source_kind:
-        warnings.append(f"Transcript source kind: {source_kind}.")
-
-    for warning in voice_metadata.get("warnings", []):
-        if isinstance(warning, str) and warning:
-            warnings.append(warning)
-    warning = voice_metadata.get("warning")
-    if isinstance(warning, str) and warning:
-        warnings.append(warning)
-    quality["warnings"] = list(dict.fromkeys(warnings))
-
-
-def _asset_log_context(asset) -> dict:
-    if asset is None:
-        return {}
-    return {
-        "id": asset.id,
-        "name": asset.file_name,
-        "contentType": asset.content_type,
-        "sizeBytes": asset.size_bytes,
-        "objectKey": asset.object_key,
-    }
-
-
-def _job_log_context(meeting) -> dict:
-    return {
-        "id": meeting.id,
-        "attempt": meeting.attempts,
-        "queue": "meeting-processing",
-        "taskName": "omnicall.processing.process_meeting",
-        "status": str(meeting.status),
-    }
-
-
-def _elapsed_ms(started: float) -> int:
-    return int((time.perf_counter() - started) * 1000)
+        validate_result_json(result_json)

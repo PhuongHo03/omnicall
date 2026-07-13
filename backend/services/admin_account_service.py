@@ -12,6 +12,7 @@ from backend.providers.queue_provider import ProcessingQueueProvider, get_proces
 from backend.providers.storage_provider import ObjectStorageProvider
 from backend.repositories.auth_repository import AuditEventRepository, AuthRepository
 from backend.services.admin_meeting_service import AdminMeetingService
+from backend.services.operational_log_service import OperationalLogService
 from backend.utils.exceptions import ApplicationError
 
 
@@ -23,6 +24,7 @@ class AdminAccountService:
         lock_provider: RedisLockProvider | None = None,
         queue_provider: ProcessingQueueProvider | None = None,
         cache_provider: JsonCacheProvider | None = None,
+        operational_logs: OperationalLogService | None = None,
         settings: Settings | None = None,
     ) -> None:
         self.session = session
@@ -30,6 +32,7 @@ class AdminAccountService:
         self.lock_provider = lock_provider or get_redis_lock_provider()
         self.queue_provider = queue_provider or get_processing_queue_provider()
         self.cache_provider = cache_provider or get_json_cache_provider()
+        self.operational_logs = operational_logs
         self.settings = settings or get_settings()
         self.auth = AuthRepository(session)
         self.audit = AuditEventRepository(session)
@@ -93,6 +96,7 @@ class AdminAccountService:
                 lock_provider=self.lock_provider,
                 queue_provider=self.queue_provider,
                 cache_provider=self.cache_provider,
+                operational_logs=self.operational_logs,
                 settings=self.settings,
             )
             for meeting_id in meeting_ids:
@@ -130,6 +134,13 @@ class AdminAccountService:
             )
             self.session.commit()
             self._invalidate_admin_metrics_cache()
+            if self.operational_logs is not None:
+                for meeting_id in meeting_ids:
+                    try:
+                        self.operational_logs.clear_by_meeting(meeting_id)
+                    except Exception:
+                        # Log cleanup is best effort and must not turn account deletion into a failure.
+                        continue
             return DeleteResponse(id=user_id, deleted=True)
         finally:
             self._release_meeting_processing_locks(acquired_locks)

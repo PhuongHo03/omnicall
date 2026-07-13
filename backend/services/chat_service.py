@@ -15,7 +15,8 @@ from backend.dtos.meeting_dto import (
 from backend.models.enums import MeetingStatus
 from backend.models.meeting_models import ChatMessage
 from backend.providers.guardrail_provider import GuardrailProvider, GuardrailResult, get_guardrail_provider, safe_guardrail_check
-from backend.providers.llm_provider import (
+from backend.providers.app_metrics_provider import AGENT_FAST_PATH_TOTAL, AGENT_ITERATIONS, AGENT_REPLANS, AGENT_TOOL_CALLS_TOTAL
+from backend.providers.llm import (
     LLMProvider,
     get_llm_provider,
 )
@@ -23,7 +24,7 @@ from backend.repositories.chat_repository import ChatMessageRepository
 from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository
 from backend.services.agent import AgenticRAGService
 from backend.services.operational_log_service import OperationalLogService
-from backend.services.retrieval_search_service import RetrievalSearchService
+from backend.services.retrieval.search_service import RetrievalSearchService
 from backend.utils.exceptions import ApplicationError
 
 
@@ -184,6 +185,7 @@ class MeetingChatService:
             meeting.pending_chat_status = None
             self._save_blocked_chat_response(
                 meeting_id=meeting.id,
+                user_message_id=user_message.id,
                 user_content=user_message.content,
                 guardrails={"input": input_guardrail.to_metadata()},
                 safe_message=input_guardrail.safe_message or "Câu hỏi đã bị đánh dấu không an toàn",
@@ -201,19 +203,38 @@ class MeetingChatService:
         )
         agent_result = self.agentic_rag_service.generate_answer(
             meeting_id=meeting.id,
-            workspace_id=user_id,
             question=effective_question,
             event_callback=event_callback,
         )
+        AGENT_ITERATIONS.observe(agent_result.iterations)
+        replans = agent_result.metadata.get("replans", 0)
+        if isinstance(replans, int) and replans > 0:
+            AGENT_REPLANS.inc(replans)
+        if agent_result.evidence_state == "fast_path":
+            AGENT_FAST_PATH_TOTAL.inc()
+        for tool_call in agent_result.tool_calls_summary:
+            tool_name = tool_call.get("tool") if isinstance(tool_call, dict) else None
+            if isinstance(tool_name, str):
+                AGENT_TOOL_CALLS_TOTAL.labels(tool_name).inc()
         answer_payload = agent_result.to_answer_payload()
         agent_chunks = agent_result.metadata.get("chunks", [])
-        citations = [_citation_response_from_chunk(chunk) for chunk in agent_chunks[:4]]
+        verified_citation_ids = agent_result.metadata.get("verifiedCitationIds")
+        if verified_citation_ids is None:
+            # Compatibility for custom/legacy AgentResult implementations that
+            # predate the explicit synthesizer citation metadata.
+            verified_citation_ids = list(dict.fromkeys(
+                citation_id
+                for chunk in agent_chunks
+                if isinstance(chunk, dict)
+                for citation_id in chunk.get("citationIds") or []
+                if isinstance(citation_id, str)
+            ))
+        citations = _citation_responses_from_chunks(agent_chunks, verified_citation_ids)
         retrieved_chunk_ids = [
             chunk.get("chunkId")
             for chunk in agent_chunks
             if isinstance(chunk, dict) and isinstance(chunk.get("chunkId"), str)
         ]
-        context_guardrail = None
         self._emit(
             level="info" if answer_payload.get("evidenceState") != "error" else "error",
             flow="rag",
@@ -256,7 +277,6 @@ class MeetingChatService:
         answer_payload, citations = _apply_output_guardrail(answer_payload, citations, output_guardrail)
         guardrails = _guardrail_map(
             input=input_guardrail,
-            context=context_guardrail,
             output=output_guardrail,
         )
 
@@ -271,9 +291,12 @@ class MeetingChatService:
                 "confidence": answer_payload["confidence"],
                 "provider": answer_payload["provider"],
                 "model": answer_payload.get("model"),
+                "userMessageId": user_message_id,
                 "agentIterations": answer_payload.get("agentIterations"),
                 "agentToolCalls": answer_payload.get("agentToolCalls", []),
                 "agentThoughts": answer_payload.get("agentThoughts", []),
+                "agentReplans": agent_result.metadata.get("replans", 0),
+                "agentQueryPlan": agent_result.metadata.get("queryPlan", {}),
                 "agent": {
                     "durationMs": agent_result.total_duration_ms,
                     "tokenUsage": agent_result.metadata.get("tokenUsage", {}),
@@ -309,16 +332,28 @@ class MeetingChatService:
         )
         return {"status": "succeeded"}
 
-    def _save_error_message(self, meeting_id: str, error_text: str, guardrails: dict) -> None:
+    def save_error_response(
+        self,
+        *,
+        meeting_id: str,
+        user_message_id: str,
+        guardrails: dict | None = None,
+    ) -> None:
+        if self.chat_messages.get_response_for_user_message(
+            meeting_id=meeting_id,
+            user_message_id=user_message_id,
+        ) is not None:
+            return
         self.chat_messages.create(
             meeting_id=meeting_id,
             role="assistant",
-            content=f"Error generating answer: {error_text}",
+            content="Không thể tạo câu trả lời lúc này. Vui lòng thử lại sau.",
             metadata={
                 "evidenceState": "error",
                 "confidence": 0.0,
                 "provider": "system",
-                "guardrails": guardrails,
+                "userMessageId": user_message_id,
+                "guardrails": guardrails or {},
             },
         )
         self.session.commit()
@@ -345,6 +380,7 @@ class MeetingChatService:
         self,
         *,
         meeting_id: str,
+        user_message_id: str,
         user_content: str,
         guardrails: dict,
         safe_message: str,
@@ -357,6 +393,7 @@ class MeetingChatService:
                 "evidenceState": "blocked",
                 "confidence": 1.0,
                 "provider": "local-guardrail",
+                "userMessageId": user_message_id,
                 "guardrails": guardrails,
                 "guardrailDecisionCounts": _decision_counts(guardrails),
             },
@@ -498,26 +535,89 @@ def _decision_counts(guardrails: dict) -> dict[str, int]:
     return counts
 
 
-def _citation_response_from_chunk(chunk: dict) -> MeetingChatCitationResponse:
+def _citation_responses_from_chunks(
+    chunks: list[dict],
+    verified_citation_ids: list[str] | None,
+) -> list[MeetingChatCitationResponse]:
+    allowed = set(verified_citation_ids or [])
+    if not allowed:
+        return []
+    responses: list[MeetingChatCitationResponse] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        for citation_id in chunk.get("citationIds") or []:
+            if not isinstance(citation_id, str) or citation_id not in allowed or citation_id in seen:
+                continue
+            seen.add(citation_id)
+            responses.append(_citation_response_from_chunk(chunk, citation_id))
+    return responses
+
+
+def _citation_response_from_chunk(chunk: dict, citation_id: str) -> MeetingChatCitationResponse:
+    metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+    citation_quotes = metadata.get("citationQuotes") if isinstance(metadata.get("citationQuotes"), dict) else {}
+    citation_locations = metadata.get("citationLocations") if isinstance(metadata.get("citationLocations"), dict) else {}
+    location = citation_locations.get(citation_id) if isinstance(citation_locations.get(citation_id), dict) else {}
+    quote = citation_quotes.get(citation_id) if isinstance(citation_quotes.get(citation_id), str) else chunk.get("text")
+    location_segment_ids = location.get("segmentIds")
+    segment_ids = (
+        list(location_segment_ids)
+        if isinstance(location_segment_ids, list)
+        else list(chunk.get("segmentIds") or [])
+    )
+    start_ms = location.get("startMs") if isinstance(location.get("startMs"), int) and location.get("startMs") >= 0 else chunk.get("startMs")
+    end_ms = location.get("endMs") if isinstance(location.get("endMs"), int) and location.get("endMs") >= 0 else chunk.get("endMs")
     return MeetingChatCitationResponse(
+        citation_id=citation_id,
         chunk_id=str(chunk.get("chunkId") or ""),
         source_type=str(chunk.get("sourceType") or ""),
         section_type=str(chunk.get("sectionType") or ""),
         json_pointer=str(chunk.get("jsonPointer") or ""),
-        citation_ids=list(chunk.get("citationIds") or []),
-        segment_ids=list(chunk.get("segmentIds") or []),
-        start_ms=chunk.get("startMs") if isinstance(chunk.get("startMs"), int) else None,
-        end_ms=chunk.get("endMs") if isinstance(chunk.get("endMs"), int) else None,
-        text=str(chunk.get("text") or ""),
+        segment_ids=segment_ids,
+        start_ms=start_ms if isinstance(start_ms, int) and start_ms >= 0 else None,
+        end_ms=end_ms if isinstance(end_ms, int) and end_ms >= 0 else None,
+        quote=str(quote or ""),
     )
 
+
+def _normalize_legacy_citation(citation: dict) -> list[dict]:
+    """Normalize Phase 26 chunk citations for history reads."""
+    citation_ids = citation.get("citation_ids") or []
+    if not citation_ids:
+        return []
+    return [
+        {
+            "citation_id": citation_id,
+            "chunk_id": citation.get("chunk_id", ""),
+            "source_type": citation.get("source_type", ""),
+            "section_type": citation.get("section_type", ""),
+            "json_pointer": citation.get("json_pointer", ""),
+            "segment_ids": list(citation.get("segment_ids") or []),
+            "start_ms": citation.get("start_ms"),
+            "end_ms": citation.get("end_ms"),
+            "quote": citation.get("text", ""),
+        }
+        for citation_id in citation_ids
+        if isinstance(citation_id, str)
+    ]
+
 def _message_response(message: ChatMessage) -> MeetingChatMessageResponse:
+    normalized_citations: list[dict] = []
+    for citation in message.citations or []:
+        if not isinstance(citation, dict):
+            continue
+        if citation.get("citation_id"):
+            normalized_citations.append(citation)
+        else:
+            normalized_citations.extend(_normalize_legacy_citation(citation))
     return MeetingChatMessageResponse(
         id=message.id,
         role=message.role,
         content=message.content,
         retrieved_chunk_ids=list(message.retrieved_chunk_ids or []),
-        citations=[MeetingChatCitationResponse(**citation) for citation in message.citations],
+        citations=[MeetingChatCitationResponse(**citation) for citation in normalized_citations],
         metadata=message.metadata_json or {},
         created_at=message.created_at,
     )

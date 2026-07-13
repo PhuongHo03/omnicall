@@ -272,6 +272,22 @@
   margin: 0;
 }
 
+.citation-card__playback {
+  justify-self: start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.citation-card__playback:hover {
+  text-decoration: underline;
+}
+
 /* ── Composer ── */
 
 .chat-composer {

@@ -32,6 +32,10 @@ celery_app.conf.task_routes = {
         "queue": "meeting-processing",
         "routing_key": "meeting-processing",
     },
+    "omnicall.processing.extract_transcript_window": {
+        "queue": "meeting-processing",
+        "routing_key": "meeting-processing",
+    },
     "omnicall.processing.reconcile_pending_meetings": {
         "queue": "processing-maintenance",
         "routing_key": "processing-maintenance",

@@ -11,7 +11,7 @@ export function extractTranscriptEntries(intelligenceResult: MeetingIntelligence
       const s = seg as Record<string, unknown>;
       return {
         id: String(s.id ?? ""),
-        speaker: String(s.speaker ?? "Unknown"),
+        speaker: String(s.speakerLabel ?? s.speaker ?? "Unknown"),
         startMs: typeof s.startMs === "number" ? s.startMs : 0,
         endMs: typeof s.endMs === "number" ? s.endMs : 0,
         text: String(s.text ?? ""),

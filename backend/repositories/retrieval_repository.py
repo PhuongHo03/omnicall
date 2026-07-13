@@ -1,4 +1,7 @@
-from sqlalchemy import delete, func, select
+import re
+
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from backend.models.meeting_models import MeetingChunkRecord
@@ -45,13 +48,9 @@ class MeetingChunkRepository:
         statement = select(MeetingChunkRecord).where(MeetingChunkRecord.meeting_id == meeting_id)
         return list(self.session.scalars(statement).all())
 
-    def list_for_workspace_meeting(self, *, workspace_id: str, meeting_id: str) -> list[MeetingChunkRecord]:
-        return self.list_for_meeting(meeting_id)
-
-    def list_by_chunk_ids_for_workspace_meeting(
+    def list_by_chunk_ids_for_meeting(
         self,
         *,
-        workspace_id: str,
         meeting_id: str,
         chunk_ids: list[str],
     ) -> list[MeetingChunkRecord]:
@@ -85,12 +84,33 @@ class MeetingChunkRepository:
         if not keyword or not keyword.strip():
             return []
 
-        pattern = f"%{keyword.strip()}%"
-        statement = (
+        raw_keyword = keyword.strip()
+        pattern = f"%{raw_keyword}%"
+        exact_statement = (
             select(MeetingChunkRecord)
             .where(
                 MeetingChunkRecord.meeting_id == meeting_id,
                 func.lower(MeetingChunkRecord.text).like(func.lower(pattern)),
+            )
+            .order_by(MeetingChunkRecord.created_at.desc())
+            .limit(limit)
+        )
+        exact_matches = list(self.session.scalars(exact_statement).all())
+        if exact_matches:
+            return exact_matches
+
+        # Support planner-generated expressions such as "price OR cost OR
+        # dollar" and avoid requiring an entire user sentence to occur in a
+        # canonical English JSON chunk.
+        terms = [term for term in re.findall(r"[\w$]+", raw_keyword.lower()) if len(term) >= 2]
+        if not terms:
+            return []
+        term_predicates = [func.lower(MeetingChunkRecord.text).like(f"%{term}%") for term in terms]
+        statement = (
+            select(MeetingChunkRecord)
+            .where(
+                MeetingChunkRecord.meeting_id == meeting_id,
+                or_(*term_predicates),
             )
             .order_by(
                 MeetingChunkRecord.created_at.desc(),
@@ -98,6 +118,35 @@ class MeetingChunkRepository:
             .limit(limit)
         )
         return list(self.session.scalars(statement).all())
+
+    def search_by_trigram(
+        self,
+        *,
+        meeting_id: str,
+        query: str,
+        threshold: float,
+        limit: int,
+    ) -> list[tuple[MeetingChunkRecord, float]]:
+        if not query or not query.strip():
+            return []
+        similarity = func.similarity(func.lower(MeetingChunkRecord.text), query.strip().lower())
+        statement = (
+            select(MeetingChunkRecord, similarity.label("similarity"))
+            .where(
+                MeetingChunkRecord.meeting_id == meeting_id,
+                similarity >= threshold,
+            )
+            .order_by(similarity.desc(), MeetingChunkRecord.created_at.asc())
+            .limit(limit)
+        )
+        try:
+            rows = self.session.execute(statement).all()
+        except ProgrammingError as exc:
+            if "similarity" not in str(exc).lower() and "pg_trgm" not in str(exc).lower():
+                raise
+            self.session.rollback()
+            return []
+        return [(record, float(score)) for record, score in rows]
 
     def list_by_section_type(
         self,
@@ -110,7 +159,7 @@ class MeetingChunkRepository:
 
         Args:
             meeting_id: The meeting ID to search within
-            section_type: The section type to filter by (e.g., 'summary.executive', 'analysis.actionItems')
+            section_type: The section type to filter by (e.g., 'summary.executive', 'action.item')
             limit: Maximum number of results to return (default 10)
 
         Returns:
@@ -176,7 +225,7 @@ class MeetingChunkRepository:
 
         Args:
             meeting_id: The meeting ID to search within
-            section_types: List of section types to retrieve (e.g., ['summary.executive', 'analysis.actionItems'])
+            section_types: List of section types to retrieve (e.g., ['summary.executive', 'action.item'])
             limit: Maximum total results to return (default 50)
 
         Returns:

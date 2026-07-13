@@ -48,7 +48,9 @@ class MeetingRepository:
 
     def update_status(self, meeting: Meeting, status: MeetingStatus, failure_reason: str | None = None) -> Meeting:
         meeting.status = status
-        if failure_reason is not None:
+        if status != MeetingStatus.FAILED:
+            meeting.failure_reason = None
+        elif failure_reason is not None:
             meeting.failure_reason = failure_reason
         self.session.flush()
         return meeting

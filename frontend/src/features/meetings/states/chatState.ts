@@ -30,10 +30,14 @@ export function formatAgentToolLabel(tool: string): string {
 }
 
 export function formatAgentSearchMessage(tools: string[]): string {
-  if (tools.length === 0) {
-    return "Đang tìm bằng chứng trong cuộc họp...";
+  return "Đang tìm bằng chứng trong cuộc họp...";
+}
+
+export function formatAgentObservationMessage(resultCount: number): string {
+  if (resultCount <= 0) {
+    return "Đang kiểm tra kết quả tìm kiếm...";
   }
-  return `Đang tìm bằng ${tools.map(formatAgentToolLabel).join(", ")}...`;
+  return `Đã tìm thấy ${resultCount} đoạn liên quan`;
 }
 
 export function completedAssistantMessageIds(messages: MeetingChatMessage[]): string[] {

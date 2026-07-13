@@ -249,8 +249,8 @@
 
 ### Automated Tests
 
-- [x] Run `python -m pytest backend/tests/test_guardrail_provider.py -v` — all pass.
-- [x] Run `python -m pytest backend/tests/test_guardrail_orchestration.py -v` — all pass.
+- [x] Run `python -m pytest backend/tests/providers/test_guardrail_provider.py -v` — all pass.
+- [x] Run `python -m pytest backend/tests/api/test_guardrail_orchestration.py -v` — all pass.
 - [x] Run `python -m pytest backend/tests/ -v` — full suite, no regressions.
 - [x] Run `cd frontend && npm run build` — production build passes.
 
