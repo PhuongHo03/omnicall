@@ -154,7 +154,7 @@ Processed JSON draft:
 
 ```json
 {
-  "schemaVersion": "meeting-intelligence-result.v1",
+  "schemaVersion": "meeting-intelligence-result.v2",
   "meeting": {
     "id": "meeting-id",
     "title": "Meeting title",
@@ -559,7 +559,20 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 24 | Retrieval reliability hardening | Done |
 | 25 | Codex-style hierarchical intelligence extraction | Done |
 | 26 | Hybrid Agentic RAG planner and evidence verification | Done |
-| 27 | Citation playback links | In Progress |
+| 27 | Citation playback links | Done |
+| 28 | Semantic registry and JSON v2 contract | Done |
+| 29 | Evidence registry and provenance | Done |
+| 30 | Extraction normalization and reduction | Done |
+| 31 | V2 validation and quality gates | Done |
+| 32 | Generic retrieval and record indexing | Done |
+| 33 | Generic planner and tools | Done |
+| 34 | Worker runtime and schema propagation | Done |
+| 35 | Verifier and quality semantics | Done |
+| 36 | Frontend v2 intelligence rendering | Done |
+| 37 | Database reset and v2 cutover | Done |
+| 38 | Evaluation, operations, and completion | Done |
+| 39 | Agentic RAG v2 alignment | In Progress |
+| 40 | Generic query graph and answer projections | In Progress |
 | Refactor 1-6 | Backend layered refactor and runtime cleanup | Done |
 
 ## Agentic RAG Architecture (Phase 26)

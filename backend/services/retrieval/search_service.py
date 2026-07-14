@@ -336,14 +336,14 @@ def _intent_section_types(query: str) -> list[str]:
         return ["fact.record", "participant.profile", "entity.profile", "transcript.window"]
 
     if tokens.intersection({"participant", "participants", "attendee", "attendees", "speaker", "speakers", "people", "person", "role", "roles"}):
-        return ["fact.participant_count", "speaker.stats", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
+        return ["fact.participant_count", "fact.record", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
     if _contains_any(normalized, ["tham gia", "nguoi tham gia", "người tham gia", "bao nhieu nguoi", "bao nhiêu người", "co bao nhieu nguoi", "có bao nhiêu người", "ai tham gia", "vai tro", "vai trò", "nguoi noi", "người nói"]):
-        return ["fact.participant_count", "speaker.stats", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
+        return ["fact.participant_count", "fact.record", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
 
     if tokens.intersection({"quality", "confidence", "warning", "warnings", "coverage", "audio", "asr", "diarization", "transcription"}):
-        return ["quality.overview", "quality.warning", "extraction.overview", "extraction.warning", "transcript.coverage", "speaker.stats"]
+        return ["quality.overview", "quality.warning", "extraction.overview", "extraction.warning", "transcript.coverage", "fact.record", "participant.profile"]
     if _contains_any(normalized, ["chat luong", "chất lượng", "canh bao", "cảnh báo", "do tin cay", "độ tin cậy", "do phu", "độ phủ", "am thanh", "âm thanh", "nhan dang", "nhận dạng", "tach nguoi noi", "tách người nói"]):
-        return ["quality.overview", "quality.warning", "extraction.overview", "extraction.warning", "transcript.coverage", "speaker.stats"]
+        return ["quality.overview", "quality.warning", "extraction.overview", "extraction.warning", "transcript.coverage", "fact.record", "participant.profile"]
 
     if tokens.intersection({"provider", "model", "source", "asset", "file", "generated"}):
         return ["source.processing", "meeting.metadata", "quality.overview"]

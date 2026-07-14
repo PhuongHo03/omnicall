@@ -20,6 +20,7 @@ class AgentToolExecutor:
     SECTION_EVENT_TIMELINE = "event.timeline"
     SECTION_PARTICIPANT_OVERVIEW = "participant.overview"
     SECTION_PARTICIPANT_PROFILE = "participant.profile"
+    SECTION_PARTICIPANT_COUNT = "fact.participant_count"
     SECTION_FACT_RECORD = "fact.record"
     SECTION_ENTITY_PROFILE = "entity.profile"
 
@@ -68,6 +69,42 @@ class AgentToolExecutor:
             metadata={"keyword": keyword, "resultCount": len(results), "searchType": "keyword"},
         )
 
+    def search_records(self, *, meeting_id: str, arguments: dict[str, Any]) -> ToolExecutionResult:
+        record_type = arguments.get("record_type") or arguments.get("recordType")
+        record_types = arguments.get("record_types") or arguments.get("recordTypes") or ([] if not record_type else [record_type])
+        record_types = [str(item) for item in record_types if item]
+        subtype = arguments.get("subtype") or arguments.get("record_subtype")
+        subtypes = arguments.get("record_subtypes") or arguments.get("recordSubtypes") or ([] if not subtype else [subtype])
+        subtypes = [str(item) for item in subtypes if item]
+        relation_types = arguments.get("relation_types") or arguments.get("relationTypes") or []
+        relation_types = [str(item) for item in relation_types if item]
+        answer_shape = str(arguments.get("answer_shape") or arguments.get("answerShape") or "record_list")
+        query = str(arguments.get("query") or "").lower().strip()
+        limit = max(1, min(int(arguments.get("limit", 10)), 50))
+        records = []
+        for chunk in self.chunks.list_for_meeting(meeting_id):
+            metadata = chunk.metadata_json or {}
+            if metadata.get("recordId") is None:
+                continue
+            if record_types and metadata.get("recordType") not in record_types:
+                continue
+            if subtypes and metadata.get("subtype") not in subtypes:
+                continue
+            if relation_types and not _matches_relations(metadata, relation_types):
+                continue
+            # A planner query is context for selecting record types, not an
+            # exact sentence that must occur verbatim in the record payload.
+            # Apply text matching only for unconstrained generic searches.
+            if query and not record_types and not subtypes and query not in chunk.text.lower():
+                continue
+            records.append(chunk)
+        records = _prioritize_record_shape(records, answer_shape)[:limit]
+        return ToolExecutionResult(
+            tool_name="search_records",
+            success=True,
+            data=[chunk_to_dict(chunk) for chunk in records],
+            metadata={"recordTypes": record_types, "recordSubtypes": subtypes, "relationTypes": relation_types, "answerShape": answer_shape, "query": query or None, "resultCount": len(records)},
+        )
     def search_section(self, *, meeting_id: str, arguments: dict[str, Any]) -> ToolExecutionResult:
         section_type = arguments.get("section_type")
         if not section_type:
@@ -95,19 +132,6 @@ class AgentToolExecutor:
             metadata={"sectionType": section_type, "query": query, "resultCount": len(results), "searchType": "section"},
         )
 
-    def search_speaker(self, *, meeting_id: str, arguments: dict[str, Any]) -> ToolExecutionResult:
-        speaker_query = arguments.get("speaker_query")
-        if not speaker_query:
-            return self._missing("search_speaker", "speaker_query")
-        results = self.chunks.search_by_speaker(
-            meeting_id=meeting_id, query=speaker_query, limit=arguments.get("limit", 10)
-        )
-        return ToolExecutionResult(
-            tool_name="search_speaker", success=True,
-            data=[chunk_to_dict(chunk) for chunk in results],
-            metadata={"speakerQuery": speaker_query, "resultCount": len(results), "searchType": "speaker"},
-        )
-
     def get_summary(self, *, meeting_id: str, arguments: dict[str, Any]) -> ToolExecutionResult:
         summary_type = arguments.get("summary_type", "all")
         if summary_type == "executive":
@@ -120,21 +144,6 @@ class AgentToolExecutor:
             section_types = [self.SECTION_SUMMARY_EXECUTIVE, self.SECTION_SUMMARY_TOPIC, self.SECTION_SUMMARY_TIMELINE, "topic.summary"]
         results = self.chunks.get_structured_sections(meeting_id=meeting_id, section_types=section_types)
         return self._sections("get_summary", results, {"summaryType": summary_type, "sectionTypes": section_types})
-
-    def get_action_items(self, *, meeting_id: str) -> ToolExecutionResult:
-        return self._section_tool("get_action_items", meeting_id, [self.SECTION_ACTION_ITEM, "question.record"], [self.SECTION_ACTION_ITEM], ["question.record"])
-
-    def get_decisions(self, *, meeting_id: str) -> ToolExecutionResult:
-        return self._section_tool("get_decisions", meeting_id, [self.SECTION_DECISION_RECORD, self.SECTION_EVENT_TIMELINE], [self.SECTION_DECISION_RECORD], [self.SECTION_EVENT_TIMELINE])
-
-    def get_risks(self, *, meeting_id: str) -> ToolExecutionResult:
-        return self._section_tool("get_risks", meeting_id, [self.SECTION_RISK_RECORD, "question.record"], [self.SECTION_RISK_RECORD], ["question.record"])
-
-    def get_timeline(self, *, meeting_id: str) -> ToolExecutionResult:
-        return self._section_tool("get_timeline", meeting_id, [self.SECTION_EVENT_TIMELINE, self.SECTION_SUMMARY_TIMELINE])
-
-    def get_participants(self, *, meeting_id: str) -> ToolExecutionResult:
-        return self._section_tool("get_participants", meeting_id, ["speaker.stats", self.SECTION_PARTICIPANT_OVERVIEW, self.SECTION_PARTICIPANT_PROFILE, self.SECTION_FACT_RECORD, self.SECTION_ENTITY_PROFILE], ["speaker.stats", self.SECTION_PARTICIPANT_OVERVIEW, self.SECTION_PARTICIPANT_PROFILE], [self.SECTION_FACT_RECORD, self.SECTION_ENTITY_PROFILE])
 
     def _section_tool(self, tool_name: str, meeting_id: str, section_types: list[str], primary_sections: list[str] | None = None, fallback_sections: list[str] | None = None) -> ToolExecutionResult:
         results = self.chunks.get_structured_sections(meeting_id=meeting_id, section_types=section_types)
@@ -157,3 +166,26 @@ class AgentToolExecutor:
             tool_name=tool_name, success=False,
             error=f"Missing required parameter: '{parameter}'",
         )
+
+
+def _matches_relations(metadata: dict[str, Any], relation_types: list[str]) -> bool:
+    fields = metadata.get("recordFields") or {}
+    if not isinstance(fields, dict):
+        return False
+    relation_aliases = {
+        "performed": ("actor", "actorId", "performedBy", "owner", "ownerParticipantId"),
+        "actor": ("actor", "actorId", "performedBy", "owner", "ownerParticipantId"),
+        "targets": ("target", "targetId", "targets", "entity", "entityId"),
+        "located_at": ("location", "venue", "address", "target"),
+    }
+    return any(any(key in fields and fields[key] not in (None, "", []) for key in relation_aliases.get(relation, (relation,))) for relation in relation_types)
+
+
+def _prioritize_record_shape(records: list[Any], answer_shape: str) -> list[Any]:
+    if answer_shape == "participant_list":
+        return sorted(records, key=lambda chunk: (str((chunk.metadata_json or {}).get("subtype")) != "speaker_profile", str((chunk.metadata_json or {}).get("recordId"))))
+    if answer_shape in {"actor_target", "location"}:
+        return sorted(records, key=lambda chunk: (not bool((chunk.metadata_json or {}).get("recordFields", {}).get("actor") or (chunk.metadata_json or {}).get("recordFields", {}).get("target")), str((chunk.metadata_json or {}).get("recordId"))))
+    if answer_shape == "timeline":
+        return sorted(records, key=lambda chunk: (chunk.start_ms is None, chunk.start_ms or 0, str((chunk.metadata_json or {}).get("recordId"))))
+    return records

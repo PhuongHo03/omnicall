@@ -1,6 +1,7 @@
 import json
 import unittest
 from unittest.mock import patch
+from urllib.error import URLError
 
 from backend.configs.settings import Settings
 from backend.providers.guardrail_provider import (
@@ -36,7 +37,7 @@ class FakeOllamaResponse:
 
 
 class GuardrailProviderTestCase(unittest.TestCase):
-    def test_safe_check_fails_open_on_provider_error(self) -> None:
+    def test_safe_check_fails_closed_on_provider_error_in_strict_mode(self) -> None:
         result = safe_guardrail_check(
             BrokenGuardrailProvider(),
             kind="chat_input",
@@ -44,9 +45,20 @@ class GuardrailProviderTestCase(unittest.TestCase):
             strict_mode=True,
         )
 
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("provider_error", result.categories)
+        self.assertEqual(result.provider, "broken-guardrail")
+
+    def test_safe_check_fails_open_on_provider_error_by_default(self) -> None:
+        result = safe_guardrail_check(
+            BrokenGuardrailProvider(),
+            kind="chat_input",
+            text="normal question",
+        )
+
         self.assertEqual(result.action, "allowed")
         self.assertIn("provider_error", result.categories)
-        self.assertEqual(result.provider, "error-handler")
+        self.assertEqual(result.provider, "broken-guardrail")
 
     def test_factory_uses_ollama_guardrail_provider(self) -> None:
         provider = get_guardrail_provider()
@@ -102,6 +114,28 @@ class GuardrailProviderTestCase(unittest.TestCase):
         self.assertEqual(result.categories, ["safe"])
         self.assertEqual(result.provider, "ollama-guardrail")
 
+    def test_ollama_provider_error_is_delegated_to_strict_policy(self) -> None:
+        provider = OllamaGuardrailProvider(
+            Settings(
+                OLLAMA_BASE_URL="http://localhost:11434",
+                GUARDRAIL_MODEL="llama-guard3:1b",
+                GUARDRAIL_TIMEOUT_SECONDS=1,
+                GUARDRAIL_MAX_RETRIES=0,
+            )
+        )
+
+        with patch.object(provider, "_call_model", side_effect=TimeoutError("timed out")):
+            result = safe_guardrail_check(
+                provider,
+                kind="chat_input",
+                text="normal meeting question with enough length",
+                strict_mode=True,
+            )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertEqual(result.categories, ["provider_error"])
+        self.assertEqual(result.provider, "ollama-guardrail")
+
     def test_ollama_model_unsafe_response_is_blocked(self) -> None:
         provider = OllamaGuardrailProvider(
             Settings(
@@ -140,6 +174,92 @@ class GuardrailProviderTestCase(unittest.TestCase):
         self.assertEqual(result.action, "allowed")
         self.assertEqual(captured_payload["model"], "llama-guard3:1b")
         self.assertEqual(captured_payload["options"]["num_predict"], 64)
+
+    def test_ollama_retries_transient_provider_errors(self) -> None:
+        provider = OllamaGuardrailProvider(
+            Settings(
+                OLLAMA_BASE_URL="http://localhost:11434",
+                GUARDRAIL_MODEL="llama-guard3:1b",
+                GUARDRAIL_TIMEOUT_SECONDS=1,
+                GUARDRAIL_MAX_RETRIES=1,
+            )
+        )
+        calls = 0
+
+        def fake_urlopen(request, timeout):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise URLError("temporary outage")
+            return FakeOllamaResponse({"response": "safe"})
+
+        with patch("backend.providers.guardrail_provider.urlopen", fake_urlopen), patch("backend.providers.guardrail_provider.time.sleep"):
+            result = provider.check(kind="chat_input", text="normal meeting question with enough length")
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(result.categories, ["safe"])
+
+    def test_pii_redaction_setting_controls_provider_payload(self) -> None:
+        for enabled, expected in ((True, "[EMAIL]"), (False, "person@example.com")):
+            provider = OllamaGuardrailProvider(
+                Settings(
+                    OLLAMA_BASE_URL="http://localhost:11434",
+                    GUARDRAIL_MODEL="llama-guard3:1b",
+                    GUARDRAIL_TIMEOUT_SECONDS=1,
+                    GUARDRAIL_PII_REDACTION_ENABLED=enabled,
+                )
+            )
+            captured_payload = {}
+
+            def fake_urlopen(request, timeout):
+                captured_payload.update(json.loads(request.data.decode("utf-8")))
+                return FakeOllamaResponse({"response": "safe"})
+
+            with patch("backend.providers.guardrail_provider.urlopen", fake_urlopen):
+                provider.check(kind="answer", text="Contact person@example.com for details.")
+
+            self.assertIn(expected, captured_payload["prompt"])
+
+    def test_output_false_positive_block_is_overridden_only_for_trusted_evidence(self) -> None:
+        provider = OllamaGuardrailProvider(
+            Settings(
+                OLLAMA_BASE_URL="http://localhost:11434",
+                GUARDRAIL_MODEL="llama-guard3:1b",
+                GUARDRAIL_TIMEOUT_SECONDS=1,
+            )
+        )
+
+        with patch.object(provider, "_call_model", return_value=("unsafe\nS5", 1)):
+            trusted = provider.check(
+                kind="answer",
+                text="The meeting covered the flower order and delivery timeline.",
+                metadata={"evidenceState": "grounded", "hasCitations": True},
+            )
+            untrusted = provider.check(
+                kind="answer",
+                text="The meeting covered the flower order and delivery timeline.",
+                metadata={"evidenceState": "not_enough_evidence", "hasCitations": False},
+            )
+
+        self.assertEqual(trusted.categories, ["false_positive_override"])
+        self.assertEqual(untrusted.action, "blocked")
+
+    def test_parse_error_uses_strict_policy(self) -> None:
+        provider = OllamaGuardrailProvider(
+            Settings(
+                OLLAMA_BASE_URL="http://localhost:11434",
+                GUARDRAIL_MODEL="llama-guard3:1b",
+                GUARDRAIL_TIMEOUT_SECONDS=1,
+            )
+        )
+        with patch.object(provider, "_call_model", return_value=("not a guardrail verdict", 1)):
+            strict = safe_guardrail_check(provider, kind="chat_input", text="normal meeting question", strict_mode=True)
+            non_strict = safe_guardrail_check(provider, kind="chat_input", text="normal meeting question", strict_mode=False)
+
+        self.assertEqual(strict.action, "blocked")
+        self.assertEqual(strict.categories, ["parse_error"])
+        self.assertEqual(non_strict.action, "allowed")
+        self.assertEqual(non_strict.categories, ["parse_error"])
 
     def test_pii_redaction_masks_known_patterns(self) -> None:
         redacted, changed = redact_pii("email a@example.com and phone 0912345678")

@@ -22,6 +22,7 @@ class MeetingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     latest_asset: "MeetingAssetResponse | None" = None
+    retry_allowed: bool = False
 
 class MeetingDetailResponse(MeetingResponse):
     latest_asset: "MeetingAssetResponse | None" = None

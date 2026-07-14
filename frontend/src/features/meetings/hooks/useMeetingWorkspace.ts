@@ -59,6 +59,7 @@ export function useMeetingWorkspace(
   const [chatQuestion, setChatQuestion] = useState("");
   const [chatMessages, setChatMessages] = useState<MeetingChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [hasLoadedMeetings, setHasLoadedMeetings] = useState(false);
   const [typewriterMessageIds, setTypewriterMessageIds] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
@@ -202,10 +203,21 @@ export function useMeetingWorkspace(
         return;
       }
       void run(async () => {
-        const asset = await uploadMeetingAsset(token, selectedMeeting.id, file, requestKey("upload"));
-        setLastAsset(asset);
-        setNotice("Upload completed.");
-        await refreshMeetings();
+        setUploadProgress(0);
+        try {
+          const asset = await uploadMeetingAsset(
+            token,
+            selectedMeeting.id,
+            file,
+            requestKey("upload"),
+            setUploadProgress,
+          );
+          setLastAsset(asset);
+          setNotice("Upload completed.");
+          await refreshMeetings();
+        } finally {
+          setUploadProgress(null);
+        }
       });
     },
     [lastAsset, refreshMeetings, run, selectedMeeting, token]
@@ -342,6 +354,7 @@ export function useMeetingWorkspace(
     isLoading,
     isRecording: recording.isRecording,
     lastAsset,
+    uploadProgress,
     meetings,
     notice,
     selectedMeeting,

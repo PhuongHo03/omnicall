@@ -1,12 +1,8 @@
 import json
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
-from urllib.request import Request, urlopen
-
 from backend.configs.settings import Settings, get_settings
 from backend.providers.contracts.llm import LLMProvider, LLMProviderError, LLMRequestConfig
-from backend.providers.llm.transport import ensure_trailing_slash, extract_answer_stream, parse_json_content, post_json
+from backend.providers.llm.transport import parse_json_content, post_json
 
 
 class OpenAICompatibleLLMProvider:
@@ -37,67 +33,6 @@ class OpenAICompatibleLLMProvider:
         if not isinstance(content, str) or not content.strip():
             raise LLMProviderError("OpenAI-compatible response did not include message content.")
         return parse_json_content(content)
-
-    def generate_stream_json(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        on_token: Any = None,
-        temperature: float = 0,
-    ) -> dict[str, Any]:
-        if on_token is None:
-            return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt, temperature=temperature)
-        payload = {
-            "model": self.config.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": temperature,
-            "stream": True,
-        }
-        url = urljoin(ensure_trailing_slash(self.config.base_url), "chat/completions")
-        body = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        request = Request(url, data=body, headers=headers, method="POST")
-        collected = ""
-        answer_buffer = ""
-        answer_key = '"answer"'
-        try:
-            with urlopen(request, timeout=self.config.timeout_seconds) as response:
-                for raw_line in response:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[len("data:"):].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content", "")
-                    if not content:
-                        continue
-                    collected += content
-                    answer_chunk = extract_answer_stream(collected, answer_key)
-                    if len(answer_chunk) > len(answer_buffer):
-                        new_text = answer_chunk[len(answer_buffer):]
-                        answer_buffer = answer_chunk
-                        if new_text:
-                            on_token(new_text)
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise LLMProviderError(
-                f"OpenAI-compatible streaming request failed: {exc}", retryable=True
-            ) from exc
-        if not collected.strip():
-            raise LLMProviderError("OpenAI-compatible streaming response was empty.")
-        return parse_json_content(collected)
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return post_json(
@@ -144,67 +79,6 @@ class CustomJSONEndpointLLMProvider:
             return response["result"]
         raise LLMProviderError("Custom JSON endpoint response did not include a JSON result.")
 
-    def generate_stream_json(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        on_token: Any = None,
-        temperature: float = 0,
-    ) -> dict[str, Any]:
-        if on_token is None:
-            return self.generate_json(system_prompt=system_prompt, user_prompt=user_prompt, temperature=temperature)
-        payload = {
-            "model": self.config.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": temperature,
-            "stream": True,
-        }
-        url = urljoin(ensure_trailing_slash(self.config.base_url), "chat/completions")
-        body = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        request = Request(url, data=body, headers=headers, method="POST")
-        collected = ""
-        answer_buffer = ""
-        answer_key = '"answer"'
-        try:
-            with urlopen(request, timeout=self.config.timeout_seconds) as response:
-                for raw_line in response:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[len("data:"):].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    content = delta.get("content", "")
-                    if not content:
-                        continue
-                    collected += content
-                    answer_chunk = extract_answer_stream(collected, answer_key)
-                    if len(answer_chunk) > len(answer_buffer):
-                        new_text = answer_chunk[len(answer_buffer):]
-                        answer_buffer = answer_chunk
-                        if new_text:
-                            on_token(new_text)
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise LLMProviderError(
-                f"OpenAI-compatible streaming request failed: {exc}", retryable=True
-            ) from exc
-        if not collected.strip():
-            raise LLMProviderError("OpenAI-compatible streaming response was empty.")
-        return parse_json_content(collected)
-
 
 class OllamaLLMProvider:
     provider_name = "ollama"
@@ -240,63 +114,6 @@ class OllamaLLMProvider:
         if not isinstance(content, str) or not content.strip():
             raise LLMProviderError("Ollama response did not include message content.")
         return parse_json_content(content)
-
-    def generate_stream_json(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        on_token: Any = None,
-        temperature: float = 0,
-    ) -> dict[str, Any]:
-        options: dict[str, Any] = {"temperature": temperature}
-        if self.config.context_length:
-            options["num_ctx"] = self.config.context_length
-        payload = {
-            "model": self.config.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "format": "json",
-            "stream": True,
-            "options": options,
-        }
-        url = urljoin(ensure_trailing_slash(self.config.base_url), "api/chat")
-        body = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        request = Request(url, data=body, headers=headers, method="POST")
-        collected = ""
-        answer_buffer = ""
-        in_answer = False
-        answer_key = '"answer"'
-        try:
-            with urlopen(request, timeout=self.config.timeout_seconds) as response:
-                for raw_line in response:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    token = chunk.get("message", {}).get("content", "")
-                    if not token:
-                        continue
-                    collected += token
-                    if on_token is not None:
-                        answer_chunk = extract_answer_stream(collected, answer_key)
-                        if len(answer_chunk) > len(answer_buffer):
-                            new_text = answer_chunk[len(answer_buffer):]
-                            answer_buffer = answer_chunk
-                            if new_text:
-                                on_token(new_text)
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise LLMProviderError(f"Ollama streaming request failed: {exc}", retryable=True) from exc
-        if not collected.strip():
-            raise LLMProviderError("Ollama streaming response was empty.")
-        return parse_json_content(collected)
-
 
 class FallbackLLMProvider:
     provider_name = "fallback"
@@ -336,42 +153,6 @@ class FallbackLLMProvider:
             self.last_provider_name = getattr(self.fallback, "last_provider_name", self.fallback.provider_name)
             self.last_provider_model = getattr(self.fallback, "last_provider_model", self.fallback.model_name)
             return result
-
-    def generate_stream_json(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        on_token: Any = None,
-        temperature: float = 0,
-    ) -> dict[str, Any]:
-        self.last_fallback_used = False
-        self.last_primary_error_type = None
-        self.last_primary_error_message = None
-        try:
-            result = self.primary.generate_stream_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                on_token=on_token,
-                temperature=temperature,
-            )
-            self.last_provider_name = getattr(self.primary, "last_provider_name", self.primary.provider_name)
-            self.last_provider_model = getattr(self.primary, "last_provider_model", self.primary.model_name)
-            return result
-        except LLMProviderError as exc:
-            self.last_fallback_used = True
-            self.last_primary_error_type = type(exc).__name__
-            self.last_primary_error_message = str(exc)
-            result = self.fallback.generate_stream_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                on_token=on_token,
-                temperature=temperature,
-            )
-            self.last_provider_name = getattr(self.fallback, "last_provider_name", self.fallback.provider_name)
-            self.last_provider_model = getattr(self.fallback, "last_provider_model", self.fallback.model_name)
-            return result
-
 
 def get_effective_provider_name(provider: LLMProvider) -> str:
     return getattr(provider, "last_provider_name", provider.provider_name)

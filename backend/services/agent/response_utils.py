@@ -11,6 +11,13 @@ _VALID_EVIDENCE_STATES = {
 
 
 def normalize_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(chunk.get("metadata") or {})
+    # Retrieval adapters may expose v2 fields at the top level. Keep one
+    # canonical projection in metadata so every agent layer consumes the same
+    # record/evidence contract.
+    for key in ("recordId", "recordType", "subtype", "recordFields", "evidenceRefs", "sourceRefs", "derivedFrom"):
+        if key in chunk and key not in metadata:
+            metadata[key] = chunk[key]
     return {
         "chunkId": chunk.get("chunkId") or chunk.get("chunk_id") or "",
         "meetingId": chunk.get("meetingId") or chunk.get("meeting_id"),
@@ -23,13 +30,14 @@ def normalize_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
         "endMs": chunk.get("endMs") if "endMs" in chunk else chunk.get("end_ms"),
         "text": str(chunk.get("text") or ""),
         "score": float(chunk.get("score") or 0.0),
-        "metadata": dict(chunk.get("metadata") or {}),
+        "metadata": metadata,
     }
 
 
 def to_context_chunk(chunk: dict[str, Any]) -> ContextChunk:
     metadata = dict(chunk.get("metadata") or {})
     metadata.setdefault("jsonPointer", chunk.get("jsonPointer", ""))
+    metadata.setdefault("evidenceRefs", list(chunk.get("citationIds") or []))
     return ContextChunk(
         chunk_id=chunk["chunkId"],
         text=chunk.get("text", ""),

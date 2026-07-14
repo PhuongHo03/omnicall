@@ -17,6 +17,7 @@ from backend.configs.settings import Settings, get_settings
 from backend.providers.contracts.guardrail import (
     GuardrailAction,
     GuardrailKind,
+    GuardrailProviderError,
     GuardrailProvider,
     GuardrailResult,
     PROMPT_VERSION,
@@ -48,6 +49,16 @@ PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[CARD]"),
 ]
 
+_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "S1": ("kill", "murder", "assault", "weapon", "bomb", "violent", "giết", "tấn công"),
+    "S2": ("hack", "fraud", "scam", "steal", "burglary", "crime", "lừa đảo", "đánh cắp"),
+    "S3": ("sexual", "rape", "sexually", "tình dục", "hiếp dâm"),
+    "S4": ("child sexual", "minor sexual", "trẻ em", "vị thành niên"),
+    "S5": ("defamation", "defamatory", "liar", "fraudster", "dishonest", "phỉ báng", "vu khống"),
+    "S6": ("diagnose", "prescribe", "legal advice", "financial advice", "chẩn đoán", "kê đơn", "tư vấn pháp lý"),
+    "S7": ("[email]", "[phone]", "[card]", "password", "secret", "ssn", "email", "phone", "địa chỉ"),
+}
+
 
 class OllamaGuardrailProvider:
     """Simplified guardrail provider with rule-based pre-check."""
@@ -72,22 +83,15 @@ class OllamaGuardrailProvider:
             return rule_result
 
         # ── PII Redaction ──
-        text, _ = redact_pii(text)
+        if self.settings.guardrail_pii_redaction_enabled:
+            text, _ = redact_pii(text)
 
         # ── Mechanism 2: Model Check ──
         try:
             raw, _ = self._call_model(text)
         except Exception as exc:
-            # Fail-open on model error
-            return GuardrailResult(
-                action="allowed",
-                categories=["provider_error"],
-                confidence=0.3,
-                provider=self.provider_name,
-                model=self.model_name,
-                latency_ms=_elapsed_ms(started),
-                text_length=text_length,
-            )
+            # Policy belongs to safe_guardrail_check, where strict_mode is available.
+            raise GuardrailProviderError(str(exc)) from exc
 
         # ── Mechanism 3: Post-processing ──
         result = self._parse_and_postprocess(
@@ -95,7 +99,15 @@ class OllamaGuardrailProvider:
             text=original_text,
             started=started,
             text_length=text_length,
+            kind=kind,
+            metadata=metadata or {},
         )
+
+        if result.categories == ["parse_error"]:
+            raise GuardrailProviderError(
+                "Guardrail model response could not be parsed",
+                category="parse_error",
+            )
 
         return result
 
@@ -150,10 +162,21 @@ class OllamaGuardrailProvider:
             "options": {"num_predict": 64},
         }).encode("utf-8")
 
-        request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-        with urlopen(request, timeout=self._timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        return data.get("response", ""), 1
+        attempts = max(0, int(self._max_retries)) + 1
+        for attempt in range(attempts):
+            request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                with urlopen(request, timeout=self._timeout) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                return data.get("response", ""), attempt + 1
+            except HTTPError as exc:
+                if exc.code < 500 or attempt + 1 >= attempts:
+                    raise
+            except (URLError, TimeoutError):
+                if attempt + 1 >= attempts:
+                    raise
+            time.sleep(min(0.5, 0.1 * (2**attempt)))
+        raise GuardrailProviderError("Guardrail request did not produce a response")
 
     def _build_prompt(self, text: str) -> str:
         """Simplified prompt - 5 lines instead of 30+."""
@@ -172,6 +195,8 @@ class OllamaGuardrailProvider:
         text: str,
         started: float,
         text_length: int,
+        kind: GuardrailKind,
+        metadata: dict[str, Any],
     ) -> GuardrailResult:
         """Parse model response and apply post-processing."""
         normalized = raw.strip().lower()
@@ -206,6 +231,21 @@ class OllamaGuardrailProvider:
                     text_length=text_length,
                 )
 
+            if kind == "answer" and _should_override_output_block(
+                category=category,
+                text=text,
+                metadata=metadata,
+            ):
+                return GuardrailResult(
+                    action="allowed",
+                    categories=["false_positive_override"],
+                    confidence=0.5,
+                    provider=self.provider_name,
+                    model=self.model_name,
+                    latency_ms=_elapsed_ms(started),
+                    text_length=text_length,
+                )
+
             return GuardrailResult(
                 action="blocked",
                 categories=[category],
@@ -226,11 +266,22 @@ class OllamaGuardrailProvider:
             latency_ms=_elapsed_ms(started),
             text_length=text_length,
         )
-
     @staticmethod
     def _ensure_slash(url: str) -> str:
         return url if url.endswith("/") else url + "/"
 
+
+def _should_override_output_block(*, category: str, text: str, metadata: dict[str, Any]) -> bool:
+    """Override only clearly mismatched blocks on trusted meeting answers."""
+    if metadata.get("evidenceState") not in {"grounded", "partial"}:
+        return False
+    if not metadata.get("hasCitations"):
+        return False
+    keywords = _CATEGORY_KEYWORDS.get(category)
+    if not keywords:
+        return False
+    normalized = text.lower()
+    return not any(keyword.lower() in normalized for keyword in keywords)
 
 def get_guardrail_provider(settings: Settings | None = None) -> GuardrailProvider:
     return OllamaGuardrailProvider(settings or get_settings())
@@ -252,18 +303,25 @@ def safe_guardrail_check(
     kind: GuardrailKind,
     text: str,
     metadata: dict[str, Any] | None = None,
-    **kwargs,  # Accept and ignore extra args for backward compatibility
+    strict_mode: bool = False,
+    **kwargs,  # Preserve compatibility with older callers.
 ) -> GuardrailResult:
     """Safely run guardrail check with error handling."""
+    started = time.perf_counter()
     try:
         return provider.check(kind=kind, text=text, metadata=metadata)
-    except Exception:
+    except Exception as exc:
+        provider_name = getattr(provider, "provider_name", "error-handler")
+        model_name = getattr(provider, "model_name", "none")
         return GuardrailResult(
-            action="allowed",
-            categories=["provider_error"],
-            confidence=0.3,
-            provider="error-handler",
-            model="none",
+            action="blocked" if strict_mode else "allowed",
+            categories=[getattr(exc, "category", "provider_error")],
+            confidence=1.0 if strict_mode else 0.3,
+            provider=provider_name,
+            model=model_name,
+            safe_message="Không thể xác minh an toàn câu hỏi lúc này." if strict_mode else "",
+            latency_ms=_elapsed_ms(started),
+            text_length=len(text),
         )
 
 

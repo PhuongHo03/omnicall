@@ -8,6 +8,14 @@ GuardrailKind = Literal["chat_input", "answer"]
 PROMPT_VERSION = "v3-simplified"
 
 
+class GuardrailProviderError(RuntimeError):
+    """Raised when a guardrail provider cannot produce a usable verdict."""
+
+    def __init__(self, message: str, *, category: str = "provider_error") -> None:
+        super().__init__(message)
+        self.category = category
+
+
 @dataclass(frozen=True)
 class GuardrailResult:
     action: GuardrailAction

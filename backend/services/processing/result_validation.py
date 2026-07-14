@@ -1,14 +1,17 @@
 def validate_result_json(result_json: dict) -> None:
-    if isinstance(result_json.get("knowledge"), dict):
+    if result_json.get("schemaVersion") == "meeting-intelligence-result.v2" and isinstance(result_json.get("knowledge"), dict):
         _validate_unified_result(result_json)
         return
+    raise ValueError("Only meeting-intelligence-result.v2 can be persisted.")
+
+    # Retained below only as historical implementation context; unreachable
+    # after the v2 cutover guard above.
     required_top_level = {
         "schemaVersion",
         "meeting",
         "source",
         "transcript",
         "evidence",
-        "speakers",
         "participants",
         "entities",
         "facts",
@@ -82,7 +85,7 @@ def validate_result_json(result_json: dict) -> None:
 
 
 def _validate_unified_result(result_json: dict) -> None:
-    required_top_level = {"schemaVersion", "document", "transcript", "evidence", "speakers", "knowledge", "summaries", "quality", "extraction"}
+    required_top_level = {"schemaVersion", "document", "transcript", "evidence", "knowledge", "summaries", "quality", "extraction"}
     missing = required_top_level.difference(result_json)
     if missing:
         raise ValueError(f"Unified result missing sections: {', '.join(sorted(missing))}")
@@ -90,14 +93,19 @@ def _validate_unified_result(result_json: dict) -> None:
     if not isinstance(segments, list) or not segments:
         raise ValueError("Unified result must include transcript segments.")
     segment_ids = {segment.get("id") for segment in segments if isinstance(segment, dict)}
-    citations = result_json.get("evidence", {}).get("citations", [])
+    evidence = result_json.get("evidence", {})
+    citations = evidence.get("items", []) if isinstance(evidence, dict) else []
     citation_ids = {citation.get("id") for citation in citations if isinstance(citation, dict)}
+    if len(citation_ids) != len(citations):
+        raise ValueError("Evidence item IDs must be unique and non-empty.")
     for citation in citations:
         if not isinstance(citation, dict):
             raise ValueError("Evidence citations must be objects.")
         unknown = set(citation.get("segmentIds", [])) - segment_ids
         if unknown:
             raise ValueError(f"Citation references unknown transcript segments: {', '.join(sorted(unknown))}")
+        if citation.get("kind") in {"structured", "derived"} and citation.get("segmentIds"):
+            raise ValueError(f"Structured or derived evidence cannot reference transcript segments: {citation.get('id')}")
     knowledge = result_json["knowledge"]
     records = knowledge.get("records", [])
     if not isinstance(records, list):
@@ -109,10 +117,13 @@ def _validate_unified_result(result_json: dict) -> None:
     for record in records:
         if not isinstance(record, dict) or not isinstance(record.get("id"), str) or not isinstance(record.get("type"), str):
             raise ValueError("Every knowledge record requires an id and type.")
-        if set(record.get("citationIds", [])) - citation_ids:
-            raise ValueError(f"Knowledge record references an unknown citation: {record.get('id')}")
-        if window_ids and set(record.get("sourceWindowIds", [])) - window_ids:
-            raise ValueError(f"Knowledge record references an unknown source window: {record.get('id')}")
+        from backend.services.knowledge.contract import validate_record_shape
+
+        validate_record_shape(record)
+        if set(record.get("evidenceRefs", [])) - citation_ids:
+            raise ValueError(f"Knowledge record references unknown evidence: {record.get('id')}")
+        if window_ids and set(record.get("sourceRefs", [])) - window_ids:
+            raise ValueError(f"Knowledge record references an unknown source reference: {record.get('id')}")
     for relationship in knowledge.get("relationships", []):
         if not isinstance(relationship, dict):
             raise ValueError("Knowledge relationships must be objects.")
@@ -158,7 +169,7 @@ def append_voice_quality_warnings(result_json: dict, voice_metadata: dict) -> No
 
 def _extract_indexed_insights(result_json: dict) -> list[dict]:
     insights: list[dict] = []
-    citations_by_id = {citation.get("id"): citation for citation in result_json.get("evidence", {}).get("citations", [])}
+    citations_by_id = {citation.get("id"): citation for citation in result_json.get("evidence", {}).get("items", [])}
     summaries = result_json.get("summaries", {})
     executive = summaries.get("executive", {}) if isinstance(summaries, dict) else {}
     if isinstance(executive, dict) and executive.get("text"):

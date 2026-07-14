@@ -5,7 +5,9 @@ from typing import Protocol
 from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.providers.transcript_types import TranscriptSegment
 
-SCHEMA_VERSION = "meeting-intelligence-result.v1"
+# The adapter emits an internal candidate envelope that is normalized by the
+# hierarchical reducer. Persisted/public intelligence is always v2.
+ANALYSIS_CANDIDATE_SCHEMA_VERSION = "meeting-intelligence-candidate.v2"
 
 
 class AnalysisProvider(Protocol):

@@ -81,20 +81,15 @@ class AgentToolRegistry:
             "search_keyword": lambda: self.executor.search_keyword(
                 meeting_id=meeting_id, arguments=arguments
             ),
-            "search_section": lambda: self.executor.search_section(
+            "search_records": lambda: self.executor.search_records(
                 meeting_id=meeting_id, arguments=arguments
             ),
-            "search_speaker": lambda: self.executor.search_speaker(
+            "search_section": lambda: self.executor.search_section(
                 meeting_id=meeting_id, arguments=arguments
             ),
             "get_summary": lambda: self.executor.get_summary(
                 meeting_id=meeting_id, arguments=arguments
             ),
-            "get_action_items": lambda: self.executor.get_action_items(meeting_id=meeting_id),
-            "get_decisions": lambda: self.executor.get_decisions(meeting_id=meeting_id),
-            "get_risks": lambda: self.executor.get_risks(meeting_id=meeting_id),
-            "get_timeline": lambda: self.executor.get_timeline(meeting_id=meeting_id),
-            "get_participants": lambda: self.executor.get_participants(meeting_id=meeting_id),
         }
 
         executor = executors.get(tool_name)
@@ -127,6 +122,8 @@ class AgentToolRegistry:
                 "type": param.type,
                 "description": param.description,
             }
+            if param.type == "array":
+                param_def["items"] = {"type": "string"}
             if param.enum:
                 param_def["enum"] = param.enum
             if param.default is not None:

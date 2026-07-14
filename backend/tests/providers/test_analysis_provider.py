@@ -42,7 +42,7 @@ class EchoThenSuccessfulLLMProvider:
         self.calls += 1
         if self.calls == 1:
             return {
-                "requiredSchemaVersion": "meeting-intelligence-result.v1",
+                "requiredSchemaVersion": "meeting-intelligence-candidate.v2",
                 "transcript": {"segments": []},
                 "requiredOutputShape": {"summary": {"executive": ""}},
             }

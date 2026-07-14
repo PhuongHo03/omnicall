@@ -1,6 +1,6 @@
 import re
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -171,9 +171,7 @@ class MeetingChunkRepository:
                 MeetingChunkRecord.meeting_id == meeting_id,
                 MeetingChunkRecord.section_type == section_type,
             )
-            .order_by(
-                MeetingChunkRecord.created_at.asc(),
-            )
+            .order_by(MeetingChunkRecord.created_at.asc())
             .limit(limit)
         )
         return list(self.session.scalars(statement).all())
@@ -234,6 +232,7 @@ class MeetingChunkRepository:
         if not section_types:
             return []
 
+        section_order = {section_type: index for index, section_type in enumerate(dict.fromkeys(section_types))}
         statement = (
             select(MeetingChunkRecord)
             .where(
@@ -241,7 +240,13 @@ class MeetingChunkRepository:
                 MeetingChunkRecord.section_type.in_(section_types),
             )
             .order_by(
+                case(
+                    section_order,
+                    value=MeetingChunkRecord.section_type,
+                    else_=len(section_order),
+                ).asc(),
                 MeetingChunkRecord.created_at.asc(),
+                MeetingChunkRecord.chunk_id.asc(),
             )
             .limit(limit)
         )

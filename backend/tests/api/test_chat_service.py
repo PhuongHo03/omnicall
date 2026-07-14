@@ -8,7 +8,7 @@ from backend.dependencies.auth import CurrentUserContext
 from backend.dtos.meeting_dto import MeetingChatRequest
 from backend.models.core_models import User
 from backend.models.enums import MeetingStatus
-from backend.providers.analysis import SCHEMA_VERSION
+from backend.providers.analysis import ANALYSIS_CANDIDATE_SCHEMA_VERSION
 from backend.repositories.auth_repository import AuthRepository
 from backend.repositories.chat_repository import ChatMessageRepository
 from backend.repositories.meeting_repository import (
@@ -222,10 +222,10 @@ class ChatServiceTestCase(unittest.TestCase):
             meeting_repo.update_status(meeting, MeetingStatus.READY)
             result = result_repo.upsert(
                 meeting_id=meeting.id,
-                schema_version=SCHEMA_VERSION,
+                schema_version=ANALYSIS_CANDIDATE_SCHEMA_VERSION,
                 provider_name="test",
                 provider_model="test",
-                result_json={"schemaVersion": SCHEMA_VERSION},
+                result_json={"schemaVersion": ANALYSIS_CANDIDATE_SCHEMA_VERSION},
             )
             text = "Bob must index action items and risks by Friday."
             embedding_provider = TestEmbeddingProvider(dimensions=8)

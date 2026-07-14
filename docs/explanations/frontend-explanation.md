@@ -124,6 +124,7 @@ frontend/
                 ├── MeetingChatPanel.tsx
                 ├── MeetingIntelligenceResultPanel.tsx
                 ├── MeetingList.tsx
+                ├── MeetingProgressBar.tsx
                 ├── PlaybackDrawer.tsx
                 ├── PlayerControls.tsx
                 ├── ResultDrawer.tsx
@@ -183,7 +184,7 @@ Implemented frontend routes:
 | Meeting list and creation | `MeetingList` | Lives in the shared sidebar slot, lists meetings, creates a new analysis, and selects the current meeting |
 | Meeting actions | `MeetingActionPanel` | Shows the selected meeting, inline rename control, one-file upload/record controls, process/retry button, playback/result actions, refresh actions, and delete action |
 | Playback drawer | `PlaybackDrawer`, `AssetPlaybackPanel`, `PlayerControls`, `TranscriptTrack`, `WaveformDisplay` | Loads the selected meeting asset into a temporary browser Blob URL, provides playback controls, transcript navigation, and download |
-| Processed JSON result | `ResultDrawer`, `MeetingIntelligenceResultPanel`, `JsonSection`, `JsonValue` | Renders the RAG-first `meeting-intelligence-result.v1` as readable collapsible sections ordered around transcript evidence, speakers, participants, facts, events, relationships, topics, summaries, actions, decisions, risks, questions, quality, and extraction |
+| Processed JSON result | `ResultDrawer`, `MeetingIntelligenceResultPanel`, `JsonSection`, `JsonValue` | Renders the generalized `meeting-intelligence-result.v2` as readable collapsible sections, including generic `knowledge.records` and `evidence.items` |
 | Meeting chat | `MeetingChatPanel`, `ChatMessageBubble` | Asks questions against a ready meeting, renders immediate user bubbles, pending assistant state, streamed answer text, saved evidence state, citations, and source expansion |
 | Status display | `StatusPill` | Displays meeting and job state |
 
@@ -226,6 +227,8 @@ The accounts page renders `AdminAccountsTable`, backed by `GET /api/admin/accoun
 The recording entry point uses `MediaRecorder` to produce a completed `audio/webm` file and uploads it through the same asset endpoint as normal file uploads. It is not live transcription.
 
 `MeetingActionPanel` follows the one-analysis-per-meeting rule. Upload and recording are shown only while the selected meeting is `DRAFT` and has no asset. The file picker accepts audio and supported video files only, matching the backend voice-only meeting processing allowlist. Once a file is uploaded, the intake box is hidden and the meeting is locked to that asset whether processing later succeeds or fails. Processing remains available for an uploaded asset and retryable after a failed job. These controls are UI affordances only; backend state validation remains authoritative and returns `409 Conflict` for stale or direct requests that try to upload another file.
+
+The process action treats both `QUEUED` and `PROCESSING` meetings as actively processing: the button displays `Processing` and is disabled, while rename and delete remain locked until processing completes. The workspace reuses `EmptyState` for meeting lifecycle feedback: draft meetings ask for an audio file, uploaded meetings prompt the user to press `Process`, upload requests show a determinate `MeetingProgressBar`, queued/processing meetings show an indeterminate progress bar, and failed meetings show a retry message. Ready meetings continue to render the chat panel.
 
 The central workspace no longer uses operation/chat tabs. It is a chatbot-style flow: meeting controls stay at the top, playback and processed-result details open in drawers, and the meeting chat composer/thread fills the selected meeting workspace after the meeting is `READY`. The processed JSON panel remembers open/closed section state locally in the browser so switching meetings does not force sections back open after the user closes them. Phase 22 updated the preferred section order and labels for the RAG-first schema: evidence, speakers, facts, events, relationships, topics, summaries, actions, decisions, risks, questions, and extraction are first-class sections. The shared app sidebar behaves like a modern chat history rail for selecting or creating analyses.
 
@@ -427,4 +430,6 @@ All evidence states display a badge with appropriate styling:
 - `blocked`: Muted badge
 - `error`: Red badge
 
-*Document reflects project state during **Phase 27 Citation Playback Links**. Frontend source follows feature-layer boundaries and renders verified citation cards with transcript/playback seeking while preserving backward-compatible Agentic RAG SSE progress.*
+The meeting result panel renders `meeting-intelligence-result.v2` as generic JSON sections, including `knowledge.records` and `evidence.items`, without flattening subtype records into hardcoded top-level UI sections. A `KnowledgeRecord` carries canonical type, subtype, payload, evidence references, source references, and derivation metadata; playback remains available only through chat citations that contain transcript location data.
+
+*Document reflects project state during **Phase 36 Frontend V2 Intelligence Rendering**. Frontend source follows feature-layer boundaries and renders generic v2 records with transcript/playback seeking while backend remains the evidence source of truth.*

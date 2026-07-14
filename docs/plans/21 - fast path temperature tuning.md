@@ -18,7 +18,7 @@
 ### 1. Provider Contract
 
 - [x] Add optional `temperature` to `LLMProvider.generate_json`.
-- [x] Add optional `temperature` to `LLMProvider.generate_stream_json` for consistency.
+- [x] Keep the active LLM contract focused on guarded full-JSON generation; unused token-streaming support was removed.
 - [x] Keep default temperature at `0`.
 - [x] Pass temperature through OpenAI-compatible, custom endpoint, Ollama, and fallback providers.
 

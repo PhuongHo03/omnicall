@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, jsonHeaders, parseBlobResponse, parseJsonResponse } from "../../../shared/utils/httpClient";
+import { apiErrorMessage, apiUrl, authHeaders, jsonHeaders, parseBlobResponse, parseJsonResponse } from "../../../shared/utils/httpClient";
 import { retryWithBackoff } from "../../../shared/utils/retryWithBackoff";
 import {
   buildChatPayload,
@@ -58,20 +58,42 @@ export async function uploadMeetingAsset(
   token: string,
   meetingId: string,
   file: File,
-  idempotencyKey: string
+  idempotencyKey: string,
+  onProgress?: (progress: number) => void,
 ): Promise<MeetingAsset> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(apiUrl(`/meetings/${meetingId}/assets`), {
-    method: "POST",
-    headers: {
-      ...authHeaders(token),
-      "Idempotency-Key": idempotencyKey
-    },
-    body: formData
+  const payload = await new Promise<unknown>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", apiUrl(`/meetings/${meetingId}/assets`));
+    request.setRequestHeader("Authorization", `Bearer ${token}`);
+    request.setRequestHeader("Idempotency-Key", idempotencyKey);
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        onProgress?.((event.loaded / event.total) * 100);
+      }
+    });
+    request.addEventListener("load", () => {
+      const responsePayload = (() => {
+        try {
+          return JSON.parse(request.responseText) as unknown;
+        } catch {
+          return null;
+        }
+      })();
+      if (request.status >= 200 && request.status < 300) {
+        onProgress?.(100);
+        resolve(responsePayload);
+        return;
+      }
+      reject(new Error(apiErrorMessage(responsePayload, "Upload failed.")));
+    });
+    request.addEventListener("error", () => reject(new Error("Upload failed.")));
+    request.addEventListener("abort", () => reject(new Error("Upload was cancelled.")));
+    request.send(formData);
   });
-  return parseAsset(await parseJsonResponse(response));
+  return parseAsset(payload);
 }
 
 export async function queueMeetingProcessing(

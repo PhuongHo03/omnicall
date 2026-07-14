@@ -7,7 +7,7 @@ from backend.configs.database import SessionLocal
 from backend.models.core_models import User
 from backend.models.enums import MeetingStatus
 from backend.models.meeting_models import MeetingChunkRecord, MeetingIntelligenceResult, MeetingTranscriptWindow
-from backend.providers.analysis import SCHEMA_VERSION
+from backend.providers.analysis import ANALYSIS_CANDIDATE_SCHEMA_VERSION
 from backend.providers.transcript_types import TranscriptSegment
 from backend.providers.vector_provider import NoopVectorProvider
 from backend.repositories.auth_repository import AuthRepository
@@ -53,7 +53,7 @@ class FakeAnalysisProvider:
 
     def build_result(self, *, meeting, asset, transcript_segments: list[TranscriptSegment], detected_language=None) -> dict:
         return {
-            "schemaVersion": SCHEMA_VERSION,
+            "schemaVersion": ANALYSIS_CANDIDATE_SCHEMA_VERSION,
             "source": {"analysisProvider": self.provider_name},
             "meeting": {"id": meeting.id, "title": meeting.title},
             "transcript": {

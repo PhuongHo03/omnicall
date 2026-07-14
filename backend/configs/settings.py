@@ -95,13 +95,10 @@ class Settings(BaseSettings):
     retrieval_trigram_threshold: float = Field(default=0.12, alias="RETRIEVAL_TRIGRAM_THRESHOLD")
     guardrail_model: str = Field(default="llama-guard3:1b", alias="GUARDRAIL_MODEL")
     guardrail_timeout_seconds: float = Field(default=20.0, alias="GUARDRAIL_TIMEOUT_SECONDS")
-    guardrail_max_retries: int = Field(default=0, alias="GUARDRAIL_MAX_RETRIES")
+    guardrail_max_retries: int = Field(default=1, alias="GUARDRAIL_MAX_RETRIES")
     guardrail_input_enabled: bool = Field(default=True, alias="GUARDRAIL_INPUT_ENABLED")
     guardrail_output_enabled: bool = Field(default=True, alias="GUARDRAIL_OUTPUT_ENABLED")
     guardrail_strict_mode: bool = Field(default=False, alias="GUARDRAIL_STRICT_MODE")
-    guardrail_input_strict_mode: bool | None = Field(default=None, alias="GUARDRAIL_INPUT_STRICT_MODE")
-    guardrail_output_strict_mode: bool | None = Field(default=None, alias="GUARDRAIL_OUTPUT_STRICT_MODE")
-    guardrail_latency_budget_ms: int = Field(default=8000, alias="GUARDRAIL_LATENCY_BUDGET_MS")
     guardrail_pii_redaction_enabled: bool = Field(default=True, alias="GUARDRAIL_PII_REDACTION_ENABLED")
     vector_provider: str = Field(default="milvus", alias="VECTOR_PROVIDER")
     milvus_host: str = Field(default="milvus", alias="MILVUS_HOST")
@@ -165,13 +162,6 @@ class Settings(BaseSettings):
         populate_by_name=True,
         extra="ignore",
     )
-
-    @field_validator("guardrail_input_strict_mode", "guardrail_output_strict_mode", mode="before")
-    @classmethod
-    def _empty_str_to_none(cls, value: object) -> object:
-        if isinstance(value, str) and value.strip() == "":
-            return None
-        return value
 
     @computed_field
     @property

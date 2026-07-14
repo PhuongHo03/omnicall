@@ -34,6 +34,22 @@ class ContextChunk:
     end_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def record_type(self) -> str:
+        return str(self.metadata.get("recordType") or "")
+
+    @property
+    def record_subtype(self) -> str:
+        return str(self.metadata.get("subtype") or "")
+
+    @property
+    def record_id(self) -> str:
+        return str(self.metadata.get("recordId") or "")
+
+    @property
+    def evidence_refs(self) -> list[str]:
+        return list(self.metadata.get("evidenceRefs") or self.citation_ids)
+
 
 @dataclass
 class ToolCallRecord:
@@ -279,11 +295,16 @@ class AgentContextManager:
             for i, chunk in enumerate(self._context.chunks, 1):
                 source_info = f"[{chunk.source_type}]" if chunk.source_type else ""
                 section_info = f" - {chunk.section_type}" if chunk.section_type else ""
-                parts.append(f"{i}. {source_info}{section_info}")
+                record_info = ""
+                if chunk.record_type:
+                    record_info = f" - record:{chunk.record_type}/{chunk.record_subtype or '*'}"
+                parts.append(f"{i}. {source_info}{section_info}{record_info}")
                 parts.append(f"   Score: {chunk.score:.4f}")
                 parts.append(f"   {chunk.text}")
-                if chunk.citation_ids:
-                    parts.append(f"   Citations: {', '.join(chunk.citation_ids)}")
+                if chunk.evidence_refs:
+                    parts.append(f"   EvidenceRefs: {', '.join(chunk.evidence_refs)}")
+                if chunk.metadata.get("sourceRefs"):
+                    parts.append(f"   SourceRefs: {', '.join(map(str, chunk.metadata['sourceRefs']))}")
                 parts.append("")
             parts.append("---")
 
@@ -313,6 +334,10 @@ class AgentContextManager:
                     citations.append({
                         "chunk_id": chunk.chunk_id,
                         "citation_id": citation_id,
+                        "record_id": chunk.record_id,
+                        "record_type": chunk.record_type,
+                        "record_subtype": chunk.record_subtype,
+                        "evidence_refs": chunk.evidence_refs,
                         "source_type": chunk.source_type,
                         "section_type": chunk.section_type,
                         "segment_ids": chunk.segment_ids,

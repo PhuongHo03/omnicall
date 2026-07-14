@@ -14,7 +14,7 @@ const SECTION_ORDER = [
   "source",
   "transcript",
   "evidence",
-  "speakers",
+  "knowledge",
   "participants",
   "entities",
   "facts",
@@ -66,6 +66,9 @@ export function MeetingIntelligenceResultPanel({ result }: MeetingIntelligenceRe
 }
 
 function toDisplaySections(result: MeetingIntelligenceResult): MeetingIntelligenceResult {
+  if (result.schemaVersion === "meeting-intelligence-result.v2") {
+    return result;
+  }
   const knowledge = result.knowledge;
   if (!knowledge || typeof knowledge !== "object" || Array.isArray(knowledge)) {
     return result;

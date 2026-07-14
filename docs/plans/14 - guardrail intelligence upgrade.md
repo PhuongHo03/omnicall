@@ -6,7 +6,7 @@
 
 1. Replace brittle prefix-based parser with regex-based flexible parsing that handles varied model responses.
 2. Normalize raw llama-guard3 category codes (`S1`-`S7`) into human-readable business labels.
-3. Split strict mode into per-layer controls (`GUARDRAIL_INPUT_STRICT_MODE`, `GUARDRAIL_OUTPUT_STRICT_MODE`).
+3. Provide one global strict-mode control for both input and output guardrails.
 4. Implement soft-block and rule-based redaction as alternatives to full-block for output guardrail.
 5. Derive confidence from model response heuristics instead of hardcoding fixed values.
 6. Add cumulative latency budget to prevent guardrail from slowing chat beyond acceptable threshold.
@@ -66,16 +66,12 @@
 
 #### Configuration
 
-- [x] Add `guardrail_input_strict_mode: bool | None = Field(default=None, alias="GUARDRAIL_INPUT_STRICT_MODE")` to `Settings`.
-- [x] Add `guardrail_output_strict_mode: bool | None = Field(default=None, alias="GUARDRAIL_OUTPUT_STRICT_MODE")` to `Settings`.
-- [x] Add `GUARDRAIL_INPUT_STRICT_MODE` and `GUARDRAIL_OUTPUT_STRICT_MODE` to `.env.example`.
 - [x] Add both variables to `docker-compose.yml` backend and worker service environment.
 
 #### Wiring
 
 - [x] In `MeetingChatService._check_guardrail()`, accept explicit `strict_mode` parameter instead of always using global setting.
-- [x] Input guardrail call: use `self.settings.guardrail_input_strict_mode if self.settings.guardrail_input_strict_mode is not None else self.settings.guardrail_strict_mode`.
-- [x] Output guardrail call: use `self.settings.guardrail_output_strict_mode if self.settings.guardrail_output_strict_mode is not None else self.settings.guardrail_strict_mode`.
+- [x] Input and output guardrail calls use `self.settings.guardrail_strict_mode`.
 - [x] Verify: set input strict=true, output strict=false, confirm input blocks on error but output fails open.
 
 ### P4 - Output Soft Block and Redaction
@@ -114,9 +110,6 @@
 
 #### Configuration
 
-- [x] Add `guardrail_latency_budget_ms: int = Field(default=8000, alias="GUARDRAIL_LATENCY_BUDGET_MS")` to `Settings`.
-- [x] Add `GUARDRAIL_LATENCY_BUDGET_MS=8000` to `.env.example`.
-- [x] Add to `docker-compose.yml` backend and worker service environment.
 
 #### Enforcement
 
@@ -218,7 +211,7 @@
 
 - Regex-based flexible parser replacing brittle `startswith` checks
 - Category normalization map (`S1`-`S7` → `violence`, `sexual_content`, etc.)
-- Per-layer strict mode (`GUARDRAIL_INPUT_STRICT_MODE`, `GUARDRAIL_OUTPUT_STRICT_MODE`)
+- One global strict mode for input and output guardrails
 - Soft block strategy for output guardrail (preserves citations)
 - Rule-based PII pre-redaction (email, phone, card numbers)
 - Confidence heuristics replacing hardcoded values

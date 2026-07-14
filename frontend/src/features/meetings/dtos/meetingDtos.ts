@@ -191,13 +191,21 @@ function mapChatMessage(raw: RawChatMessage): MeetingChatMessage {
   const agentIterations = typeof metadata.agentIterations === "number" ? metadata.agentIterations : undefined;
   const queryPlan = isRecord(metadata.agentQueryPlan) ? metadata.agentQueryPlan : {};
   const planSections = Array.isArray(queryPlan.sections) ? queryPlan.sections.filter((item): item is string => typeof item === "string") : undefined;
-  const agentMetadata = agentToolCalls || agentReplans !== undefined || agentIterations !== undefined || planSections
+  const planRecordTypes = Array.isArray(queryPlan.recordTypes) ? queryPlan.recordTypes.filter((item): item is string => typeof item === "string") : undefined;
+  const planRecordSubtypes = Array.isArray(queryPlan.recordSubtypes) ? queryPlan.recordSubtypes.filter((item): item is string => typeof item === "string") : undefined;
+  const planRelationTypes = Array.isArray(queryPlan.relationTypes) ? queryPlan.relationTypes.filter((item): item is string => typeof item === "string") : undefined;
+  const planAnswerShape = typeof queryPlan.answerShape === "string" ? queryPlan.answerShape : undefined;
+  const agentMetadata = agentToolCalls || agentReplans !== undefined || agentIterations !== undefined || planSections || planRecordTypes || planRecordSubtypes || planRelationTypes || planAnswerShape
     ? {
         iterations: agentIterations,
         replans: agentReplans,
         toolCalls: agentToolCalls?.map(tc => tc.tool),
         intent: typeof queryPlan.intent === "string" ? queryPlan.intent : undefined,
         sections: planSections,
+        recordTypes: planRecordTypes,
+        recordSubtypes: planRecordSubtypes,
+        relationTypes: planRelationTypes,
+        answerShape: planAnswerShape,
       }
     : undefined;
   
@@ -246,6 +254,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function parseMeetingIntelligenceResult(raw: unknown): MeetingIntelligenceResult {
   if (!isRecord(raw)) {
     throw new Error("Invalid meeting intelligence result.");
+  }
+  if (raw.schemaVersion === "meeting-intelligence-result.v2") {
+    const knowledge = raw.knowledge;
+    const evidence = raw.evidence;
+    if (!isRecord(knowledge) || !Array.isArray(knowledge.records)) {
+      throw new Error("Invalid v2 knowledge records.");
+    }
+    if (!isRecord(evidence) || !Array.isArray(evidence.items)) {
+      throw new Error("Invalid v2 evidence items.");
+    }
+    const evidenceIds = new Set(
+      evidence.items.filter(isRecord).map((item) => item.id).filter((id): id is string => typeof id === "string")
+    );
+    for (const record of knowledge.records) {
+      if (!isRecord(record) || typeof record.id !== "string" || typeof record.type !== "string" || typeof record.subtype !== "string") {
+        throw new Error("Invalid v2 knowledge record envelope.");
+      }
+      if (!Array.isArray(record.evidenceRefs) || record.evidenceRefs.some((id) => typeof id !== "string" || !evidenceIds.has(id))) {
+        throw new Error(`Invalid evidence references for record ${record.id}.`);
+      }
+    }
   }
   return raw;
 }

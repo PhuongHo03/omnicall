@@ -2,7 +2,6 @@ from dataclasses import dataclass
 import time
 from typing import Callable
 
-from backend.providers.analysis import SCHEMA_VERSION
 from backend.services.processing.observability import asset_log_context, elapsed_ms
 
 
@@ -21,7 +20,7 @@ class PersistenceStage:
         started = time.perf_counter()
         result = self.results.upsert(
             meeting_id=meeting.id,
-            schema_version=SCHEMA_VERSION,
+            schema_version=str(result_json.get("schemaVersion") or "unknown"),
             provider_name=provider_name,
             provider_model=provider_model,
             result_json=result_json,

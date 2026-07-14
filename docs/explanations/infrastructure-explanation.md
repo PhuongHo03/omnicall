@@ -169,6 +169,8 @@ Docker Compose uses the root `.env` automatically when no explicit env file over
 
 Backend and worker receive the application resilience settings and Agentic RAG budgets explicitly through Compose. This keeps changes to `RATE_LIMIT_*`, `CONCURRENCY_LIMIT_*`, `TASK_LIMIT_*`, `CIRCUIT_BREAKER_*`, and `AGENTIC_RAG_*` effective after the affected containers are recreated. Port-only variables such as `FRONTEND_PORT` and `BACKEND_PORT` remain template metadata because the local stack exposes the application through Nginx.
 
+The key sets in `.env` and `.env.example` are kept identical. The root `.env` may override template values for a local endpoint, while `.env.example` contains safe development placeholders. Retrieval fallback thresholds, Agentic RAG budgets, and extraction-window limits are explicit in both files so direct backend runs and Compose runs use the same configuration surface.
+
 Notable local defaults:
 
 | Variable | Value | Reason |
@@ -215,11 +217,8 @@ Notable local defaults:
 | `GUARDRAIL_MAX_RETRIES` | `0` | Local guardrail retry count |
 | `GUARDRAIL_INPUT_ENABLED` | `true` | Enables chat input guardrail |
 | `GUARDRAIL_OUTPUT_ENABLED` | `true` | Enables assistant output guardrail |
-| `GUARDRAIL_STRICT_MODE` | `false` | Fail closed on provider errors when true; otherwise fail open (`allowed` + `provider_error`) |
-| `GUARDRAIL_INPUT_STRICT_MODE` | `` | Per-layer strict mode for input guardrail |
-| `GUARDRAIL_OUTPUT_STRICT_MODE` | `` | Per-layer strict mode for output guardrail |
-| `GUARDRAIL_LATENCY_BUDGET_MS` | `8000` | Cumulative guardrail latency budget in ms |
-| `GUARDRAIL_PII_REDACTION_ENABLED` | `true` | Redact PII before output guardrail check |
+| `GUARDRAIL_STRICT_MODE` | `false` | Provider errors fail closed (`blocked`) when true; otherwise fail open (`allowed` + `provider_error`) |
+| `GUARDRAIL_PII_REDACTION_ENABLED` | `true` | Redact PII in the copy sent to the guardrail model |
 | `MILVUS_HOST` | `milvus` | Internal Milvus REST host |
 | `MILVUS_PORT` | `19530` | Internal Milvus REST port |
 | `MILVUS_COLLECTION` | `meeting_chunks` | Milvus collection for derived meeting chunk vectors |
@@ -321,7 +320,7 @@ Phase 4 worker slice verification also confirmed:
 | Backend, worker, and NGINX services | Healthy |
 | Gateway `GET /api/health` | `200` |
 | Uploaded `.wav` meeting queued through RabbitMQ/Celery without configured local ASR/LLM models | Job fails safely and remains retryable |
-| Processing service with test-only model fixtures | Persists `meeting-intelligence-result.v1`, transcript, insight, and chunk rows |
+| Processing service with test-only model fixtures | Persists `meeting-intelligence-result.v2`, transcript, knowledge, evidence, and chunk rows |
 | LLM provider selection and fallback tests | Passed |
 | LLM analysis merge and provider failure tests | Passed |
 | Worker idempotency, lock, and provider-failure state tests | Passed |
@@ -484,7 +483,7 @@ Phase 6 runtime verification also confirmed:
 | Check | Result |
 |---|---|
 | `docker compose config --quiet` | Passed |
-| `.env` and `.env.example` key sets | Identical; no duplicate keys |
+| `.env` and `.env.example` key sets | Identical; no duplicate keys, including retrieval, extraction-window, and Agentic RAG limits |
 | Gateway health | `GET /api/health` returned `{"app":"Omnicall API","status":"ok"}` |
 | Milvus WebUI | Port `8083` reachable and redirected to `/webui/` |
 | Frontend production build | `tsc -b && vite build` passed |
@@ -499,4 +498,4 @@ The final Docker/Compose cleanup audit found no unused service or volume declara
 
 Phase 25 adds the `meeting_transcript_windows` PostgreSQL table. It stores window references and local extraction state; it does not replace the full transcript and is not written directly to Milvus. Retrieval chunks remain authoritative in PostgreSQL and their derived vectors remain generation-validated in Milvus.
 
-*Document reflects project state after **Phase 25 Codex-Style Hierarchical Intelligence Extraction**. Compose infrastructure remains intentionally unchanged; PostgreSQL stores full transcript/result/window/retrieval state, while Milvus stores rebuildable vector embeddings.*
+*Document reflects project state during **Phase 27 Citation Playback Links**. Compose infrastructure remains intentionally unchanged; PostgreSQL stores full transcript/result/window/retrieval state, while Milvus stores rebuildable vector embeddings.*

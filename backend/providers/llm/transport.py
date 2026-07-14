@@ -48,32 +48,6 @@ def ensure_trailing_slash(value: str) -> str:
     return value if value.endswith("/") else f"{value}/"
 
 
-def extract_answer_stream(collected: str, answer_key: str) -> str:
-    idx = collected.find(answer_key)
-    if idx < 0:
-        return ""
-    rest = collected[idx + len(answer_key):].lstrip()
-    if rest.startswith(":"):
-        rest = rest[1:].lstrip()
-    if not rest.startswith('"'):
-        return ""
-    rest = rest[1:]
-    result: list[str] = []
-    i = 0
-    while i < len(rest):
-        ch = rest[i]
-        if ch == '"':
-            break
-        if ch == "\\" and i + 1 < len(rest):
-            next_ch = rest[i + 1]
-            result.append({"\"": '"', "\\": "\\", "n": "\n", "t": "\t"}.get(next_ch, next_ch))
-            i += 2
-            continue
-        result.append(ch)
-        i += 1
-    return "".join(result)
-
-
 def _headers(api_key: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if api_key:

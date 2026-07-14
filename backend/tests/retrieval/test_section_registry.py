@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from backend.services.retrieval.chunk_builder import SECTION_PRIORITY, _retrieval_view
+from backend.services.retrieval.chunk_builder import SECTION_PRIORITY, _canonical_record_view
 from backend.services.retrieval.section_registry import SECTION_TYPE_SET
 
 
@@ -16,7 +16,7 @@ class SectionRegistryTestCase(unittest.TestCase):
         self.assertIn("extraction.warning", SECTION_TYPE_SET)
 
     def test_knowledge_entity_records_are_exposed_to_entity_chunks(self) -> None:
-        view = _retrieval_view({
+        view = _canonical_record_view({
             "knowledge": {
                 "records": [
                     {"id": "entity-1", "type": "entity", "data": {"name": "Argonne"}},

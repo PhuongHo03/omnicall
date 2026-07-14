@@ -62,6 +62,10 @@ class RetrievalIndexServiceTestCase(unittest.TestCase):
         participant_count = by_id["fact-participant_count-001"]
         self.assertEqual(participant_count["sectionType"], "fact.participant_count")
         self.assertIn("value: 2", participant_count["text"])
+        self.assertEqual(participant_count["citationIds"], ["json-record-fact-001"])
+        self.assertEqual(by_id["meeting-metadata"]["citationIds"], ["json-meeting-metadata"])
+        self.assertEqual(by_id["source-processing"]["citationIds"], ["json-source-processing"])
+        self.assertEqual(by_id["quality-overview"]["citationIds"], ["json-quality-overview"])
         self.assertLess(participant_count["metadata"]["priority"], by_id["summary-executive"]["metadata"]["priority"])
 
         action_chunk = by_id["action-item-001"]
@@ -104,7 +108,7 @@ class RetrievalIndexServiceTestCase(unittest.TestCase):
 
 def _rag_first_result() -> dict:
     return {
-        "schemaVersion": "meeting-intelligence-result.v1",
+        "schemaVersion": "meeting-intelligence-result.v2",
         "meeting": {"id": "meeting-001", "title": "Retrieval planning call", "durationSeconds": 120},
         "source": {"analysisProvider": "llm-analysis", "analysisModel": "test-analysis-model", "llmProvider": "test-llm"},
         "transcript": {
@@ -131,9 +135,9 @@ def _rag_first_result() -> dict:
             ],
         },
         "evidence": {
-            "citations": [
-                {"id": "cite-001", "segmentIds": ["seg-001"], "startMs": 0, "endMs": 5000, "speakerLabels": ["Alice"], "quote": "We decided to use processed JSON.", "evidenceType": "direct_quote"},
-                {"id": "cite-002", "segmentIds": ["seg-002"], "startMs": 5000, "endMs": 12000, "speakerLabels": ["Bob"], "quote": "Bob will index action items.", "evidenceType": "direct_quote"},
+            "items": [
+                {"id": "cite-001", "kind": "transcript", "segmentIds": ["seg-001"], "startMs": 0, "endMs": 5000, "quote": "We decided to use processed JSON."},
+                {"id": "cite-002", "kind": "transcript", "segmentIds": ["seg-002"], "startMs": 5000, "endMs": 12000, "quote": "Bob will index action items."},
             ]
         },
         "speakers": {
@@ -159,6 +163,22 @@ def _rag_first_result() -> dict:
         "decisions": [{"id": "decision-001", "text": "Use processed JSON for RAG.", "confidence": 0.9, "citationIds": ["cite-001"]}],
         "risks": [{"id": "risk-001", "text": "Low quality transcript segments may reduce answer confidence.", "confidence": 0.75, "citationIds": ["cite-002"]}],
         "questions": [{"id": "question-001", "text": "How should old chunks be rebuilt?", "status": "open", "citationIds": ["cite-001"]}],
+        "knowledge": {
+            "records": [
+                {"id": "participant-001", "type": "participant", "subtype": "profile", "data": {"displayName": "Alice", "speakerLabels": ["Alice"], "role": "Product owner", "isAttendee": True, "isMentionedOnly": False}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-001"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.9, "status": "verified"},
+                {"id": "participant-002", "type": "participant", "subtype": "profile", "data": {"displayName": "Bob", "speakerLabels": ["Bob"], "role": "Engineer", "isAttendee": True, "isMentionedOnly": False}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-002"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.86, "status": "verified"},
+                {"id": "entity-001", "type": "entity", "subtype": "system", "data": {"name": "RAG", "aliases": ["retrieval"]}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-001"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.8, "status": "verified"},
+                {"id": "fact-001", "type": "fact", "subtype": "participant_count", "data": {"subject": {"type": "meeting", "id": "meeting"}, "predicate": "has_speaker_count", "value": 2, "unit": "people"}, "scope": {"kind": "meeting"}, "evidenceRefs": [], "sourceRefs": [], "derivedFrom": ["speakers"], "confidence": 0.95, "status": "verified"},
+                {"id": "event-001", "type": "event", "subtype": "decision_made", "data": {"title": "RAG source selected", "participantIds": ["participant-001"], "startMs": 0, "endMs": 5000, "status": "completed"}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-001"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.9, "status": "verified"},
+                {"id": "rel-001", "type": "relationship", "subtype": "owns", "data": {"from": {"type": "participant", "id": "participant-002"}, "to": {"type": "action", "id": "action-001"}}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-002"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.86, "status": "verified"},
+                {"id": "topic-001", "type": "topic", "subtype": "summary", "data": {"title": "Retrieval", "level": 1, "summary": "The team discussed RAG indexing."}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-001"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.8, "status": "verified"},
+                {"id": "action-001", "type": "action", "subtype": "item", "data": {"task": "Index action items and risks by Friday.", "ownerParticipantId": "participant-002", "ownerName": "Bob", "status": "open"}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-002"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.86, "status": "verified"},
+                {"id": "decision-001", "type": "decision", "subtype": "record", "data": {"text": "Use processed JSON for RAG."}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-001"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.9, "status": "verified"},
+                {"id": "risk-001", "type": "risk", "subtype": "record", "data": {"text": "Low quality transcript segments may reduce answer confidence."}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-002"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.75, "status": "verified"},
+                {"id": "question-001", "type": "question", "subtype": "record", "data": {"text": "How should old chunks be rebuilt?", "status": "open"}, "scope": {"kind": "meeting"}, "evidenceRefs": ["cite-001"], "sourceRefs": [], "derivedFrom": [], "confidence": 0.8, "status": "verified"},
+            ],
+            "relationships": []
+        },
         "quality": {"coverage": "partial", "warnings": ["low volume"], "confidence": 0.75},
         "extraction": {"overallConfidence": 0.82, "method": "llm_with_deterministic_verification", "unsupportedClaims": [], "warnings": []},
     }

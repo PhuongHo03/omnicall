@@ -13,8 +13,7 @@ from backend.services.agent.prompt_builder import agent_system_prompt, agent_use
 from backend.services.agent.tool_registry import AgentToolRegistry
 
 VALID_TOOLS = {
-    "search_semantic", "search_keyword", "search_section", "search_speaker", "get_summary",
-    "get_action_items", "get_decisions", "get_risks", "get_timeline", "get_participants",
+    "search_semantic", "search_keyword", "search_records", "search_section", "get_summary",
 }
 
 

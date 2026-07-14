@@ -44,8 +44,8 @@ def main() -> None:
 
 def _is_rag_first_schema(result_json: dict) -> bool:
     if isinstance(result_json.get("knowledge"), dict):
-        return all(key in result_json for key in ("evidence", "speakers", "summaries", "transcript"))
-    return all(key in result_json for key in ("evidence", "speakers", "summaries", "facts", "events", "relationships"))
+        return all(key in result_json for key in ("evidence", "summaries", "transcript"))
+    return False
 
 
 if __name__ == "__main__":

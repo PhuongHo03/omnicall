@@ -7,6 +7,7 @@ import { ResultDrawer } from "../components/ResultDrawer";
 import { MeetingActionPanel } from "../components/MeetingActionPanel";
 import { MeetingChatPanel } from "../components/MeetingChatPanel";
 import { MeetingList } from "../components/MeetingList";
+import { MeetingProgressBar } from "../components/MeetingProgressBar";
 import { useMeetingWorkspace } from "../hooks/useMeetingWorkspace";
 import type { MeetingChatCitation, PlaybackSeekRequest } from "../types/meetingTypes";
 
@@ -72,6 +73,54 @@ export function MeetingsScreen({
     );
   }
 
+  const meetingStatus = workspace.selectedMeeting.status;
+  const isUploading = workspace.uploadProgress !== null;
+  const showProcessingProgress = meetingStatus === "QUEUED" || meetingStatus === "PROCESSING";
+
+  const renderMeetingState = () => {
+    if (meetingStatus === "READY") {
+      return (
+        <MeetingChatPanel
+          disabled={workspace.isLoading}
+          messages={workspace.chatMessages}
+          question={workspace.chatQuestion}
+          onQuestionChange={workspace.setChatQuestion}
+          typewriterMessageIds={workspace.typewriterMessageIds}
+          onTypewriterComplete={workspace.clearTypewriterId}
+          onSubmitQuestion={workspace.submitChatQuestion}
+          onCitationClick={openCitationPlayback}
+        />
+      );
+    }
+
+    if (isUploading) {
+      return (
+        <EmptyState message="Đang tải tệp lên...">
+          <MeetingProgressBar label="Upload progress" value={workspace.uploadProgress ?? 0} />
+        </EmptyState>
+      );
+    }
+
+    if (showProcessingProgress) {
+      return (
+        <EmptyState message={meetingStatus === "QUEUED" ? "Đang chờ xử lý..." : "Đang xử lý meeting..."}>
+          <MeetingProgressBar
+            label={meetingStatus === "QUEUED" ? "Processing queue" : "Meeting processing"}
+            indeterminate
+          />
+        </EmptyState>
+      );
+    }
+
+    const messageByStatus = {
+      DRAFT: "Tải tệp âm thanh để bắt đầu",
+      UPLOADED: "Tệp đã tải lên, nhấn Process để bắt đầu",
+      FAILED: "Có lỗi xảy ra, vui lòng thử lại",
+    } as const;
+
+    return <EmptyState message={messageByStatus[meetingStatus as keyof typeof messageByStatus] ?? "Upload and process a meeting to start chatting."} />;
+  };
+
   return (
     <div className="workspace-screen">
       <div className="workspace-main">
@@ -97,20 +146,7 @@ export function MeetingsScreen({
           onViewResult={openResultDrawer}
         />
 
-        {workspace.selectedMeeting.status === "READY" ? (
-          <MeetingChatPanel
-            disabled={workspace.isLoading}
-            messages={workspace.chatMessages}
-            question={workspace.chatQuestion}
-          onQuestionChange={workspace.setChatQuestion}
-          typewriterMessageIds={workspace.typewriterMessageIds}
-          onTypewriterComplete={workspace.clearTypewriterId}
-          onSubmitQuestion={workspace.submitChatQuestion}
-          onCitationClick={openCitationPlayback}
-          />
-        ) : (
-          <EmptyState message="Upload and process a meeting to start chatting." />
-        )}
+        {renderMeetingState()}
 
         <ResultDrawer
           isOpen={isResultDrawerOpen}

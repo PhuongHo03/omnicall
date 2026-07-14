@@ -1,10 +1,11 @@
+import logging
 import time
 
 from sqlalchemy.orm import Session
 
 from backend.models.enums import MeetingStatus
 from backend.configs.settings import Settings, get_settings
-from backend.providers.analysis import SCHEMA_VERSION, AnalysisProvider
+from backend.providers.analysis import AnalysisProvider
 from backend.providers.lock_provider import RedisLockProvider
 from backend.providers.transcription_provider import LocalTranscriptionProvider
 from backend.repositories.meeting_repository import (
@@ -22,6 +23,9 @@ from backend.services.processing.retrieval_index_stage import RetrievalIndexStag
 from backend.services.processing.transcription_stage import TranscriptionStage
 from backend.services.processing.hierarchical_extraction_service import HierarchicalExtractionService
 from backend.repositories.transcript_window_repository import TranscriptWindowRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessingPipelineService:
@@ -203,7 +207,7 @@ class ProcessingPipelineService:
                 meeting_name=meeting.title,
                 file=asset_log_context(asset),
                 duration_ms=elapsed_ms(stage_started),
-                details={"schemaVersion": SCHEMA_VERSION, "segmentCount": len(transcript_segments)},
+                details={"schemaVersion": result_json.get("schemaVersion"), "segmentCount": len(transcript_segments)},
             )
 
             current_stage = "result_persistence"
@@ -248,7 +252,7 @@ class ProcessingPipelineService:
                 duration_ms=elapsed_ms(processing_started),
                 details={
                     "resultId": result.id,
-                    "schemaVersion": SCHEMA_VERSION,
+                    "schemaVersion": result_json.get("schemaVersion"),
                     "segmentCount": len(transcript_segments),
                     "chunkCount": len(retrieval_chunks),
                 },
@@ -256,6 +260,7 @@ class ProcessingPipelineService:
             return {"meeting_id": meeting.id, "status": "succeeded"}
         except Exception as exc:
             self.session.rollback()
+            logger.exception("Meeting processing failed", extra={"meeting_id": meeting_id, "stage": current_stage})
             meeting = self.meetings.get(meeting_id)
             if meeting is None:
                 return {"meeting_id": meeting_id, "status": "missing"}

@@ -54,6 +54,10 @@ export type MeetingChatMessage = {
     agentThoughts?: string[];
     intent?: string;
     sections?: string[];
+    recordTypes?: string[];
+    recordSubtypes?: string[];
+    relationTypes?: string[];
+    answerShape?: string;
     missingFields?: string[];
     evidenceCount?: number;
   };
@@ -74,6 +78,19 @@ export type MeetingChatHistory = {
 };
 
 export type MeetingIntelligenceResult = Record<string, unknown>;
+
+export type KnowledgeRecord = {
+  id: string;
+  type: string;
+  subtype: string;
+  data: Record<string, unknown>;
+  scope: string;
+  evidenceRefs: string[];
+  sourceRefs: string[];
+  derivedFrom: string[];
+  confidence: number;
+  status: string;
+};
 
 // ── Asset playback types ──
 

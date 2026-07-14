@@ -17,17 +17,6 @@ class LLMProvider(Protocol):
     def generate_json(self, *, system_prompt: str, user_prompt: str, temperature: float = 0) -> dict[str, Any]:
         ...
 
-    def generate_stream_json(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        on_token: Any = None,
-        temperature: float = 0,
-    ) -> dict[str, Any]:
-        ...
-
-
 @dataclass(frozen=True)
 class LLMRequestConfig:
     base_url: str

@@ -155,6 +155,10 @@ class AgenticRAGService:
             "iteration": 0,
             "intent": query_plan.intent,
             "sections": query_plan.sections,
+            "recordTypes": query_plan.record_types,
+            "recordSubtypes": query_plan.record_subtypes,
+            "relationTypes": query_plan.relation_types,
+            "answerShape": query_plan.answer_shape,
             "subQueryCount": len(query_plan.sub_queries),
         })
 
@@ -206,7 +210,7 @@ class AgenticRAGService:
 
                 tool_calls = self._valid_tool_calls(decision.get("tool_calls", []), question=question)
                 planned_tool_calls = self._tool_calls_from_plan(query_plan, question)
-                if not tool_calls or all(call["tool"] in {"search_semantic", "search_keyword", "search_speaker"} for call in tool_calls):
+                if not tool_calls or all(call["tool"] in {"search_semantic", "search_keyword"} for call in tool_calls):
                     tool_calls = planned_tool_calls
                 if not tool_calls:
                     if self.context_manager.chunks:
@@ -268,6 +272,10 @@ class AgenticRAGService:
                         "iteration": iteration + 1,
                         "intent": query_plan.intent,
                         "sections": query_plan.sections,
+                        "recordTypes": query_plan.record_types,
+                        "recordSubtypes": query_plan.record_subtypes,
+                        "relationTypes": query_plan.relation_types,
+                        "answerShape": query_plan.answer_shape,
                         "subQueryCount": len(query_plan.sub_queries),
                     })
 
@@ -428,10 +436,27 @@ class AgenticRAGService:
 
     @staticmethod
     def _tool_calls_from_plan(plan: QueryPlan, question: str) -> list[dict[str, Any]]:
+        # Canonical v2 selectors are the planner's primary output. Section
+        # names are only used below for top-level projections (summary and
+        # operational metadata), never to locate knowledge.records.
+        if plan.record_types:
+            calls = [{
+                "tool": "search_records",
+                "parameters": {
+                    "record_types": plan.record_types,
+                    "record_subtypes": plan.record_subtypes,
+                    "relation_types": plan.relation_types,
+                    "answer_shape": plan.answer_shape,
+                    "query": question,
+                    "limit": 10,
+                },
+            }]
+            if any(section.startswith("summary.") for section in plan.sections):
+                calls.append({"tool": "get_summary", "parameters": {}})
+            return calls[:4]
         if plan.intent == "prices_and_commercial_terms":
             return [
                 {"tool": "search_section", "parameters": {"section_type": "fact.record", "query": "price cost amount dollar discount $", "limit": 5}},
-                {"tool": "get_decisions", "parameters": {}},
                 {"tool": "get_summary", "parameters": {}},
             ]
         if plan.intent == "business_and_product_entities":
@@ -444,14 +469,6 @@ class AgenticRAGService:
         direct = {
             "summary.executive": "get_summary",
             "summary.topic": "get_summary",
-            "summary.timeline": "get_timeline",
-            "action.item": "get_action_items",
-            "decision.record": "get_decisions",
-            "risk.record": "get_risks",
-            "event.timeline": "get_timeline",
-            "participant.profile": "get_participants",
-            "participant.overview": "get_participants",
-            "fact.participant_count": "get_participants",
         }
         for section in plan.sections:
             tool = direct.get(section)

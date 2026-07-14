@@ -87,7 +87,7 @@ class GuardrailOrchestrationTestCase(unittest.TestCase):
             FakeErrorGuardrailProvider(),
             kind="chat_input",
             text="normal question",
-            strict_mode=True,
+            strict_mode=False,
         )
 
         self.assertEqual(result.action, "allowed")

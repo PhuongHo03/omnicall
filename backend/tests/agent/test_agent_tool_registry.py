@@ -75,53 +75,22 @@ class AgentToolRegistryTestCase(unittest.TestCase):
         tool_names = [t["function"]["name"] for t in tools]
         self.assertIn("search_keyword", tool_names)
 
+    def test_get_tools_contains_search_records(self) -> None:
+        tools = self.registry.get_tools()
+        tool_names = [t["function"]["name"] for t in tools]
+        self.assertIn("search_records", tool_names)
+
     def test_get_tools_contains_search_section(self) -> None:
         """Test that tools list contains search_section."""
         tools = self.registry.get_tools()
         tool_names = [t["function"]["name"] for t in tools]
         self.assertIn("search_section", tool_names)
 
-    def test_get_tools_contains_search_speaker(self) -> None:
-        """Test that tools list contains search_speaker."""
-        tools = self.registry.get_tools()
-        tool_names = [t["function"]["name"] for t in tools]
-        self.assertIn("search_speaker", tool_names)
-
     def test_get_tools_contains_get_summary(self) -> None:
         """Test that tools list contains get_summary."""
         tools = self.registry.get_tools()
         tool_names = [t["function"]["name"] for t in tools]
         self.assertIn("get_summary", tool_names)
-
-    def test_get_tools_contains_get_action_items(self) -> None:
-        """Test that tools list contains get_action_items."""
-        tools = self.registry.get_tools()
-        tool_names = [t["function"]["name"] for t in tools]
-        self.assertIn("get_action_items", tool_names)
-
-    def test_get_tools_contains_get_decisions(self) -> None:
-        """Test that tools list contains get_decisions."""
-        tools = self.registry.get_tools()
-        tool_names = [t["function"]["name"] for t in tools]
-        self.assertIn("get_decisions", tool_names)
-
-    def test_get_tools_contains_get_risks(self) -> None:
-        """Test that tools list contains get_risks."""
-        tools = self.registry.get_tools()
-        tool_names = [t["function"]["name"] for t in tools]
-        self.assertIn("get_risks", tool_names)
-
-    def test_get_tools_contains_get_timeline(self) -> None:
-        """Test that tools list contains get_timeline."""
-        tools = self.registry.get_tools()
-        tool_names = [t["function"]["name"] for t in tools]
-        self.assertIn("get_timeline", tool_names)
-
-    def test_get_tools_contains_get_participants(self) -> None:
-        """Test that tools list contains get_participants."""
-        tools = self.registry.get_tools()
-        tool_names = [t["function"]["name"] for t in tools]
-        self.assertIn("get_participants", tool_names)
 
     def test_get_tools_does_not_contain_synthesize_answer(self) -> None:
         """Synthesis is a service boundary, not an LLM retrieval tool."""
@@ -198,6 +167,18 @@ class AgentToolRegistryTestCase(unittest.TestCase):
             limit=10,
         )
 
+    def test_execute_search_records_filters_canonical_metadata(self) -> None:
+        chunk = _make_meeting_chunk(section_type="fact.record")
+        chunk.metadata_json = {"recordId": "fact-1", "recordType": "fact", "subtype": "participant_count"}
+        self.registry.chunks.list_for_meeting.return_value = [chunk]
+        result = self.registry.execute_tool(
+            meeting_id=self.meeting_id,
+            tool_name="search_records",
+            arguments={"record_type": "fact", "subtype": "participant_count"},
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data), 1)
+
     def test_execute_search_section(self) -> None:
         """Test executing search_section tool."""
         chunk = _make_meeting_chunk(section_type="action.item")
@@ -213,21 +194,6 @@ class AgentToolRegistryTestCase(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.tool_name, "search_section")
 
-    def test_execute_search_speaker(self) -> None:
-        """Test executing search_speaker tool."""
-        chunk = _make_meeting_chunk()
-        self.registry.chunks.search_by_speaker.return_value = [chunk]
-
-        result = self.registry.execute_tool(
-            meeting_id=self.meeting_id,
-            tool_name="search_speaker",
-            arguments={"speaker_query": "Alice"},
-        )
-
-        self.assertIsInstance(result, ToolExecutionResult)
-        self.assertTrue(result.success)
-        self.assertEqual(result.tool_name, "search_speaker")
-
     def test_execute_get_summary(self) -> None:
         """Test executing get_summary tool."""
         chunk = _make_meeting_chunk(section_type="summary.executive")
@@ -242,93 +208,6 @@ class AgentToolRegistryTestCase(unittest.TestCase):
         self.assertIsInstance(result, ToolExecutionResult)
         self.assertTrue(result.success)
         self.assertEqual(result.tool_name, "get_summary")
-
-    def test_execute_get_action_items(self) -> None:
-        """Test executing get_action_items tool."""
-        chunk = _make_meeting_chunk(section_type="action.item")
-        self.registry.chunks.get_structured_sections.return_value = [chunk]
-
-        result = self.registry.execute_tool(
-            meeting_id=self.meeting_id,
-            tool_name="get_action_items",
-            arguments={},
-        )
-
-        self.assertIsInstance(result, ToolExecutionResult)
-        self.assertTrue(result.success)
-        self.assertEqual(result.tool_name, "get_action_items")
-        self.assertEqual(result.metadata["primarySections"], ["action.item"])
-        self.assertEqual(result.metadata["fallbackSections"], ["question.record"])
-
-    def test_execute_get_decisions(self) -> None:
-        """Test executing get_decisions tool."""
-        chunk = _make_meeting_chunk(section_type="decision.record")
-        self.registry.chunks.get_structured_sections.return_value = [chunk]
-
-        result = self.registry.execute_tool(
-            meeting_id=self.meeting_id,
-            tool_name="get_decisions",
-            arguments={},
-        )
-
-        self.assertIsInstance(result, ToolExecutionResult)
-        self.assertTrue(result.success)
-        self.assertEqual(result.tool_name, "get_decisions")
-
-    def test_execute_get_risks(self) -> None:
-        """Test executing get_risks tool."""
-        chunk = _make_meeting_chunk(section_type="risk.record")
-        self.registry.chunks.get_structured_sections.return_value = [chunk]
-
-        result = self.registry.execute_tool(
-            meeting_id=self.meeting_id,
-            tool_name="get_risks",
-            arguments={},
-        )
-
-        self.assertIsInstance(result, ToolExecutionResult)
-        self.assertTrue(result.success)
-        self.assertEqual(result.tool_name, "get_risks")
-
-    def test_execute_get_timeline(self) -> None:
-        """Test executing get_timeline tool."""
-        chunk = _make_meeting_chunk(section_type="event.timeline")
-        self.registry.chunks.get_structured_sections.return_value = [chunk]
-
-        result = self.registry.execute_tool(
-            meeting_id=self.meeting_id,
-            tool_name="get_timeline",
-            arguments={},
-        )
-
-        self.assertIsInstance(result, ToolExecutionResult)
-        self.assertTrue(result.success)
-        self.assertEqual(result.tool_name, "get_timeline")
-
-    def test_execute_get_participants(self) -> None:
-        """Test executing get_participants tool."""
-        chunk = _make_meeting_chunk(section_type="participant.profile")
-        self.registry.chunks.get_structured_sections.return_value = [chunk]
-
-        result = self.registry.execute_tool(
-            meeting_id=self.meeting_id,
-            tool_name="get_participants",
-            arguments={},
-        )
-
-        self.assertIsInstance(result, ToolExecutionResult)
-        self.assertTrue(result.success)
-        self.assertEqual(result.tool_name, "get_participants")
-        self.registry.chunks.get_structured_sections.assert_called_once_with(
-            meeting_id=self.meeting_id,
-            section_types=[
-                "speaker.stats",
-                "participant.overview",
-                "participant.profile",
-                "fact.record",
-                "entity.profile",
-            ],
-        )
 
     def test_tool_error_handling(self) -> None:
         """Test tool execution error handling."""

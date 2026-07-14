@@ -6,7 +6,7 @@ from sqlalchemy import delete
 from backend.configs.database import SessionLocal
 from backend.models.core_models import User
 from backend.models.enums import MeetingStatus
-from backend.providers.analysis import SCHEMA_VERSION
+from backend.providers.analysis import ANALYSIS_CANDIDATE_SCHEMA_VERSION
 from backend.providers.vector_provider import VectorProviderError, VectorSearchHit
 from backend.providers.embedding_provider import EmbeddingProviderError
 from backend.repositories.auth_repository import AuthRepository
@@ -85,10 +85,10 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
             meeting_repo.update_status(meeting, MeetingStatus.READY)
             result = result_repo.upsert(
                 meeting_id=meeting.id,
-                schema_version=SCHEMA_VERSION,
+                schema_version=ANALYSIS_CANDIDATE_SCHEMA_VERSION,
                 provider_name="test",
                 provider_model="test",
-                result_json={"schemaVersion": SCHEMA_VERSION},
+                result_json={"schemaVersion": ANALYSIS_CANDIDATE_SCHEMA_VERSION},
             )
             provider = TestEmbeddingProvider(dimensions=8)
             summary_text = "The meeting covers processed JSON retrieval and chatbot evidence."

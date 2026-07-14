@@ -6,13 +6,12 @@
 
 1. Simplify `GuardrailAction` to only `"allowed"` and `"blocked"` — remove `"warn"` and `"redact"`.
 2. Remove `RedactionStrategy` type and all related branching (`full_block`, `soft_block`, `redact_sensitive`).
-3. Convert provider errors and unparseable responses to `"allowed"` with `provider_error=true` metadata flag (fail-open).
+3. Apply the same strict/non-strict policy to provider errors and parse errors while preserving distinct error categories.
 4. Keep PII redaction as a pre-processing step before guardrail; remove `"redact"` action from guardrail result.
 5. Add regex pre-check for prompt injection patterns before calling the model.
-6. Improve guardrail prompt with Vietnamese few-shot examples for better classification accuracy.
-7. Add post-verdict category validation — override false-positive blocks when category keywords don't match content.
-8. Add input→output trust boost — when input is `"allowed"` and answer is grounded, raise the bar for output blocking.
-9. Add text length guard — skip output guardrail for very short answers that are unlikely to be harmful.
+6. Use the versioned simplified guardrail prompt.
+7. Add conservative post-verdict category validation for trusted grounded answers.
+8. Keep output false-positive overrides limited to grounded answers with citations.
 10. Clean up stale env vars (`GUARDRAIL_TRANSCRIPT_ENABLED`, `GUARDRAIL_CONTEXT_ENABLED`) from `.env`, `.env.example`, `docker-compose.yml`.
 11. Update all guardrail tests to match simplified action model.
 12. Update docs: backend explanation, infrastructure explanation, project overview.
@@ -20,7 +19,7 @@
 ## Prerequisites
 
 - [x] Phase 13 completed: transcript and context guardrail layers removed; only input and output remain.
-- [x] Phase 14 completed: regex parser, category normalization, per-layer strict mode, PII redaction, confidence heuristics, latency budget.
+- [x] Phase 14 completed: regex parser, category normalization, per-layer strict mode, and PII redaction.
 - [x] `llama-guard3:1b` available via Ollama.
 - [x] Current guardrail tests pass.
 
@@ -68,7 +67,7 @@
 
 - [x] In `generate_answer`: remove `effective_question = input_guardrail.redacted_text if ...` line.
   - PII redaction for input is already done by `redact_pii()` before calling guardrail if enabled; guardrail result no longer carries `redacted_text`.
-  - If `guardrail_pii_redaction_enabled` is true, apply `redact_pii()` to the question text before passing to guardrail, and use the redacted version for the LLM prompt.
+  - If `guardrail_pii_redaction_enabled` is true, apply `redact_pii()` only to the copy sent to the guardrail model; preserve the original question for chat and answer generation.
 
 ### P2 - Regex Pre-Check (Before Model)
 
@@ -234,7 +233,7 @@
 - [x] Update `docs/explanations/backend-explanation.md`:
   - Guardrail section: reflect simplified actions (`allowed`/`blocked` only).
   - Remove references to `redact`, `warn`, `soft_block`, `redact_sensitive`.
-  - Add description of regex pre-check, few-shot prompt, post-verdict validation, trust boost, text length guard.
+  - Add description of regex pre-check, versioned prompt, conservative post-verdict validation, retries, PII toggle, and strict error policy.
   - Update env var table: remove stale vars, no new vars added.
 - [x] Update `docs/explanations/infrastructure-explanation.md`:
   - Remove stale guardrail env vars from tables.
@@ -283,16 +282,15 @@
 ### What was implemented
 - Simplified `GuardrailAction` to `Literal["allowed", "blocked"]` — removed `warn`, `redact`, `RedactionStrategy`
 - `GuardrailResult` dataclass: removed `redacted_text` and `redaction_strategy` fields
-- Parser: safe → `allowed`, unsafe → `blocked`, empty/unparseable → `allowed` + `provider_error` (fail-open)
+- Parser: safe → `allowed`, unsafe → `blocked`, unparseable → `parse_error` routed through the same strict/non-strict policy
 - Provider errors: `strict_mode=False` → `allowed` + `provider_error`, `strict_mode=True` → `blocked`
 - `_apply_output_guardrail`: simplified to single block branch (no soft_block, no redact)
 - `_emit_guardrail`: replaced `warn` references with `allowed` + `provider_error` / `fail_open`
 - Regex pre-check (`_INJECTION_PATTERNS`): catches prompt injection patterns before calling model
-- Few-shot Vietnamese prompt (`PROMPT_VERSION=v2`): 7 examples for better classification
+- Simplified guardrail prompt (`PROMPT_VERSION=v3-simplified`)
 - Post-verdict category validation (`_CATEGORY_CONTENT_KEYWORDS`): overrides false-positive blocks
-- Trust boost: input `allowed` + grounded output → `trustBoost=true` metadata
-- Text length guard: output guardrail skipped for answers < 50 chars
-- PII pre-redaction moved before input guardrail (removed `redacted_text` from result)
+- Trusted grounded output with citations can receive a category-mismatch false-positive override
+- PII pre-redaction is controlled by `GUARDRAIL_PII_REDACTION_ENABLED` and applies to both input and output model copies
 - Removed stale env vars: `GUARDRAIL_TRANSCRIPT_ENABLED`, `GUARDRAIL_CONTEXT_ENABLED`
 - Updated all guardrail tests (21 provider + 8 orchestration)
 - Updated `fakes.py` TestGuardrailProvider to use new action values
@@ -303,8 +301,7 @@
 - **Without original_text**: When `original_text` is empty, validation can't confirm false positive → keeps blocked (conservative behavior).
 
 ### What was changed from original plan
-- P5 trust boost is implemented as metadata flag only (does not change guardrail model behavior directly); the post-verdict validation (P4) already provides the main false-positive override protection
-- P6 text length guard uses 50-char threshold (originally planned as generic; tuned to meeting answer patterns)
+- Output trust is enforced through grounded/citation metadata during conservative post-verdict validation
 
 ### Notes for future sessions
 - `PROMPT_VERSION` bumped to `"v2"` — should be bumped again when prompt template changes
@@ -312,6 +309,10 @@
 - `_INJECTION_PATTERNS` regex can be extended for new injection patterns
 - Post-verdict validation is conservative: if ANY keyword matches ANY category, the block is maintained
 - Text length guard threshold (50 chars) may need tuning based on production false-positive rates
+- Removed the unused `GUARDRAIL_LATENCY_BUDGET_MS` setting; guardrail latency is now controlled by the per-request `GUARDRAIL_TIMEOUT_SECONDS` value, standardized to 20 seconds.
+- Standardized `GUARDRAIL_MAX_RETRIES=1` across Settings, Compose defaults, and `.env.example`.
+- Fixed provider-error policy routing so `strict_mode=true` produces `blocked`, while non-strict mode remains fail-open; input and output now share the global strict-mode policy.
+- Added bounded retries for transient Ollama failures, made the PII redaction flag effective, and routed parse errors through the same strict/non-strict policy with a distinct `parse_error` category.
 
 ### Related docs updated
 - [x] `docs/explanations/backend-explanation.md`

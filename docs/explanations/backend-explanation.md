@@ -371,15 +371,15 @@ The endpoint is safe to retry: a missing meeting returns a successful `{deleted:
 The worker writes a complete processed result document to `meeting_intelligence_results.result_json` after a successful processing run. The current schema version is:
 
 ```text
-meeting-intelligence-result.v1
+meeting-intelligence-result.v2
 ```
 
 The persisted JSON contains:
 
-- `meeting`, `source`, `transcript`, `evidence`, `speakers`, `participants`, `entities`, `facts`, `events`, `relationships`, `topics`, `summaries`, `actions`, `decisions`, `risks`, `questions`, `quality`, and `extraction`.
+- `meeting`, `source`, `transcript`, `evidence`, `knowledge`, `summaries`, `quality`, and `extraction`; all extracted intelligence records live under `knowledge.records`.
 - Transcript segments inside `transcript.segments`; each segment keeps stable IDs, speaker labels, time ranges, text, and confidence.
-- Canonical transcript evidence inside `evidence.citations`, with deterministic quotes copied from transcript segments.
-- Deterministic speaker statistics inside `speakers`, including speaker count, identified participant count, mentioned-only count, segment count, and talk time.
+- Canonical transcript, structured, derived, and source evidence inside `evidence.items`; transcript items retain deterministic quotes and playback ranges.
+- Deterministic speaker profiles and speaker counts inside `knowledge.records` as `participant.speaker_profile` and `fact.speaker_count` records.
 - Verified knowledge records for precise RAG: participant profiles, atomic facts, event timeline records, entities, relationship edges, actions, decisions, risks, open questions, hierarchical topics, and executive/topic/timeline summaries.
 
 Read endpoints do not call model providers. They load the authorized meeting, read the latest persisted result, and return either the full JSON or a view of relevant sections. Provider prompts and raw provider responses are not exposed.
@@ -418,9 +418,15 @@ Local Compose now includes an `ollama` service. Backend and worker call it throu
 
 After each successful processing run, the worker persists the full JSONB result and then rebuilds `meeting_chunks`. The full transcript, canonical evidence, speaker stats, fact/entity/event graph, actions, decisions, risks, questions, topics, and summaries stay inside `meeting_intelligence_results.result_json`; the JSONB result remains the authoritative product artifact.
 
-Retrieval chunks are built from the RAG-first JSON knowledge records. `ProcessingPipelineService` delegates persistence to `PersistenceStage` and chunk/embedding/vector work to `RetrievalIndexStage`; `backend/services/retrieval/index_service.py` owns indexing orchestration, `chunk_builder.py` owns section construction, and `chunk_text.py` owns pure formatting/normalization helpers. `RetrievalSearchService` owns query lifecycle and metadata while `candidate_service.py` owns vector/PostgreSQL candidate resolution, intent pinning, and rerank. Candidate retrieval receives a `RetrievalScoring` policy from the orchestration service, so candidate code does not import private helpers back from the search service. The builder creates stable chunks for `meeting.metadata`, `source.processing`, `speaker.stats`, `fact.participant_count`, `fact.record`, `participant.overview`, `participant.profile`, `entity.profile`, `event.timeline`, `relationship.edge`, `topic.summary`, `summary.executive`, `summary.topic`, `summary.timeline`, `action.item`, `decision.record`, `risk.record`, `question.record`, `quality.*`, `extraction.*`, `evidence.map`, and `transcript.window`. Unified `knowledge.records` use an explicit record-type mapping, including `entity` to `entities`, so entity records are not silently dropped before `entity.profile` chunks are built.
+Retrieval chunks are built from the RAG-first JSON knowledge records. `ProcessingPipelineService` delegates persistence to `PersistenceStage` and chunk/embedding/vector work to `RetrievalIndexStage`; `backend/services/retrieval/index_service.py` owns indexing orchestration, `chunk_builder.py` owns section construction, and `chunk_text.py` owns pure formatting/normalization helpers. `RetrievalSearchService` owns query lifecycle and metadata while `candidate_service.py` owns vector/PostgreSQL candidate resolution, intent pinning, and rerank. Candidate retrieval receives a `RetrievalScoring` policy from the orchestration service, so candidate code does not import private helpers back from the search service. Speaker profiles and speaker counts are indexed from `knowledge.records` as participant/fact records; transcript speaker labels remain only in `transcript.segments`. Unified `knowledge.records` use an explicit record-type mapping, including `entity` to `entities`, so entity records are not silently dropped before chunks are built.
 
-Chunk text is contextualized from canonical record fields, including IDs, types, normalized values, owners, statuses, due dates, participant/entity references, confidence, citation IDs, and time ranges. Fact, participant, event, action, decision, risk, and relationship records have higher retrieval priority than broader summaries. Transcript windows are still indexed as fallback evidence, but product truth remains the JSON document and low-signal transcript text can be skipped from retrieval without deleting it from `result_json`.
+The generalized knowledge contract is defined in `backend/services/knowledge/semantic_registry.py` and `contract.py`. The registry owns canonical record families and aliases; an LLM subtype such as `participant_count` remains payload metadata rather than becoming a new top-level schema. Unknown but valid concepts normalize to `observation`, and the v2 record envelope reserves `evidenceRefs`, `sourceRefs`, and `derivedFrom` for provenance. The runtime reducer cutover is tracked in the subsequent migration phase.
+
+Evidence provenance is defined in `backend/services/knowledge/evidence.py`. It models transcript, structured, derived, and source evidence with optional segment/time location, and retrieval resolves evidence through `evidence_items()`/`evidence_by_id()`. The hierarchical reducer emits `evidence.items`; its records reference evidence through `evidenceRefs` and processing windows through `sourceRefs`. `knowledge/normalization.py` is the provider boundary: window-local candidates are mapped to canonical types, subtype payloads, and the observation fallback before persistence.
+
+The agent planner exposes both legacy retrieval sections and generic `recordTypes`/`recordSubtypes` selectors. `search_records` queries indexed chunks by canonical record metadata and optional subtype; specialized tools remain convenience wrappers. The verifier accepts matching record types and payload fields, so a new subtype does not require a new planner branch, tool, or UI component.
+
+Chunk text is contextualized from canonical record fields, including IDs, types, normalized values, owners, statuses, due dates, participant/entity references, confidence, citation IDs, and time ranges. Fact, participant, event, action, decision, risk, and relationship records have higher retrieval priority than broader summaries. Deterministic `participant_count` facts derived from speaker labels receive transcript citation IDs during reduction; the legacy analysis path does the same before persistence, and the indexer also resolves old records through `sourceWindowIds` and the speaker-derived fallback. JSON-only metadata chunks use stable `json-*` citation IDs and their JSON pointer/serialized chunk text as the citation target, without inventing transcript timestamps. Structured-section retrieval preserves the requested section order before the bounded context limit is applied, so high-value facts are not displaced by participant profiles. Transcript windows are still indexed as fallback evidence, but product truth remains the JSON document and low-signal transcript text can be skipped from retrieval without deleting it from `result_json`.
 
 When `VECTOR_PROVIDER=milvus`, `RetrievalIndexService` also upserts derived vectors to the Milvus REST API after `meeting_chunks` are persisted. The upsert payload includes stable derived references: meeting ID, result ID, chunk ID, JSON pointer, source type, section type, time range, and an index generation. Search reloads the authoritative PostgreSQL chunk and rejects vector hits whose generation does not match. Milvus failures are recorded in retrieval metadata and schedule bounded vector repair without making the derived index authoritative.
 
@@ -448,19 +454,27 @@ POST /api/meetings/{meetingId}/chat
 -> return answer, evidence state, and citation-level evidence
 ```
 
-Retrieval search prefers Milvus when available, then reloads returned `chunk_id` values from PostgreSQL within the authorized meeting and validates the vector generation. If Milvus is unavailable, empty, returns stale hits, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`. The fallback combines exact lexical overlap, PostgreSQL trigram similarity, and high-priority structured/metadata candidates before rerank. PostgreSQL records are always the authoritative chunks returned to chat. For common Vietnamese and English meeting-intelligence questions, retrieval pins the relevant structured sections before rerank: participant/count questions pin `fact.participant_count`, `speaker.stats`, `participant.overview`, and `participant.profile` without requiring an optional role field; commercial price/cost questions route to fact, decision, and summary sections; business/store/entity questions route to entity, fact, summary, and transcript sections; nationality/citizenship questions pin and relevance-sort `fact.record` before broader participant chunks; quality questions pin quality, extraction, transcript coverage, and speaker stats; source/model/file questions pin source metadata; missing-evidence questions pin extraction warnings; metric/entity/glossary questions pin facts and entities; overview/topic questions pin executive, topic, and timeline summaries; reason/cause and process questions pin events, relationships, facts, risks, actions, and topics; action/owner/deadline questions pin actions, relationships, facts, and questions; risk questions pin risks, relationships, questions, and events; decision/outcome questions pin decisions, events, relationships, and facts; and timeline questions pin events, facts, actions, questions, and timeline summaries. Keyword retrieval first attempts a phrase match, then token-level matching so normalized planner queries such as `price OR cost OR dollar` can find English canonical JSON chunks.
+Retrieval search prefers Milvus when available, then reloads returned `chunk_id` values from PostgreSQL within the authorized meeting and validates the vector generation. If Milvus is unavailable, empty, returns stale hits, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`. The fallback combines exact lexical overlap, PostgreSQL trigram similarity, and high-priority structured/metadata candidates before rerank. PostgreSQL records are always the authoritative chunks returned to chat. Structured questions are selected through the generic record contract: participant/count questions use participant profiles and participant-count facts; actor/target and location questions use participant, action, entity, event, and fact records plus relation capabilities; timeline questions use temporal fields on event/action/fact records; and all other domains use their canonical record type/subtype and relationship fields. Keyword retrieval first attempts a phrase match, then token-level matching so normalized planner queries such as `price OR cost OR dollar` can find English canonical JSON chunks.
 
 Meeting deletion removes the meeting's operational-log events from Redis after the database deletion commits. Log cleanup is best effort because operational logs are diagnostic data, not the source of truth for meeting deletion. Account deletion applies the same cleanup to every meeting removed with the account, preventing deleted or test-only meetings from remaining as cards in the admin log view.
 
-If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. Verified citation IDs from answer synthesis are mapped back to authoritative chunks, deduplicated, and persisted separately from retrieved chunk IDs. Retrieval chunk metadata stores `citationQuotes` and `citationLocations` per citation ID; chat response mapping uses the per-citation segment IDs and timestamps instead of the chunk-level aggregate location. Legacy chunk-level citation JSON is normalized when chat history is read. Guardrails now use the simplified `allowed`/`blocked` contract only. If input guardrails block the user question, the service stores a safe assistant refusal without calling the agent. Provider errors fail open as `allowed` with `provider_error` metadata. If output guardrails block an answer, the assistant response is replaced with a safe message and citations are removed. The chat flow no longer expects redacted text, warning actions, or a context guardrail stage. If query embedding fails, retrieval skips Milvus and uses hybrid lexical/trigram/structured PostgreSQL ranking, recording `postgres-fallback-embedding` in search metadata. If a worker exception escapes normal answer generation, it resets `pending_chat_status`, persists one idempotent safe error response keyed by the user message, and publishes an error event. Provider prompts and raw provider responses are not saved in chat history.
+If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. Verified citation IDs from answer synthesis are mapped back to authoritative chunks, deduplicated, and persisted separately from retrieved chunk IDs. Retrieval chunk metadata stores `citationQuotes` and `citationLocations` per citation ID; chat response mapping uses the per-citation segment IDs and timestamps instead of the chunk-level aggregate location. Derived JSON records without direct transcript citations receive stable `json-record-*` citation IDs and retain structured provenance; they do not inherit every transcript citation from their source window. Legacy chunk-level citation JSON is normalized when chat history is read. Guardrails now use the simplified `allowed`/`blocked` contract only. If input guardrails block the user question, the service stores a safe assistant refusal without calling the agent. Provider errors fail open as `allowed` with `provider_error` metadata. If output guardrails block an answer, the assistant response is replaced with a safe message and citations are removed. The chat flow no longer expects redacted text, warning actions, or a context guardrail stage. If query embedding fails, retrieval skips Milvus and uses hybrid lexical/trigram/structured PostgreSQL ranking, recording `postgres-fallback-embedding` in search metadata. If a worker exception escapes normal answer generation, it resets `pending_chat_status`, persists one idempotent safe error response keyed by the user message, and publishes an error event. Provider prompts and raw provider responses are not saved in chat history.
 
 Answer prompts live in the Agentic RAG service rather than `MeetingChatService`. Phase 18 removed the unused linear-RAG helper path from `MeetingChatService`, leaving that service focused on permission checks, user/assistant message persistence, guardrail orchestration, agent delegation, SSE status publishing, and operational logs. Assistant message metadata includes agent iterations, tool calls, thoughts, duration, token usage, and guardrail action/categories/provider/model/confidence/latency/promptVersion/textLength/decisionId metadata so answer generation, retrieval ordering, and guardrail decisions can be observed without storing LLM prompts, rerank prompts, guardrail prompts, or raw provider responses. `GET /api/meetings/{meetingId}/chat` returns the authorized meeting thread and messages, allowing the frontend to recover persisted chat after reloads, route changes, or lost browser state.
 
 For local development after changing chunk formats, run `python -m backend.scripts.rebuild_retrieval_index --clear-chat` inside the backend environment to rebuild all PostgreSQL chunks and Milvus vectors from stored `meeting_intelligence_results` and remove chat history that may cite stale chunk IDs. Phase 22 intentionally rejects obsolete pre-RAG-first JSON documents during rebuild; old local meetings must be reprocessed or removed. Use `--meeting-id <id>` to target one meeting. A full disposable reset is still possible with Compose volume deletion, migrations, and reprocessing when old local data is not worth preserving.
 
+The v2 reducer also persists an `identity_resolution` relationship only when the transcript contains explicit self-identification (for example, “this is Andrew”). Being addressed by a name is retained as a participant mention and is not treated as proof of speaker identity. `backend.scripts.verify_v2_cutover` validates v2 status, result presence, relationship endpoints, identity-relationship counts, and orphan retrieval chunks. Runtime reprocessing remains an operational prerequisite: a meeting whose transcription pipeline fails before persistence cannot be reported as migrated until its worker/provider failure is resolved.
+
 ## Agentic RAG (Phase 26)
 
-The chat service uses `backend.services.agent.AgenticRAGService` for all chat requests after input guardrails pass. Phase 26 uses a bounded hybrid flow: fast path -> schema-shaped query plan -> deterministic/parallel retrieval -> evidence verification -> at most one replan by default -> final synthesis. `query_planner.py` describes intent, sub-queries, sections, and required fields; `evidence_verifier.py` checks section/field/citation coverage; `agent_loop.py` remains the LLM decision and parallel execution boundary; `context_coordinator.py` owns deduplication and token limits; `answer_synthesizer.py` owns final synthesis and retrieval fallback; and `service.py` owns lifecycle, limits, events, and metadata. Runtime defaults are two iterations, one replan, four tool calls per iteration, five chunks per tool, twelve total chunks, 4,000 context tokens, 30 seconds per iteration, and 60 seconds total. `synthesize_answer` is not an LLM tool: final synthesis is a service boundary.
+The chat service uses `backend.services.agent.AgenticRAGService` for all chat requests after input guardrails pass. The bounded flow is fast path -> JSON-v2 query plan -> deterministic/parallel retrieval -> evidence verification -> bounded replan -> final synthesis. `query_planner.py` emits canonical `recordTypes`, `recordSubtypes`, and required fields; sections remain only for v2 top-level projections. `search_records` is the generic record boundary and specialized retrieval tools are selector presets over it. `evidence_verifier.py` checks canonical record relevance, payload fields, and evidence refs; `context_coordinator.py` carries record/provenance metadata through token-limited context; and `answer_synthesizer.py` accepts only context-supplied v2 evidence refs before mapping them to UI citations. Runtime defaults are two iterations, one replan, four tool calls per iteration, five chunks per tool, twelve total chunks, 4,000 context tokens, 30 seconds per iteration, and 60 seconds total.
+
+Record searches keep type/subtype selection authoritative: when a planner supplies `recordTypes`, the natural-language question is not required to occur verbatim in the record text. Participant chunks include `recordId` and provenance metadata, so participant and speaker questions resolve through the same generic `search_records` path as every other record type.
+
+Retrieval indexing is v2-only: it requires `schemaVersion=meeting-intelligence-result.v2`, `knowledge.records`, and `evidence.items`. Removed v1 `evidence.citations` data is not silently read. The cutover verifier confirms the current database has three processable v2 meetings, 196 indexed chunks, and no orphan chunks.
+
+The direct analysis adapter uses the explicitly internal `meeting-intelligence-candidate.v2` envelope while extracting window candidates. The hierarchical reducer normalizes those candidates into the only persisted/public contract, `meeting-intelligence-result.v2`; the old v1 result identifier is no longer an active provider constant or fixture.
 
 ### Flow
 
@@ -469,12 +483,12 @@ user question
 -> input guardrail check
 -> fast path detection
    -> if fast path: return direct response with evidenceState="fast_path"
--> query planner: intent, sub-queries, sections, required fields
--> parallel retrieval from JSON-derived PostgreSQL chunks
+-> query planner: intent, record selectors, required fields
+-> record/evidence-first retrieval from JSON-v2 PostgreSQL chunks
 -> evidence verifier
    -> sufficient: synthesize
    -> missing fields and quota available: replan once and retrieve again
--> AnswerSynthesizer: final answer with verified citations
+-> AnswerSynthesizer: final answer with verified evidence refs and mapped citations
 -> output guardrail check
 -> save answer with plan, verification, iteration, replan, and tool metadata
 ```
@@ -486,9 +500,9 @@ LLM JSON generation remains deterministic by default with `temperature=0` for an
 The agent can invoke these retrieval tools:
 - `search_semantic`: vector embedding search via Milvus
 - `search_keyword`: PostgreSQL phrase-then-token ILIKE search
-- `search_section`: filter chunks by section type, with token matching for structured query hints
-- `search_speaker`: search by speaker name/role
-- `get_summary`, `get_action_items`, `get_decisions`, `get_risks`, `get_timeline`, `get_participants`: structured data retrieval
+- `search_records`: generic search by registered v2 record types/subtypes
+- `search_section`: limited v2 top-level projection search
+- `get_summary`: retrieve the top-level summary projection
 - Final synthesis is owned by `AnswerSynthesizer`, outside the tool catalog.
 
 ### SSE Events
@@ -520,7 +534,7 @@ The system uses Agentic RAG exclusively. If the agent loop fails before a final 
 
 Voice provider metadata is persisted under `source.voiceMetadata`. Warnings from preprocessing, VAD, ASR, diarization, or missing speech regions are also copied into `quality.warnings` so chat/review surfaces can explain transcript confidence without exposing internal stack traces.
 
-The Ollama guardrail provider uses a few-shot Vietnamese prompt (`PROMPT_VERSION=v2`) to help the small model (`llama-guard3:1b`) distinguish business meeting content from real threats. A regex pre-check catches obvious prompt injection patterns before calling the model. Post-verdict category validation overrides false-positive blocks when category keywords do not match the content. If the provider fails, the fail-open metadata records the measured latency instead of a zero-duration placeholder.
+The Ollama guardrail provider uses the simplified safety prompt (`PROMPT_VERSION=v3-simplified`) to help the small model (`llama-guard3:1b`) distinguish business meeting content from real threats. A regex pre-check catches obvious prompt injection patterns before calling the model. Transient Ollama failures can be retried with `GUARDRAIL_MAX_RETRIES` (default `1` across Settings, Compose, and `.env.example`); transport failures and model parse failures remain distinct categories but follow the same strict/non-strict policy. PII redaction is controlled by `GUARDRAIL_PII_REDACTION_ENABLED` and applies to the copy sent to the guardrail model. Trusted grounded answers with citations can receive a conservative false-positive override only when the reported category has no matching content signal. If the provider fails, the fail-open metadata records the measured latency instead of a zero-duration placeholder.
 
 ## Configuration
 
@@ -570,15 +584,8 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `GUARDRAIL_MAX_RETRIES` | `0` | Local guardrail retry count |
 | `GUARDRAIL_INPUT_ENABLED` | `true` | Enable user question guardrail before retrieval |
 | `GUARDRAIL_OUTPUT_ENABLED` | `true` | Enable assistant output guardrail before persistence |
-| `GUARDRAIL_STRICT_MODE` | `false` | Fail closed on guardrail provider errors when true; otherwise fail open (`allowed` + `provider_error`) |
-| `GUARDRAIL_INPUT_STRICT_MODE` | (empty) | Per-layer override for input guardrail strict mode |
-| `GUARDRAIL_OUTPUT_STRICT_MODE` | (empty) | Per-layer override for output guardrail strict mode |
-| `GUARDRAIL_LATENCY_BUDGET_MS` | `8000` | Cumulative latency budget; output guardrail skipped when exceeded |
-| `GUARDRAIL_PII_REDACTION_ENABLED` | `true` | Pre-redact PII (email, phone, card) before sending to guardrail |
-| `GUARDRAIL_INPUT_STRICT_MODE` | `` | Per-layer strict mode for input guardrail; falls back to `GUARDRAIL_STRICT_MODE` when empty |
-| `GUARDRAIL_OUTPUT_STRICT_MODE` | `` | Per-layer strict mode for output guardrail; falls back to `GUARDRAIL_STRICT_MODE` when empty |
-| `GUARDRAIL_LATENCY_BUDGET_MS` | `8000` | Cumulative guardrail latency budget in milliseconds; output guardrail is skipped when exceeded |
-| `GUARDRAIL_PII_REDACTION_ENABLED` | `true` | Redact PII (email, phone, card) from answer text before output guardrail check |
+| `GUARDRAIL_STRICT_MODE` | `false` | Guardrail provider errors fail closed (`blocked`) when true; otherwise fail open (`allowed` + `provider_error`) |
+| `GUARDRAIL_PII_REDACTION_ENABLED` | `true` | Redact PII (email, phone, card) in the copy sent to the guardrail model |
 | `VECTOR_PROVIDER` | `milvus` | Vector index provider: `milvus` or fallback-only mode |
 | `MILVUS_HOST` | `milvus` | Milvus REST host used by backend and worker |
 | `MILVUS_PORT` | `19530` | Milvus REST port |
@@ -737,11 +744,11 @@ Phase 8 operational-log verification on 2026-06-19 confirmed:
 
 ### Phase 25 Hierarchical Intelligence Model
 
-Meeting processing keeps the complete transcript as the authoritative evidence document, then creates deterministic token-bounded transcript windows. Each window is persisted in `meeting_transcript_windows` with ordered segment references, status, retry metadata, and local extraction JSON. The worker fans out bounded LLM extraction across windows and reduces the results into the same `meeting-intelligence-result.v1` identifier with a redesigned internal shape: `transcript.windows`, `knowledge.records`, and `knowledge.relationships` replace the previous flat intelligence arrays as the canonical knowledge model. Every global record carries `citationIds` and `sourceWindowIds`.
+Meeting processing keeps the complete transcript as the authoritative evidence document, then creates deterministic token-bounded transcript windows. Each window is persisted in `meeting_transcript_windows` with ordered segment references, status, retry metadata, and local extraction JSON. The worker fans out bounded LLM extraction across windows and reduces results into `meeting-intelligence-result.v2` with `transcript.windows`, `evidence.items`, `knowledge.records`, and `knowledge.relationships`. Records use canonical types, subtype payloads, evidence references, source references, and derivation metadata.
 
 PostgreSQL remains authoritative for transcript windows, the result JSON, and retrieval chunks. Milvus receives only derived embeddings. Retrieval exposes a compatibility view of unified records to the existing chunk builders, so global records, summaries, relationships, and transcript windows remain searchable without sending the complete transcript to any one LLM request. Failed windows can be retried independently through `omnicall.processing.extract_transcript_window`.
 
-*Document reflects project state during **Phase 27 Citation Playback Links**. Backend owns planning, retrieval orchestration, evidence verification, bounded replanning, synthesis, and verified citation mapping; canonical JSON-derived chunks remain the evidence boundary.*
+*Document reflects project state during **Phase 39 Agentic RAG v2 Alignment**. Backend owns canonical record planning, retrieval orchestration, evidence verification, bounded replanning, synthesis, and verified evidence-to-citation mapping; provider candidates are normalized into the hierarchical v2 knowledge boundary before persistence.*
 
 ## Agentic RAG Runtime Details (Phase 26)
 
@@ -792,13 +799,8 @@ User Question
 | `search_semantic` | Search | Vector embedding search via Milvus |
 | `search_keyword` | Search | PostgreSQL full-text ILIKE search |
 | `search_section` | Search | Filter by section type |
-| `search_speaker` | Search | Search by speaker name/role |
 | `get_summary` | Retrieval | Executive/detailed summary chunks |
-| `get_action_items` | Retrieval | Action items and follow-ups |
-| `get_decisions` | Retrieval | Decisions and outcomes |
-| `get_risks` | Retrieval | Risks, blockers, open questions |
-| `get_timeline` | Retrieval | Timeline and deadlines |
-| `get_participants` | Retrieval | Participant information |
+| `search_records` | Retrieval | Generic record/subtype/relation/answer-shape query over `knowledge.records` |
 
 ### Evidence States
 
@@ -835,3 +837,9 @@ AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS=60.0
 | `agent_replan` | Bounded replan status and missing fields |
 | `agent_synthesize` | Final answer generation |
 | `fast_path` | Immediate response without search |
+
+## Generic Query Graph (Phase 40)
+
+JSON-v2 Agentic RAG uses five tools: `search_semantic`, `search_keyword`, `search_records`, `search_section`, and `get_summary`. `search_records` accepts record type/subtype selectors, relation capabilities, and an answer shape. The planner emits `recordTypes`, `recordSubtypes`, `relationTypes`, `requiredFields`, and `answerShape`; replans preserve those selectors. The verifier checks both fields and requested relations. Common projections (`count`, `participant_list`, `actor_target`, `location`, and `timeline`) are synthesized deterministically from record fields and evidence before the general LLM synthesis path. Transcript speaker labels remain source data; speaker profiles/counts are participant/fact records.
+
+*Document reflects project state during **Phase 40 Generic Query Graph and Answer Projections**. Backend owns identity-aware v2 records, relationship-aware retrieval, evidence verification, and generic answer projection; remaining work is runtime identity-resolution migration.*

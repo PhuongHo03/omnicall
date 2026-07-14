@@ -14,7 +14,7 @@ from backend.providers.llm import (
     get_llm_provider,
 )
 from backend.providers.transcript_types import TranscriptSegment
-from backend.providers.contracts.analysis import AnalysisProvider, SCHEMA_VERSION
+from backend.providers.contracts.analysis import AnalysisProvider, ANALYSIS_CANDIDATE_SCHEMA_VERSION
 
 
 class LLMAnalysisProvider:
@@ -109,7 +109,7 @@ def _build_base_result(*, meeting: Meeting, asset: MeetingAsset, transcript_segm
         for segment in transcript_segments
     ]
     return {
-        "schemaVersion": SCHEMA_VERSION,
+        "schemaVersion": ANALYSIS_CANDIDATE_SCHEMA_VERSION,
         "meeting": {
             "id": meeting.id,
             "title": meeting.title,
@@ -348,7 +348,7 @@ def _merge_llm_result(*, baseline: dict, generated: dict, llm_provider: LLMProvi
         if section in generated:
             result[section] = generated[section]
 
-    result["schemaVersion"] = SCHEMA_VERSION
+    result["schemaVersion"] = ANALYSIS_CANDIDATE_SCHEMA_VERSION
     result["meeting"] = baseline["meeting"]
     result["source"] = {
         **baseline["source"],
@@ -605,6 +605,11 @@ def _add_deterministic_facts(result: dict) -> None:
     facts = [item for item in result.get("facts", []) if isinstance(item, dict)]
     existing_types = {fact.get("type") for fact in facts}
     speakers = result.get("speakers", {})
+    citation_ids = [
+        citation.get("id")
+        for citation in result.get("evidence", {}).get("citations", [])
+        if isinstance(citation, dict) and isinstance(citation.get("id"), str)
+    ]
     if "participant_count" not in existing_types:
         facts.insert(
             0,
@@ -617,7 +622,7 @@ def _add_deterministic_facts(result: dict) -> None:
                 "unit": "people",
                 "confidence": 0.95 if speakers.get("speakerCount") else 0.5,
                 "derivedFrom": "speakers",
-                "citationIds": [],
+                "citationIds": citation_ids,
             },
         )
     result["facts"] = facts

@@ -18,13 +18,7 @@ export function formatAgentToolLabel(tool: string): string {
     search_semantic: "tìm kiếm ngữ nghĩa",
     search_keyword: "tìm theo từ khóa",
     search_section: "lọc theo mục",
-    search_speaker: "tìm theo người nói",
     get_summary: "tóm tắt cuộc họp",
-    get_action_items: "việc cần làm",
-    get_decisions: "quyết định",
-    get_risks: "rủi ro",
-    get_timeline: "mốc thời gian",
-    get_participants: "người tham gia",
   };
   return labels[tool] ?? tool;
 }

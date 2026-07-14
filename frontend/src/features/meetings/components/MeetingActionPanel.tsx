@@ -55,9 +55,9 @@ export function MeetingActionPanel({
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isRetryAction = selectedMeeting?.retryAllowed === true;
+  const isRetryAction = selectedMeeting?.status === "FAILED" || selectedMeeting?.retryAllowed === true;
   const isDraft = selectedMeeting?.status === "DRAFT";
-  const isProcessingLocked = selectedMeeting?.status === "PROCESSING";
+  const isProcessingLocked = selectedMeeting?.status === "QUEUED" || selectedMeeting?.status === "PROCESSING";
   const canSaveTitle =
     Boolean(selectedMeeting) && draftTitle.trim().length > 0 && draftTitle.trim() !== selectedMeeting?.title.trim();
 
@@ -120,7 +120,15 @@ export function MeetingActionPanel({
               icon={isRetryAction ? <RotateCcw size={16} /> : <Play size={16} />}
               label={isProcessingLocked ? "Processing" : isRetryAction ? "Retry" : "Process"}
               disabled={!canAct || !canProcess || isProcessingLocked || Boolean(isProcessing)}
-              title={isProcessingLocked ? "Meeting is currently being processed" : isRetryAction ? "Retry processing" : "Process meeting"}
+              title={
+                isProcessingLocked
+                  ? "Meeting is currently being processed"
+                  : isRetryAction && !hasAsset
+                    ? "Cannot retry because the meeting has no uploaded asset"
+                    : isRetryAction
+                      ? "Retry processing"
+                      : "Process meeting"
+              }
               onClick={onProcess}
               variant="primary"
             />

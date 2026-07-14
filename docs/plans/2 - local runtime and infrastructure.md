@@ -62,6 +62,7 @@
 - MinIO no longer uses a Compose init container; backend creates the meeting-assets bucket lazily, and Milvus connects directly to MinIO with `MINIO_BUCKET_NAME`.
 - Kept core service protocols internal through `expose`; only NGINX is public through `APP_BIND_IP`.
 - Bound admin/debug UIs to `LOCAL_BIND_IP`: Adminer, RedisInsight, RabbitMQ Management, MinIO Console, and Prometheus.
+- Reconciled the root `.env` with `.env.example` so retrieval, Agentic RAG, and extraction-window settings are present in both files without duplicate keys.
 
 ### What was changed from original plan
 

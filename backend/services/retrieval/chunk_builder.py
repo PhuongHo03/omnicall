@@ -22,7 +22,6 @@ from backend.services.retrieval.chunk_text import (
 SECTION_PRIORITY = {
     "meeting.metadata": 5,
     "source.processing": 10,
-    "speaker.stats": 15,
     "fact.participant_count": 20,
     "fact.record": 30,
     "participant.overview": 35,
@@ -33,6 +32,7 @@ SECTION_PRIORITY = {
     "relationship.edge": 70,
     "risk.record": 80,
     "question.record": 90,
+    "observation.record": 110,
     "entity.profile": 100,
     "topic.summary": 130,
     "summary.executive": 150,
@@ -49,11 +49,14 @@ SECTION_PRIORITY = {
 
 
 def build_retrieval_chunks(result_json: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
-    result_json = _retrieval_view(result_json)
+    if result_json.get("schemaVersion") != "meeting-intelligence-result.v2":
+        raise ValueError("Retrieval indexing requires meeting-intelligence-result.v2.")
+    if not isinstance(result_json.get("knowledge"), dict) or not isinstance(result_json.get("evidence", {}).get("items"), list):
+        raise ValueError("Retrieval indexing requires JSON v2 knowledge.records and evidence.items.")
+    result_json = _canonical_record_view(result_json)
     citations_by_id = _citations_by_id(result_json)
     chunks: list[dict] = []
     chunks.extend(_metadata_chunks(result_json, citations_by_id, embedding_provider))
-    chunks.extend(_speaker_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_participant_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_record_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_topic_chunks(result_json, citations_by_id, embedding_provider))
@@ -68,13 +71,13 @@ def build_retrieval_chunks(result_json: dict, embedding_provider: TextEmbeddingP
     return chunks
 
 
-def _retrieval_view(result_json: dict) -> dict:
-    """Expose unified records through the existing chunk builders."""
+def _canonical_record_view(result_json: dict) -> dict:
+    """Build the indexed view from v2 records; this is not a v1 compatibility adapter."""
     knowledge = result_json.get("knowledge")
     if not isinstance(knowledge, dict):
-        return result_json
+        raise ValueError("JSON v2 knowledge section is required for retrieval indexing.")
     view = dict(result_json)
-    sections = {section: [] for section in ("participants", "entities", "facts", "events", "topics", "actions", "decisions", "risks", "questions")}
+    sections = {section: [] for section in ("participants", "entities", "facts", "events", "topics", "actions", "decisions", "risks", "questions", "observations")}
     record_sections = {
         "participant": "participants",
         "entity": "entities",
@@ -85,6 +88,7 @@ def _retrieval_view(result_json: dict) -> dict:
         "decision": "decisions",
         "risk": "risks",
         "question": "questions",
+        "observation": "observations",
     }
     for record in knowledge.get("records", []):
         if not isinstance(record, dict):
@@ -94,8 +98,13 @@ def _retrieval_view(result_json: dict) -> dict:
             continue
         item = dict(record.get("data", {}))
         item["id"] = record.get("id")
-        item["citationIds"] = record.get("citationIds", [])
-        item["sourceWindowIds"] = record.get("sourceWindowIds", [])
+        item["subtype"] = record.get("subtype")
+        item["recordType"] = record.get("type")
+        item["citationIds"] = record.get("evidenceRefs", [])
+        item["evidenceRefs"] = record.get("evidenceRefs", [])
+        item["sourceWindowIds"] = record.get("sourceRefs", [])
+        item["sourceRefs"] = record.get("sourceRefs", [])
+        item["derivedFrom"] = record.get("derivedFrom", [])
         item["confidence"] = record.get("confidence", item.get("confidence", 0.5))
         sections[section].append(item)
     view.update(sections)
@@ -160,7 +169,7 @@ def _metadata_chunks(result_json: dict, citations_by_id: dict, embedding_provide
                     source_id=meeting.get("id") if isinstance(meeting.get("id"), str) else "meeting",
                     json_pointer="/meeting",
                     text=text,
-                    citation_ids=[],
+                    citation_ids=[_json_citation_id("meeting-metadata")],
                     citations_by_id=citations_by_id,
                     embedding_provider=embedding_provider,
                     priority=SECTION_PRIORITY["meeting.metadata"],
@@ -179,7 +188,7 @@ def _metadata_chunks(result_json: dict, citations_by_id: dict, embedding_provide
                     source_id="source-processing",
                     json_pointer="/source",
                     text=text,
-                    citation_ids=[],
+                    citation_ids=[_json_citation_id("source-processing")],
                     citations_by_id=citations_by_id,
                     embedding_provider=embedding_provider,
                     priority=SECTION_PRIORITY["source.processing"],
@@ -198,7 +207,7 @@ def _metadata_chunks(result_json: dict, citations_by_id: dict, embedding_provide
                     source_id="transcript-coverage",
                     json_pointer="/transcript/coverage",
                     text=text,
-                    citation_ids=[],
+                    citation_ids=[_json_citation_id("transcript-coverage")],
                     citations_by_id=citations_by_id,
                     embedding_provider=embedding_provider,
                     priority=SECTION_PRIORITY["transcript.coverage"],
@@ -206,35 +215,6 @@ def _metadata_chunks(result_json: dict, citations_by_id: dict, embedding_provide
                 )
             )
     return chunks
-
-
-def _speaker_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
-    speakers = result_json.get("speakers", {})
-    if not isinstance(speakers, dict):
-        return []
-    text = _metadata_text(speakers, heading="Speaker statistics")
-    if not text:
-        return []
-    return [
-        _chunk(
-            chunk_id="speaker-stats",
-            source_type="structured",
-            section_type="speaker.stats",
-            source_id="speaker-stats",
-            json_pointer="/speakers",
-            text=text,
-            citation_ids=[],
-            citations_by_id=citations_by_id,
-            embedding_provider=embedding_provider,
-            priority=SECTION_PRIORITY["speaker.stats"],
-            title="Speaker statistics",
-            metadata={
-                "speakerCount": speakers.get("speakerCount"),
-                "identifiedParticipantCount": speakers.get("identifiedParticipantCount"),
-                "mentionedOnlyCount": speakers.get("mentionedOnlyCount"),
-            },
-        )
-    ]
 
 
 def _participant_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
@@ -255,12 +235,12 @@ def _participant_chunks(result_json: dict, citations_by_id: dict, embedding_prov
             source_id="participant-overview",
             json_pointer="/participants",
             text=_metadata_text(overview, heading="Participant overview"),
-            citation_ids=[],
+            citation_ids=_overview_citation_ids(participants, result_json, citations_by_id),
             citations_by_id=citations_by_id,
             embedding_provider=embedding_provider,
             priority=SECTION_PRIORITY["participant.overview"],
             title="Participant overview",
-            metadata=overview,
+            metadata={"recordType": "participant", "subtype": "overview", "recordFields": overview},
         )
     )
     for index, participant in enumerate(participants, start=1):
@@ -275,12 +255,20 @@ def _participant_chunks(result_json: dict, citations_by_id: dict, embedding_prov
                 source_id=_record_id(participant, f"participant-{index:03d}"),
                 json_pointer=f"/participants/{index - 1}",
                 text=text,
-                citation_ids=_citation_ids(participant),
+                citation_ids=_structured_citation_ids(participant, result_json, citations_by_id),
                 citations_by_id=citations_by_id,
                 embedding_provider=embedding_provider,
                 priority=SECTION_PRIORITY["participant.profile"],
                 title=_record_label(participant, index),
-                metadata={"recordType": "participant"},
+            metadata={
+                "recordType": "participant",
+                "subtype": participant.get("subtype") or participant.get("type") or "profile",
+                "recordId": participant.get("id"),
+                "recordFields": participant,
+                "evidenceRefs": participant.get("evidenceRefs", participant.get("citationIds", [])),
+                "sourceRefs": participant.get("sourceRefs", participant.get("sourceWindowIds", [])),
+                "derivedFrom": participant.get("derivedFrom", []),
+            },
             )
         )
     return chunks
@@ -296,6 +284,7 @@ def _record_chunks(result_json: dict, citations_by_id: dict, embedding_provider:
         ("decisions", "decision.record", "decision", "Decision"),
         ("risks", "risk.record", "risk", "Risk"),
         ("questions", "question.record", "question", "Question"),
+        ("observations", "observation.record", "observation", "Observation"),
     ]
     chunks = []
     for section, default_section_type, source_type, heading in specs:
@@ -315,15 +304,51 @@ def _record_chunks(result_json: dict, citations_by_id: dict, embedding_provider:
                     source_id=_record_id(item, f"{source_type}-{index:03d}"),
                     json_pointer=f"/{section}/{index - 1}",
                     text=text,
-                    citation_ids=_citation_ids(item),
+                    citation_ids=_structured_citation_ids(item, result_json, citations_by_id),
                     citations_by_id=citations_by_id,
                     embedding_provider=embedding_provider,
                     priority=SECTION_PRIORITY.get(section_type, SECTION_PRIORITY[default_section_type]),
                     title=_record_label(item, index),
-                    metadata={"recordType": source_type, "recordId": item.get("id"), "confidence": item.get("confidence")},
+                    metadata={
+                        "recordType": source_type,
+                        "subtype": item.get("subtype") or item.get("type"),
+                        "recordId": item.get("id"),
+                        "recordFields": item,
+                        "evidenceRefs": item.get("evidenceRefs", []),
+                        "sourceRefs": item.get("sourceRefs", []),
+                        "derivedFrom": item.get("derivedFrom", []),
+                        "confidence": item.get("confidence"),
+                    },
                 )
             )
     return chunks
+
+
+def _structured_citation_ids(item: dict, result_json: dict, citations_by_id: dict) -> list[str]:
+    """Return direct citations or one stable citation for derived JSON records."""
+    explicit = _citation_ids(item)
+    if explicit:
+        return explicit
+    record_id = item.get("id") if isinstance(item.get("id"), str) else item.get("type", "record")
+    return [_json_record_citation_id(str(record_id))]
+
+
+def _overview_citation_ids(participants: list[dict], result_json: dict, citations_by_id: dict) -> list[str]:
+    ids: list[str] = []
+    for participant in participants:
+        ids.extend(_structured_citation_ids(participant, result_json, citations_by_id))
+    return list(dict.fromkeys(ids))
+
+
+def _json_citation_id(chunk_id: str) -> str:
+    """Stable citation ID for authoritative JSON-only evidence without transcript ranges."""
+    return f"json-{chunk_id}"
+
+
+def _json_record_citation_id(record_id: str) -> str:
+    """Stable citation ID for a derived/structured JSON record."""
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", record_id).strip("-") or "record"
+    return f"json-record-{normalized}"
 
 
 def _topic_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
@@ -416,7 +441,7 @@ def _quality_chunks(result_json: dict, citations_by_id: dict, embedding_provider
                     source_id=f"{section}-overview",
                     json_pointer=pointer,
                     text=text,
-                    citation_ids=[],
+                    citation_ids=[_json_citation_id(f"{section}-overview")],
                     citations_by_id=citations_by_id,
                     embedding_provider=embedding_provider,
                     priority=SECTION_PRIORITY.get(section_type, 200),
@@ -434,7 +459,7 @@ def _quality_chunks(result_json: dict, citations_by_id: dict, embedding_provider
                         source_id=f"{section}-warning-{index:03d}",
                         json_pointer=f"{pointer}/warnings/{index - 1}",
                         text=warning_text,
-                        citation_ids=[],
+                        citation_ids=[_json_citation_id(f"{section}-warning-{index:03d}")],
                         citations_by_id=citations_by_id,
                         embedding_provider=embedding_provider,
                         priority=SECTION_PRIORITY.get(f"{section}.warning", 201),
@@ -465,7 +490,7 @@ def _evidence_chunks(result_json: dict, citations_by_id: dict, embedding_provide
             source_type="metadata",
             section_type="evidence.map",
             source_id="evidence-map",
-            json_pointer="/evidence/citations",
+            json_pointer="/evidence/items",
             text=text,
             citation_ids=[],
             citations_by_id=citations_by_id,

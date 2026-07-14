@@ -294,6 +294,7 @@ class MeetingService:
             created_at=meeting.created_at,
             latest_asset=MeetingService._asset_response(latest_asset) if latest_asset else None,
             updated_at=meeting.updated_at,
+            retry_allowed=meeting.status == MeetingStatus.FAILED,
         )
 
     @staticmethod

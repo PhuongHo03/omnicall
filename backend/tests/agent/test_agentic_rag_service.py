@@ -462,14 +462,9 @@ class AgenticRAGServiceTestCase(unittest.TestCase):
         expected_tools = {
             "search_semantic",
             "search_keyword",
+            "search_records",
             "search_section",
-            "search_speaker",
             "get_summary",
-            "get_action_items",
-            "get_decisions",
-            "get_risks",
-            "get_timeline",
-            "get_participants",
         }
         self.assertEqual(_VALID_TOOLS, expected_tools)
 
@@ -480,14 +475,14 @@ class AgenticRAGServiceTestCase(unittest.TestCase):
         )
 
         calls = service._valid_tool_calls(
-            [{"tool": "get_participants", "parameters": {}}],
+            [{"tool": "search_records", "parameters": {"record_types": ["participant"]}}],
             question="Những người tham gia cuộc họp có quốc tịch là gì?",
         )
 
         self.assertEqual(calls[0]["tool"], "search_semantic")
         self.assertEqual(calls[0]["parameters"]["query"], "Những người tham gia cuộc họp có quốc tịch là gì?")
         self.assertEqual(calls[0]["parameters"]["limit"], 6)
-        self.assertEqual(calls[1]["tool"], "get_participants")
+        self.assertEqual(calls[1]["tool"], "search_records")
 
     def test_search_event_message_uses_natural_vietnamese_tool_copy(self) -> None:
         message = _search_event_message([

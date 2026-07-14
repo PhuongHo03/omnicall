@@ -14,7 +14,13 @@ class QueryPlannerTestCase(unittest.TestCase):
         self.assertEqual(plan.intent, "multi_intent")
         self.assertIn("action.item", plan.sections)
         self.assertIn("risk.record", plan.sections)
+        self.assertIn("action", plan.record_types)
         self.assertIn("owner", plan.required_fields)
+
+    def test_plan_exposes_generic_record_selectors(self) -> None:
+        plan = build_query_plan("Có bao nhiêu người tham gia cuộc họp này?")
+        self.assertIn("fact", plan.record_types)
+        self.assertIn("participant_count", plan.record_subtypes)
 
     def test_metadata_question_has_metadata_sections(self) -> None:
         plan = build_query_plan("Model và provider nào đã xử lý cuộc họp?")
@@ -43,6 +49,17 @@ class QueryPlannerTestCase(unittest.TestCase):
         self.assertIn("displayName", plan.required_fields)
         self.assertIn("value", plan.required_fields)
         self.assertNotIn("role", plan.required_fields)
+
+    def test_participant_count_question_requires_only_count_evidence(self) -> None:
+        plan = build_query_plan("Có bao nhiêu người tham gia cuộc họp này?")
+
+        self.assertEqual(plan.required_fields, ["value"])
+        self.assertIn("fact.participant_count", plan.sections)
+
+    def test_participant_aliases_route_who_joined_and_attendee_questions(self) -> None:
+        for question in ("Ai tham gia cuộc họp?", "How many attendees joined?"):
+            plan = build_query_plan(question)
+            self.assertIn("fact.participant_count", plan.sections)
 
     def test_verifier_reports_missing_fields(self) -> None:
         plan = build_query_plan("Ai phụ trách việc này và deadline là khi nào?")

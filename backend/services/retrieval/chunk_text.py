@@ -4,18 +4,17 @@ import re
 import time
 from collections.abc import Iterable
 
+from backend.services.knowledge.evidence import evidence_by_id
+
 
 def citations_by_id(result_json: dict) -> dict[str, dict]:
-    citations = result_json.get("evidence", {}).get("citations", [])
-    if not isinstance(citations, list):
-        return {}
-    return {citation["id"]: citation for citation in citations if isinstance(citation, dict) and isinstance(citation.get("id"), str)}
+    return evidence_by_id(result_json)
 
 
 def citation_ids(item: object) -> list[str]:
     if not isinstance(item, dict):
         return []
-    value = item.get("citationIds")
+    value = item.get("evidenceRefs") or item.get("citationIds")
     return [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
 
 
@@ -88,7 +87,7 @@ def ordered_keys(value: dict) -> list[str]:
         "id", "type", "title", "displayName", "normalizedName", "label", "speakerLabel", "speakerLabels",
         "role", "organization", "subject", "predicate", "value", "unit", "task", "ownerParticipantId",
         "ownerName", "status", "priority", "dueAt", "occurredAt", "startMs", "endMs", "confidence",
-        "description", "summary", "text", "quote", "citationIds", "segmentIds", "participantIds",
+        "description", "summary", "text", "quote", "subtype", "evidenceRefs", "citationIds", "segmentIds", "participantIds",
         "entityIds", "factIds", "eventIds", "topicIds",
     ]
     keys = [key for key in preferred if key in value]

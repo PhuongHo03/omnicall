@@ -151,6 +151,11 @@
 - [x] Participant count/list/role questions no longer return `not_enough_evidence` when `participants` exists.
 - [x] Quality/source/model/meeting-metadata questions are grounded in structured chunks.
 - [x] Existing transcript-backed citations still work.
+- [x] Keep structured participant-count facts citation-backed: reducer assigns citations for speaker-derived counts and reindexing resolves legacy `sourceWindowIds`/speaker-derived facts.
+- [x] Keep planner and participant retrieval tool contracts aligned so count-only questions do not require participant names.
+- [x] Route attendee/joined/participated aliases through the participant planner branch.
+- [x] Preserve requested section priority before applying the bounded per-tool context limit.
+- [x] Give JSON-only metadata chunks stable citation IDs so the output evidence gate can preserve grounded metadata answers.
 - [x] Local development has a clean reset or rebuild path for stale chunks and vectors.
 - [x] Documentation accurately describes the new RAG coverage and any local reset/reindex workflow.
 
