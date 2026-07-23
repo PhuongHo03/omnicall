@@ -81,6 +81,17 @@ class AdminOperationalLogEventResponse(BaseModel):
     chat: dict = Field(default_factory=dict)
     provider: str | None = None
     model: str | None = None
+    executorType: str | None = None
+    resource: str | None = None
+    operation: str | None = None
+    version: str | None = None
+    configuredProvider: str | None = None
+    configuredModel: str | None = None
+    effectiveProvider: str | None = None
+    effectiveModel: str | None = None
+    originProvider: str | None = None
+    originModel: str | None = None
+    fallbackUsed: bool | None = None
     durationMs: int | None = None
     details: dict = Field(default_factory=dict)
     errorType: str | None = None

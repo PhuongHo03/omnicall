@@ -4,6 +4,7 @@ import type { Meeting } from "../types/meetingTypes";
 
 type UseMeetingSelectionArgs = {
   hasLoadedMeetings: boolean;
+  lockedMeetingIdRef?: React.RefObject<string | null>;
   meetings: Meeting[];
   onSelectedMeetingChange: (meetingId: string | null) => void;
   requestedMeetingId: string | null;
@@ -11,6 +12,7 @@ type UseMeetingSelectionArgs = {
 
 export function useMeetingSelection({
   hasLoadedMeetings,
+  lockedMeetingIdRef,
   meetings,
   onSelectedMeetingChange,
   requestedMeetingId,
@@ -26,6 +28,11 @@ export function useMeetingSelection({
 
   const selectMeeting = useCallback(
     (meetingId: string | null) => {
+      const lockedMeetingId = lockedMeetingIdRef?.current;
+      if (lockedMeetingId && meetingId !== lockedMeetingId) {
+        onSelectedMeetingChange(lockedMeetingId);
+        return;
+      }
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -34,11 +41,18 @@ export function useMeetingSelection({
       currentMeetingIdRef.current = meetingId;
       onSelectedMeetingChange(meetingId);
     },
-    [onSelectedMeetingChange]
+    [lockedMeetingIdRef, onSelectedMeetingChange]
   );
 
   useEffect(() => {
     if (!hasLoadedMeetings) {
+      return;
+    }
+    const lockedMeetingId = lockedMeetingIdRef?.current;
+    if (lockedMeetingId && requestedMeetingId !== lockedMeetingId) {
+      setSelectedMeetingId(lockedMeetingId);
+      currentMeetingIdRef.current = lockedMeetingId;
+      onSelectedMeetingChange(lockedMeetingId);
       return;
     }
     if (!requestedMeetingId) {
@@ -54,7 +68,7 @@ export function useMeetingSelection({
     setSelectedMeetingId(null);
     currentMeetingIdRef.current = null;
     onSelectedMeetingChange(null);
-  }, [hasLoadedMeetings, meetings, onSelectedMeetingChange, requestedMeetingId]);
+  }, [hasLoadedMeetings, lockedMeetingIdRef, meetings, onSelectedMeetingChange, requestedMeetingId]);
 
   useEffect(() => {
     return () => {

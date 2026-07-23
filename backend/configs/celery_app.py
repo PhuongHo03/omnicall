@@ -1,9 +1,22 @@
+import logging
+
 from celery import Celery
+from celery.signals import after_setup_logger
 from kombu import Exchange, Queue
 
-from backend.configs.settings import get_settings
+from backend.configs.settings import get_settings, simple_rag_runtime_summary
 
 settings = get_settings()
+
+
+@after_setup_logger.connect
+def log_simple_rag_runtime_config(logger: logging.Logger, **_: object) -> None:
+    """Log only effective non-secret RAG settings after Celery logging exists."""
+    logger.info(
+        "simple_rag.runtime_config effective=%s",
+        simple_rag_runtime_summary(settings),
+    )
+
 
 celery_app = Celery("omnicall", broker=settings.rabbitmq_url)
 celery_app.conf.task_default_queue = "meeting-processing"

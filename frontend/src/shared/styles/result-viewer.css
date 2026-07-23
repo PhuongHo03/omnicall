@@ -5,6 +5,7 @@
   gap: 12px;
   overflow-y: auto;
   flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -17,7 +18,8 @@
 .result-panel__version {
   display: inline-flex;
   align-items: center;
-  height: 22px;
+  min-height: 22px;
+  max-width: 100%;
   padding: 0 8px;
   border-radius: var(--radius-md);
   background: var(--color-faint);
@@ -26,16 +28,19 @@
   font-weight: 700;
   letter-spacing: 0.02em;
   font-family: var(--font-mono);
+  overflow-wrap: anywhere;
 }
 
 .json-section-list {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 /* ── Section card ── */
 
 .json-section {
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   background: var(--color-surface);
@@ -107,6 +112,7 @@
 }
 
 .json-section__body {
+  min-width: 0;
   border-top: 1px solid var(--color-border);
   padding: 12px;
   background: var(--color-surface-raised);
@@ -117,6 +123,7 @@
 .json-map {
   display: grid;
   gap: 8px;
+  min-width: 0;
   margin: 0;
 }
 
@@ -134,13 +141,19 @@
   min-width: 0;
 }
 
+.json-map__row--structured {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .json-map dt {
+  min-width: 0;
   color: var(--color-muted);
   font-size: var(--text-sm);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding-top: 1px;
+  overflow-wrap: anywhere;
 }
 
 .json-map dd {
@@ -157,6 +170,7 @@
   color: var(--color-text);
   font-size: var(--text-base);
   line-height: var(--line-height-relaxed);
+  overflow-wrap: anywhere;
 }
 
 .json-text-block {
@@ -169,6 +183,7 @@
   background: var(--color-surface);
   border-radius: var(--radius-md);
   outline: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
 }
 
 .json-number {
@@ -216,6 +231,7 @@
   font-size: var(--text-base);
   line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ── Tag list (array of primitives) ── */
@@ -224,16 +240,19 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  min-width: 0;
 }
 
 .json-tag {
   display: inline-block;
+  max-width: 100%;
   padding: 2px 8px;
   border-radius: var(--radius-sm);
   background: var(--color-faint);
   color: var(--color-text);
   font-size: var(--text-base);
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 /* ── Card list (array of objects) ── */
@@ -241,9 +260,11 @@
 .json-card-list {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .json-card {
+  min-width: 0;
   padding: 8px 10px;
   border-radius: var(--radius-md);
   background: var(--color-surface);
@@ -320,4 +341,3 @@
   background: var(--color-surface);
   border-color: var(--color-border);
 }
-

@@ -1,6 +1,6 @@
 # Phase 40 - Generic query graph and answer projections
 
-## Status: In Progress
+## Status: Done
 
 ## Objectives
 
@@ -29,11 +29,20 @@ Make JSON v2 questions resolve through one generic record query contract with id
 - [x] Agent tests pass (`119 tests OK`).
 - [x] Planner smoke tests cover participant, count, timeline, actor-target, and location questions.
 - [x] Meeting `4a70293b-d8de-4521-a165-7659d80beb9b` record/tool smoke checks cover participants, count, actor, target, and location.
-- [ ] Rebuild/reprocess all runtime meetings with the final query-graph reducer and validate persisted identity relationships. **Blocked for meeting `fa753516-986f-4b18-b528-bcc60c750439`: the local transcription pipeline ends in `FAILED` before persisting a v2 result; meeting `4a70293b-d8de-4521-a165-7659d80beb9b` is `READY` and verified with one persisted `identity_resolution` relationship.**
+- [x] Rebuild/reprocess all runtime meetings with the final query-graph reducer and validate persisted identity relationships. Both processable meetings are `READY` with v2 results and identity-resolution relationships.
 
 ## Completion Report
 
-> **Completed at:** pending one runtime meeting whose transcription pipeline fails before v2 persistence
+> **Completed at:** 2026-07-15
+> **Verified by:** Full local reprocess plus `python -m backend.scripts.verify_v2_cutover`.
+
+### What was implemented
+
+- Generic record/relation query planning, verification, deterministic projections, and persisted identity-resolution relationships.
+
+### What was changed from original plan
+
+- The formerly failed local meeting reprocessed successfully; no exception remains for the runtime verification scope.
 
 ### Related docs updated
 
@@ -42,5 +51,4 @@ Make JSON v2 questions resolve through one generic record query contract with id
 
 ### Runtime verification
 
-- `verify_v2_cutover` currently reports `v2Results=1`, `identityRelationships=1`, and no orphan chunks.
-- The remaining meeting has no persisted result because the worker fails during the transcription pipeline; the worker now logs the original exception and stage for the next retry.
+- `verify_v2_cutover` reports `meetings=2`, `processable=2`, `v2Results=2`, `chunks=153`, `identityRelationships=2`, `orphanChunks=[]`, and `failures=[]`.

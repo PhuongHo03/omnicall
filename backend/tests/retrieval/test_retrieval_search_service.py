@@ -236,6 +236,36 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         self.assertEqual(results[2].record.chunk_id, "topic-summary-001")
         self.assertEqual(service.last_rerank_metadata["intentPinnedCount"], 4)
 
+    def test_query_ir_sections_drive_pins_without_surface_phrase_match(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=BrokenVectorProvider(),
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                meeting_id=meeting_id,
+                query="opaque paraphrase without summary keywords",
+                preferred_section_types=[
+                    "summary.executive",
+                    "summary.topic",
+                    "topic.summary",
+                ],
+            )
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].record.chunk_id, "summary-executive")
+        self.assertEqual(
+            service.last_rerank_metadata["intentPinSource"],
+            "query-ir",
+        )
+        self.assertEqual(
+            service.last_rerank_metadata["status"],
+            "skipped_query_ir",
+        )
+
     def test_vietnamese_participant_count_question_pins_participant_chunks(self) -> None:
         meeting_id = self.create_meeting_chunks()
         with SessionLocal() as session:
@@ -427,6 +457,40 @@ class RetrievalSearchServiceTestCase(unittest.TestCase):
         self.assertTrue(results)
         self.assertEqual(results[0].record.chunk_id, "action-item-001")
         self.assertEqual(service.last_rerank_metadata["provider"], "reverse-rerank")
+
+    def test_vector_and_postgres_candidates_are_merged_before_rerank(self) -> None:
+        meeting_id = self.create_meeting_chunks()
+        vector_provider = FakeVectorProvider(
+            [VectorSearchHit(chunk_id="risk-record-001", score=0.99)]
+        )
+
+        with SessionLocal() as session:
+            service = RetrievalSearchService(
+                session,
+                embedding_provider=TestEmbeddingProvider(dimensions=8),
+                vector_provider=vector_provider,
+                rerank_provider=ReverseRerankProvider(),
+            )
+            results = service.search_meeting(
+                meeting_id=meeting_id,
+                query="Bob Friday",
+            )
+
+        chunk_ids = [result.record.chunk_id for result in results]
+        self.assertIn("risk-record-001", chunk_ids)
+        self.assertIn("action-item-001", chunk_ids)
+        self.assertEqual(
+            service.last_search_metadata["retrieval"]["provider"],
+            "hybrid:fake-vector+postgres",
+        )
+        self.assertEqual(
+            service.last_search_metadata["retrieval"]["vectorCandidateCount"],
+            1,
+        )
+        self.assertGreaterEqual(
+            service.last_search_metadata["retrieval"]["postgresCandidateCount"],
+            1,
+        )
 
 
 def _chunk(

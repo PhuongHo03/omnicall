@@ -7,6 +7,7 @@ import {
   downloadMeetingAsset,
   getMeetingChatHistory,
   getMeeting,
+  isChatBusyError,
   listMeetings,
   queueMeetingProcessing,
   updateMeetingTitle,
@@ -25,14 +26,17 @@ import {
 } from "../states/meetingState";
 import {
   createOptimisticChatMessage,
+  restoreRejectedChatQuestion,
 } from "../states/chatState";
 import { useMeetingAssetPlayback } from "./useMeetingAssetPlayback";
+import { useChatFeedback } from "./useChatFeedback";
 import { useMeetingChatWatch } from "./useMeetingChatWatch";
 import { useMeetingRecording } from "./useMeetingRecording";
 import { useMeetingSelection } from "./useMeetingSelection";
 import { useMeetingStatusSync } from "./useMeetingStatusSync";
 import { extractTranscriptEntries } from "../utils/meetingTranscript";
 import { downloadBlob } from "../../../shared/utils/browserDownload";
+import { useToast } from "../../../shared/layouts/ToastContext";
 
 function requestKey(prefix: string) {
   return `${prefix}:${createClientId()}`;
@@ -49,6 +53,7 @@ function isNetworkLikeError(caught: unknown) {
 }
 
 export function useMeetingWorkspace(
+  ownerId: string,
   token: string,
   requestedMeetingId: string | null,
   onSelectedMeetingChange: (meetingId: string | null) => void
@@ -61,9 +66,16 @@ export function useMeetingWorkspace(
   const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [hasLoadedMeetings, setHasLoadedMeetings] = useState(false);
+  const lockedMeetingIdRef = useRef<string | null>(null);
+  const operationLockedRef = useRef(false);
   const [typewriterMessageIds, setTypewriterMessageIds] = useState<Set<string>>(new Set());
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { showToast } = useToast();
+  const showNotice = useCallback((message: string) => {
+    showToast({ message, tone: "success" });
+  }, [showToast]);
+  const showError = useCallback((message: string) => {
+    showToast({ message, tone: "error" });
+  }, [showToast]);
   const {
     abortControllerRef,
     currentMeetingIdRef,
@@ -72,36 +84,48 @@ export function useMeetingWorkspace(
     selectMeeting,
   } = useMeetingSelection({
     hasLoadedMeetings,
+    lockedMeetingIdRef,
     meetings,
     onSelectedMeetingChange,
     requestedMeetingId,
   });
 
+  const {
+    applyChatHistory,
+    pendingFeedbackMessageIds,
+    submitChatFeedback,
+  } = useChatFeedback({
+    meetingId: selectedMeetingId,
+    messages: chatMessages,
+    onError: showError,
+    setMessages: setChatMessages,
+    token,
+  });
+
   const run = useCallback(async (operation: () => Promise<void>) => {
     setIsLoading(true);
-    setError(null);
-    setNotice(null);
     try {
       await operation();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Request failed.");
+      showError(caught instanceof Error ? caught.message : "Request failed.");
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [showError]);
 
   const playbackError = useCallback((message: string) => {
-    setError(message);
-  }, []);
+    showError(message);
+  }, [showError]);
 
   const { startChatWatch, stopChatWatch } = useMeetingChatWatch({
+    applyChatHistory,
     currentMeetingIdRef,
     setChatMessages,
     setTypewriterMessageIds,
     token,
   });
 
-  const assetPlaybackUrl = useMeetingAssetPlayback(
+  const assetPlayback = useMeetingAssetPlayback(
     token,
     selectedMeeting,
     lastAsset,
@@ -152,6 +176,7 @@ export function useMeetingWorkspace(
     startChatWatch(meetingId, { statusMessageId: optimisticAssistant.id });
   }, [startChatWatch, token]);
   const { refreshSelectedMeetingState } = useMeetingStatusSync({
+    applyChatHistory,
     abortControllerRef,
     checkPendingAnswer,
     currentMeetingIdRef,
@@ -167,110 +192,140 @@ export function useMeetingWorkspace(
   });
 
   const createNewMeeting = useCallback(() => {
+    if (operationLockedRef.current) {
+      showError("Resolve the current recording or upload before creating another meeting.");
+      return;
+    }
     void run(async () => {
       const created = await createMeeting(token);
       setMeetings((current) => [created, ...current]);
       selectMeeting(created.id);
       setLastAsset(null);
       setIntelligenceResult(null);
-      setNotice("Meeting created.");
+      showNotice("Meeting created.");
     });
-  }, [run, selectMeeting, token]);
+  }, [run, selectMeeting, showError, showNotice, token]);
 
   const renameSelectedMeeting = useCallback(
     (title: string) => {
+      if (operationLockedRef.current) {
+        showError("Resolve the current recording or upload before renaming this meeting.");
+        return;
+      }
       if (!selectedMeeting) {
-        setError("Select a meeting first.");
+        showError("Select a meeting first.");
         return;
       }
       void run(async () => {
         const updated = await updateMeetingTitle(token, selectedMeeting.id, title);
         setMeetings((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-        setNotice("Meeting renamed.");
+        showNotice("Meeting renamed.");
       });
     },
-    [run, selectedMeeting, token]
+    [run, selectedMeeting, showError, showNotice, token]
   );
 
-  const uploadFile = useCallback(
-    (file: File) => {
-      if (!selectedMeeting) {
-        setError("Select a meeting first.");
-        return;
+  const uploadFileToMeeting = useCallback(async (meetingId: string, file: File): Promise<MeetingAsset> => {
+    const targetMeeting = meetings.find((meeting) => meeting.id === meetingId);
+    if (!targetMeeting || targetMeeting.status !== "DRAFT" || targetMeeting.latestAsset) {
+      throw new Error("This meeting cannot accept another file.");
+    }
+    setUploadProgress(0);
+    try {
+      const asset = await uploadMeetingAsset(token, meetingId, file, requestKey("upload"), setUploadProgress);
+      if (currentMeetingIdRef.current === meetingId) {
+        setLastAsset(asset);
       }
-      if (!isUploadableMeeting(selectedMeeting, lastAsset)) {
-        setError("This meeting already has an uploaded file or processing output. Create a new meeting to upload another file.");
-        return;
-      }
-      void run(async () => {
-        setUploadProgress(0);
-        try {
-          const asset = await uploadMeetingAsset(
-            token,
-            selectedMeeting.id,
-            file,
-            requestKey("upload"),
-            setUploadProgress,
-          );
-          setLastAsset(asset);
-          setNotice("Upload completed.");
-          await refreshMeetings();
-        } finally {
-          setUploadProgress(null);
-        }
-      });
-    },
-    [lastAsset, refreshMeetings, run, selectedMeeting, token]
-  );
+      await refreshMeetings();
+      return asset;
+    } finally {
+      setUploadProgress(null);
+    }
+  }, [currentMeetingIdRef, meetings, refreshMeetings, token]);
 
   const recording = useMeetingRecording({
+    hasLoadedMeetings,
     lastAsset,
-    run,
+    meetings,
+    onSelectMeeting: selectMeeting,
+    ownerId,
     selectedMeeting,
-    setError,
-    setNotice,
-    uploadFile,
+    setError: showError,
+    setNotice: showNotice,
+    uploadFileToMeeting,
   });
+  lockedMeetingIdRef.current = recording.lockedMeetingId;
+  const isOperationLocked = recording.isLocked || uploadProgress !== null;
+  operationLockedRef.current = isOperationLocked;
+
+  const uploadFile = useCallback((file: File) => {
+    if (!selectedMeeting) {
+      showError("Select a meeting first.");
+      return;
+    }
+    if (operationLockedRef.current || !isUploadableMeeting(selectedMeeting, lastAsset)) {
+      showError("Resolve the current recording or upload before selecting another file.");
+      return;
+    }
+    void run(async () => {
+      await uploadFileToMeeting(selectedMeeting.id, file);
+      showNotice("Upload completed.");
+    });
+  }, [lastAsset, run, selectedMeeting, showError, showNotice, uploadFileToMeeting]);
 
   const queueProcessing = useCallback(() => {
+    if (operationLockedRef.current) {
+      showError("Resolve the current recording or upload before processing.");
+      return;
+    }
     if (!selectedMeeting) {
-      setError("Select a meeting first.");
+      showError("Select a meeting first.");
       return;
     }
     if (!isProcessableMeeting(selectedMeeting, lastAsset)) {
-      setError("Upload a meeting file before starting processing.");
+      showError("Upload a meeting file before starting processing.");
       return;
     }
     void run(async () => {
       const meeting = await queueMeetingProcessing(token, selectedMeeting.id, requestKey("process"));
       setMeetings((current) => current.map((item) => (item.id === meeting.id ? meeting : item)));
-      setNotice(meeting.status === "FAILED" ? "Processing could not be queued." : "Processing queued.");
+      if (meeting.status === "FAILED") {
+        showError("Processing could not be queued.");
+      } else {
+        showNotice("Processing queued.");
+      }
     });
-  }, [lastAsset, run, selectedMeeting, token]);
+  }, [lastAsset, run, selectedMeeting, showError, showNotice, token]);
 
   const refreshStatus = useCallback(() => {
+    if (operationLockedRef.current) {
+      showError("Resolve the current recording or upload before refreshing.");
+      return;
+    }
     if (!selectedMeeting) {
-      setError("Select a meeting first.");
+      showError("Select a meeting first.");
       return;
     }
     void run(async () => {
-      await refreshSelectedMeetingState(selectedMeeting);
-      setNotice("Status refreshed.");
+      const refreshedMeeting = await refreshSelectedMeetingState(selectedMeeting);
+      if (refreshedMeeting) {
+        showNotice(refreshedMeeting.status === "READY" ? "Chat refreshed." : "Status refreshed.");
+      }
     });
-  }, [refreshSelectedMeetingState, run, selectedMeeting]);
+  }, [refreshSelectedMeetingState, run, selectedMeeting, showError, showNotice]);
 
   const submitChatQuestion = useCallback(() => {
     if (!selectedMeeting) {
-      setError("Select a meeting first.");
+      showError("Select a meeting first.");
       return;
     }
     if (selectedMeeting.status !== "READY") {
-      setError("Meeting must be ready before chat is available.");
+      showError("Meeting must be ready before chat is available.");
       return;
     }
     const question = chatQuestion.trim();
     if (!question) {
-      setError("Question must not be empty.");
+      showError("Question must not be empty.");
       return;
     }
     const optimisticQuestion = createOptimisticChatMessage("user", question);
@@ -279,25 +334,42 @@ export function useMeetingWorkspace(
 
     void run(async () => {
       try {
-        await askMeetingChat(token, selectedMeeting.id, question);
-      } catch (caught) {
-        if (!isNetworkLikeError(caught)) {
+        const accepted = await askMeetingChat(token, selectedMeeting.id, question);
+        if (accepted.status === "clarification_needed") {
           const history = await getMeetingChatHistory(token, selectedMeeting.id);
-          setChatMessages(history.messages);
+          applyChatHistory(history.messages);
+          return;
+        }
+        stopChatWatch();
+        const optimisticAssistant = createOptimisticChatMessage("assistant", "Đang chờ xử lý...");
+        setChatMessages((current) => [...current, optimisticAssistant]);
+        startChatWatch(selectedMeeting.id, { turnId: accepted.turnId, statusMessageId: optimisticAssistant.id });
+      } catch (caught) {
+        setChatQuestion((current) => restoreRejectedChatQuestion(current, question));
+        if (isChatBusyError(caught)) {
+          try {
+            const history = await getMeetingChatHistory(token, selectedMeeting.id);
+            applyChatHistory(history.messages);
+            await checkPendingAnswer(selectedMeeting.id, history.messages);
+          } catch {
+            setChatMessages((current) => current.filter((item) => item.id !== optimisticQuestion.id));
+          }
+          throw new Error(caught.message || "Another question is still being processed. Your question was kept.");
+        }
+        if (!isNetworkLikeError(caught)) {
+          try {
+            const history = await getMeetingChatHistory(token, selectedMeeting.id);
+            applyChatHistory(history.messages);
+          } catch {
+            setChatMessages((current) => current.filter((item) => item.id !== optimisticQuestion.id));
+          }
           throw caught;
         }
-        setChatMessages((current) =>
-          current.filter((item) => item.id !== optimisticQuestion.id)
-        );
+        setChatMessages((current) => current.filter((item) => item.id !== optimisticQuestion.id));
         throw caught;
       }
     });
-
-    stopChatWatch();
-    const optimisticAssistant = createOptimisticChatMessage("assistant", "Đang chờ xử lý...");
-    setChatMessages((current) => [...current, optimisticAssistant]);
-    startChatWatch(selectedMeeting.id, { statusMessageId: optimisticAssistant.id });
-  }, [chatQuestion, run, selectedMeeting, token]);
+  }, [applyChatHistory, chatQuestion, checkPendingAnswer, run, selectedMeeting, showError, startChatWatch, stopChatWatch, token]);
 
   const refreshChatHistory = useCallback(() => {
     if (!selectedMeeting) {
@@ -305,15 +377,18 @@ export function useMeetingWorkspace(
     }
     void run(async () => {
       const history = await getMeetingChatHistory(token, selectedMeeting.id);
-      setChatMessages(history.messages);
+      applyChatHistory(history.messages);
       checkPendingAnswer(selectedMeeting.id, history.messages, selectedMeeting.pendingChatStatus);
-      setNotice("Chat refreshed.");
     });
-  }, [run, selectedMeeting, token]);
+  }, [applyChatHistory, checkPendingAnswer, run, selectedMeeting, token]);
 
   const deleteSelectedMeeting = useCallback(() => {
+    if (operationLockedRef.current) {
+      showError("Resolve the current recording or upload before deleting this meeting.");
+      return;
+    }
     if (!selectedMeeting) {
-      setError("Select a meeting first.");
+      showError("Select a meeting first.");
       return;
     }
     void run(async () => {
@@ -322,9 +397,9 @@ export function useMeetingWorkspace(
       selectMeeting(null);
       setLastAsset(null);
       setIntelligenceResult(null);
-      setNotice("Meeting session deleted.");
+      showNotice("Meeting session deleted.");
     });
-  }, [run, selectMeeting, selectedMeeting, token]);
+  }, [run, selectMeeting, selectedMeeting, showError, showNotice, token]);
 
   const transcriptEntries = useMemo(() => extractTranscriptEntries(intelligenceResult), [intelligenceResult]);
 
@@ -341,24 +416,27 @@ export function useMeetingWorkspace(
   const hasLockedAsset = Boolean(lastAsset);
 
   return {
-    assetPlaybackUrl,
+    assetPlaybackUrl: assetPlayback.url,
+    assetPlaybackStatus: assetPlayback.status,
+    assetPlaybackError: assetPlayback.error,
     canProcess,
     canUpload,
     downloadAsset,
     transcriptEntries,
     chatMessages,
     chatQuestion,
-    error,
     hasLockedAsset,
     intelligenceResult,
     isLoading,
+    isOperationLocked,
     isRecording: recording.isRecording,
+    recordingSession: recording.session,
     lastAsset,
     uploadProgress,
     meetings,
-    notice,
     selectedMeeting,
     selectedMeetingId,
+    pendingFeedbackMessageIds,
     createNewMeeting,
     queueProcessing,
     deleteSelectedMeeting,
@@ -367,9 +445,13 @@ export function useMeetingWorkspace(
     refreshStatus,
     setChatQuestion,
     setSelectedMeetingId: selectMeeting,
+    discardRecording: recording.discardRecording,
+    downloadRecording: recording.downloadRecording,
+    retryRecordingUpload: recording.retryUpload,
     startRecording: recording.startRecording,
     stopRecording: recording.stopRecording,
     submitChatQuestion,
+    submitChatFeedback,
     renameSelectedMeeting,
     uploadFile,
     typewriterMessageIds,

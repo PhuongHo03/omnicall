@@ -72,6 +72,17 @@ export type AdminOperationalLog = {
   chat: Record<string, unknown>;
   provider: string | null;
   model: string | null;
+  executorType: string | null;
+  resource: string | null;
+  operation: string | null;
+  version: string | null;
+  configuredProvider: string | null;
+  configuredModel: string | null;
+  effectiveProvider: string | null;
+  effectiveModel: string | null;
+  originProvider: string | null;
+  originModel: string | null;
+  fallbackUsed: boolean | null;
   durationMs: number | null;
   details: Record<string, unknown>;
   errorType: string | null;

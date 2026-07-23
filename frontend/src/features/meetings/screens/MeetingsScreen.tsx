@@ -8,21 +8,26 @@ import { MeetingActionPanel } from "../components/MeetingActionPanel";
 import { MeetingChatPanel } from "../components/MeetingChatPanel";
 import { MeetingList } from "../components/MeetingList";
 import { MeetingProgressBar } from "../components/MeetingProgressBar";
+import { MeetingRecordingStatus } from "../components/MeetingRecordingStatus";
 import { useMeetingWorkspace } from "../hooks/useMeetingWorkspace";
+import { meetingFailurePresentation } from "../states/meetingState";
 import type { MeetingChatCitation, PlaybackSeekRequest } from "../types/meetingTypes";
 
 type MeetingsScreenProps = {
   requestedMeetingId: string | null;
   token: string;
+  userId: string;
   onSelectedMeetingChange: (meetingId: string | null) => void;
 };
 
 export function MeetingsScreen({
   onSelectedMeetingChange,
   requestedMeetingId,
-  token
+  token,
+  userId,
 }: MeetingsScreenProps) {
   const workspace = useMeetingWorkspace(
+    userId,
     token,
     requestedMeetingId,
     onSelectedMeetingChange
@@ -45,7 +50,7 @@ export function MeetingsScreen({
     setIsPlaybackDrawerOpen(true);
   }, []);
 
-  const { setExtraContent, setOnCreateMeeting } = useSidebarSlot();
+  const { setCreateMeetingDisabled, setExtraContent, setOnCreateMeeting } = useSidebarSlot();
 
   useEffect(() => {
     setOnCreateMeeting(() => workspace.createNewMeeting);
@@ -53,9 +58,20 @@ export function MeetingsScreen({
   }, [workspace.createNewMeeting, setOnCreateMeeting]);
 
   useEffect(() => {
+    setCreateMeetingDisabled(workspace.isOperationLocked);
+    return () => setCreateMeetingDisabled(false);
+  }, [setCreateMeetingDisabled, workspace.isOperationLocked]);
+
+  useEffect(() => {
+    setIsPlaybackDrawerOpen(false);
+    setIsResultDrawerOpen(false);
+    setSeekRequest(null);
+  }, [workspace.selectedMeetingId]);
+
+  useEffect(() => {
     setExtraContent(
       <MeetingList
-        disabled={workspace.isLoading}
+        disabled={workspace.isLoading || workspace.isOperationLocked}
         meetings={workspace.meetings}
         selectedMeetingId={workspace.selectedMeetingId}
         onCreate={workspace.createNewMeeting}
@@ -63,9 +79,23 @@ export function MeetingsScreen({
       />
     );
     return () => setExtraContent(null);
-  }, [workspace.isLoading, workspace.meetings, workspace.selectedMeetingId, workspace.createNewMeeting, workspace.setSelectedMeetingId, setExtraContent]);
+  }, [workspace.isLoading, workspace.isOperationLocked, workspace.meetings, workspace.selectedMeetingId, workspace.createNewMeeting, workspace.setSelectedMeetingId, setExtraContent]);
 
   if (!workspace.selectedMeeting) {
+    if (workspace.recordingSession) {
+      return (
+        <div className="workspace-screen">
+          <MeetingRecordingStatus
+            session={workspace.recordingSession}
+            uploadProgress={workspace.uploadProgress}
+            canRetry={workspace.meetings.some((meeting) => meeting.id === workspace.recordingSession?.meetingId && meeting.status === "DRAFT" && !meeting.latestAsset)}
+            onDiscard={workspace.discardRecording}
+            onDownload={workspace.downloadRecording}
+            onRetry={workspace.retryRecordingUpload}
+          />
+        </div>
+      );
+    }
     return (
       <div className="workspace-screen">
         <EmptyState icon="📋" message="Select a meeting" description="Choose a meeting from the sidebar or create a new one." className="empty-state--hero" />
@@ -78,6 +108,18 @@ export function MeetingsScreen({
   const showProcessingProgress = meetingStatus === "QUEUED" || meetingStatus === "PROCESSING";
 
   const renderMeetingState = () => {
+    if (workspace.recordingSession?.meetingId === workspace.selectedMeetingId) {
+      return (
+        <MeetingRecordingStatus
+          session={workspace.recordingSession}
+          uploadProgress={workspace.uploadProgress}
+          canRetry={workspace.meetings.some((meeting) => meeting.id === workspace.recordingSession?.meetingId && meeting.status === "DRAFT" && !meeting.latestAsset)}
+          onDiscard={workspace.discardRecording}
+          onDownload={workspace.downloadRecording}
+          onRetry={workspace.retryRecordingUpload}
+        />
+      );
+    }
     if (meetingStatus === "READY") {
       return (
         <MeetingChatPanel
@@ -88,6 +130,8 @@ export function MeetingsScreen({
           typewriterMessageIds={workspace.typewriterMessageIds}
           onTypewriterComplete={workspace.clearTypewriterId}
           onSubmitQuestion={workspace.submitChatQuestion}
+          onFeedback={workspace.submitChatFeedback}
+          pendingFeedbackMessageIds={workspace.pendingFeedbackMessageIds}
           onCitationClick={openCitationPlayback}
         />
       );
@@ -112,10 +156,14 @@ export function MeetingsScreen({
       );
     }
 
+    if (meetingStatus === "FAILED") {
+      const failure = meetingFailurePresentation(workspace.selectedMeeting?.failureCode ?? null);
+      return <EmptyState message={failure.message} description={failure.description} />;
+    }
+
     const messageByStatus = {
       DRAFT: "Tải tệp âm thanh để bắt đầu",
       UPLOADED: "Tệp đã tải lên, nhấn Process để bắt đầu",
-      FAILED: "Có lỗi xảy ra, vui lòng thử lại",
     } as const;
 
     return <EmptyState message={messageByStatus[meetingStatus as keyof typeof messageByStatus] ?? "Upload and process a meeting to start chatting."} />;
@@ -131,15 +179,16 @@ export function MeetingsScreen({
           hasAsset={workspace.lastAsset !== null}
           isProcessing={workspace.isLoading}
           isRefreshingStatus={false}
-          isUploading={workspace.isLoading}
+          isUploading={workspace.uploadProgress !== null}
           isRecording={workspace.isRecording}
+          isOperationLocked={workspace.isOperationLocked}
+          recordingPhase={workspace.recordingSession?.phase ?? "idle"}
           selectedMeeting={workspace.selectedMeeting}
           onDeleteMeeting={workspace.deleteSelectedMeeting}
           onFileUpload={workspace.uploadFile}
           onOpenPlayback={openPlaybackDrawer}
           onProcess={workspace.queueProcessing}
           onRefreshStatus={workspace.refreshStatus}
-          onRefreshHistory={workspace.refreshChatHistory}
           onRenameMeeting={workspace.renameSelectedMeeting}
           onStartRecording={workspace.startRecording}
           onStopRecording={workspace.stopRecording}
@@ -154,9 +203,12 @@ export function MeetingsScreen({
           onClose={closeResultDrawer}
         />
         <PlaybackDrawer
+          key={`${workspace.selectedMeetingId ?? "none"}:${workspace.lastAsset?.id ?? "none"}`}
           isOpen={isPlaybackDrawerOpen}
           asset={workspace.lastAsset}
           playbackUrl={workspace.assetPlaybackUrl}
+          playbackStatus={workspace.assetPlaybackStatus}
+          playbackError={workspace.assetPlaybackError}
           transcriptEntries={workspace.transcriptEntries}
           onDownload={workspace.downloadAsset}
           onClose={closePlaybackDrawer}

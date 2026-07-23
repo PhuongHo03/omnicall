@@ -231,3 +231,96 @@
 [data-theme="dark"] .icon-only-button:hover:not(:disabled) {
   background: var(--color-faint-strong);
 }
+
+/* Global app toast */
+.global-toast-viewport {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 1000;
+  width: min(520px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.global-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: var(--line-height-compact);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  animation: global-toast-enter 180ms ease-out;
+}
+
+.global-toast > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.global-toast > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.global-toast__dismiss {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  margin: -3px -5px -3px 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: currentColor;
+  background: transparent;
+  cursor: pointer;
+}
+
+.global-toast__dismiss:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.global-toast__dismiss:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.global-toast--success {
+  color: var(--color-success-text);
+  border-color: var(--color-success-alpha);
+  background: color-mix(in srgb, var(--color-success-soft) 94%, transparent);
+}
+
+.global-toast--error {
+  color: var(--color-danger-text);
+  border-color: var(--color-danger-alpha);
+  background: color-mix(in srgb, var(--color-danger-soft) 94%, transparent);
+}
+
+@keyframes global-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .global-toast {
+    animation: none;
+  }
+}

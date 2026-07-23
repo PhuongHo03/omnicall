@@ -1,3 +1,4 @@
+import atexit
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
@@ -14,6 +15,7 @@ class Base(DeclarativeBase):
 
 settings = get_settings()
 engine = create_engine(settings.database_url, pool_pre_ping=True)
+atexit.register(engine.dispose)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 _db_breaker = CircuitBreaker(

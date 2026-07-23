@@ -2,6 +2,7 @@ import { Braces, Clock3, Cpu, FileAudio, MessageSquareText, Workflow } from "luc
 import { EmptyState } from "../../../shared/components/EmptyState";
 
 import type { AdminOperationalLog } from "../types/adminTypes";
+import { adminLogProvenanceRows } from "./adminLogProvenance";
 
 type AdminLogDetailsProps = {
   event: AdminOperationalLog | null;
@@ -14,15 +15,18 @@ export function AdminLogDetails({ event, meetingNames }: AdminLogDetailsProps) {
   }
 
   const resolvedMeetingName = event.meetingId && meetingNames ? meetingNames.get(event.meetingId) ?? event.meetingName : event.meetingName;
+  const question = stringValue(event.chat.question) ?? stringValue(event.chat.questionPreview);
+  const answer = stringValue(event.chat.answer);
 
   const rows = [
     ["Meeting Name", resolvedMeetingName],
     ["Meeting ID", event.meetingId],
     ["File", stringValue(event.file.name)],
     ["File ID", stringValue(event.file.id)],
-    ["Chat session", stringValue(event.chat.sessionId)],
-    ["Provider", event.provider],
-    ["Model", event.model],
+    ["Chat turn", stringValue(event.chat.turnId)],
+    ["User message", stringValue(event.chat.userMessageId)],
+    ["Assistant message", stringValue(event.chat.assistantMessageId)],
+    ...adminLogProvenanceRows(event),
     ["Duration", event.durationMs === null ? null : `${event.durationMs} ms`],
     ["Status", event.status]
   ].filter((row): row is [string, string] => typeof row[1] === "string" && Boolean(row[1]));
@@ -65,6 +69,23 @@ export function AdminLogDetails({ event, meetingNames }: AdminLogDetailsProps) {
         ))}
       </dl>
 
+      {question || answer ? (
+        <section className="admin-log-conversation" aria-label="Chat content">
+          {question ? (
+            <div>
+              <strong>Question</strong>
+              <p>{question}</p>
+            </div>
+          ) : null}
+          {answer ? (
+            <div>
+              <strong>Answer</strong>
+              <p>{answer}</p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       {event.errorMessage ? (
         <div className="admin-log-details__error">
           <strong>{event.errorType ?? "Error"}</strong>
@@ -77,7 +98,26 @@ export function AdminLogDetails({ event, meetingNames }: AdminLogDetailsProps) {
           <Braces size={15} />
           <strong>Event metadata</strong>
         </div>
-        <pre>{JSON.stringify({ file: event.file, chat: event.chat, details: event.details }, null, 2)}</pre>
+        <pre>{JSON.stringify({
+          provenance: {
+            executorType: event.executorType,
+            provider: event.effectiveProvider ?? event.provider,
+            model: event.effectiveModel ?? event.model,
+            answerProvider: event.executorType === "cache" && event.details.served === true
+              ? event.originProvider
+              : null,
+            answerModel: event.executorType === "cache" && event.details.served === true
+              ? event.originModel
+              : null,
+            resource: event.resource,
+            operation: event.operation,
+            version: event.version,
+            fallbackUsed: event.fallbackUsed
+          },
+          file: event.file,
+          chat: traceChatMetadata(event.chat),
+          details: event.details
+        }, null, 2)}</pre>
       </div>
     </aside>
   );
@@ -85,4 +125,10 @@ export function AdminLogDetails({ event, meetingNames }: AdminLogDetailsProps) {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
+}
+
+function traceChatMetadata(chat: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(chat).filter(([key]) => key !== "question" && key !== "answer")
+  );
 }

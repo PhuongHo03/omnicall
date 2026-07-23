@@ -29,7 +29,7 @@ export function AdminLogsScreen({ token }: { token: string }) {
         search={meetingLogs.search}
         onAutoRefreshChange={meetingLogs.setAutoRefresh}
         onClear={() => setIsClearConfirmationOpen(true)}
-        onRefresh={() => void meetingLogs.refreshMeetings()}
+        onRefresh={() => void meetingLogs.refreshMeetings(false, true)}
         onSearchChange={meetingLogs.setSearch}
       />
 

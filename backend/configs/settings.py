@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import quote_plus
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     redis_host: str = Field(default="redis", alias="REDIS_HOST")
     redis_port: int = Field(default=6379, alias="REDIS_PORT")
     redis_password: str = Field(default="change-me", alias="REDIS_PASSWORD")
-    redis_processing_lock_ttl_seconds: int = Field(default=900, alias="REDIS_PROCESSING_LOCK_TTL_SECONDS")
+    redis_processing_lock_ttl_seconds: int = Field(
+        default=900,
+        ge=1,
+        le=86400,
+        alias="REDIS_PROCESSING_LOCK_TTL_SECONDS",
+    )
     admin_metrics_cache_key: str = Field(default="admin:metrics:snapshot", alias="ADMIN_METRICS_CACHE_KEY")
     admin_metrics_cache_ttl_seconds: int = Field(default=10, alias="ADMIN_METRICS_CACHE_TTL_SECONDS")
     operational_log_stream_key: str = Field(default="admin:logs:operational", alias="OPERATIONAL_LOG_STREAM_KEY")
@@ -45,6 +50,7 @@ class Settings(BaseSettings):
         default=100,
         alias="PROCESSING_RECONCILIATION_BATCH_SIZE",
     )
+    chat_turn_lease_seconds: int = Field(default=300, ge=30, le=1800, alias="CHAT_TURN_LEASE_SECONDS")
 
     minio_host: str = Field(default="minio", alias="MINIO_HOST")
     minio_port: int = Field(default=9000, alias="MINIO_PORT")
@@ -81,12 +87,34 @@ class Settings(BaseSettings):
     asr_compute_type: str = Field(default="int8", alias="ASR_COMPUTE_TYPE")
     asr_beam_size: int = Field(default=5, alias="ASR_BEAM_SIZE")
     asr_language: str = Field(default="auto", alias="ASR_LANGUAGE")
+    asr_min_segment_confidence: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        alias="ASR_MIN_SEGMENT_CONFIDENCE",
+    )
+    asr_max_no_speech_probability: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        alias="ASR_MAX_NO_SPEECH_PROBABILITY",
+    )
     embedding_model: str = Field(default="nomic-embed-text", alias="EMBEDDING_MODEL")
     embedding_dimensions: int = Field(default=768, alias="EMBEDDING_DIMENSIONS")
-    embedding_timeout_seconds: float = Field(default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
+    embedding_timeout_seconds: float = Field(
+        default=30.0,
+        ge=0.1,
+        le=300.0,
+        alias="EMBEDDING_TIMEOUT_SECONDS",
+    )
     embedding_batch_size: int = Field(default=16, alias="EMBEDDING_BATCH_SIZE")
-    embedding_max_retries: int = Field(default=2, alias="EMBEDDING_MAX_RETRIES")
-    embedding_retry_backoff_seconds: float = Field(default=0.2, alias="EMBEDDING_RETRY_BACKOFF_SECONDS")
+    embedding_max_retries: int = Field(default=2, ge=0, le=10, alias="EMBEDDING_MAX_RETRIES")
+    embedding_retry_backoff_seconds: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=60.0,
+        alias="EMBEDDING_RETRY_BACKOFF_SECONDS",
+    )
     embedding_contract_version: str = Field(default="v1", alias="EMBEDDING_CONTRACT_VERSION")
     rerank_top_k: int = Field(default=12, alias="RERANK_TOP_K")
     rerank_output_k: int = Field(default=6, alias="RERANK_OUTPUT_K")
@@ -118,6 +146,7 @@ class Settings(BaseSettings):
     ollama_model: str = Field(default="qwen2.5:1.5b", alias="OLLAMA_MODEL")
     ollama_llm_timeout_seconds: float = Field(default=600.0, alias="OLLAMA_LLM_TIMEOUT_SECONDS")
     ollama_context_length: int = Field(default=8192, alias="OLLAMA_CONTEXT_LENGTH")
+    ollama_max_output_tokens: int = Field(default=1024, alias="OLLAMA_MAX_OUTPUT_TOKENS")
     extraction_window_target_tokens: int = Field(default=2000, alias="EXTRACTION_WINDOW_TARGET_TOKENS")
     extraction_window_hard_limit_tokens: int = Field(default=2800, alias="EXTRACTION_WINDOW_HARD_LIMIT_TOKENS")
     extraction_window_overlap_segments: int = Field(default=1, alias="EXTRACTION_WINDOW_OVERLAP_SEGMENTS")
@@ -146,15 +175,17 @@ class Settings(BaseSettings):
     circuit_breaker_failure_threshold: int = Field(default=5, alias="CIRCUIT_BREAKER_FAILURE_THRESHOLD")
     circuit_breaker_recovery_seconds: int = Field(default=30, alias="CIRCUIT_BREAKER_RECOVERY_SECONDS")
 
-    # Agentic RAG
-    agentic_rag_max_iterations: int = Field(default=2, alias="AGENTIC_RAG_MAX_ITERATIONS")
-    agentic_rag_max_replans: int = Field(default=1, alias="AGENTIC_RAG_MAX_REPLANS")
-    agentic_rag_max_tool_calls_per_iteration: int = Field(default=4, alias="AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION")
-    agentic_rag_max_chunks_per_tool: int = Field(default=5, alias="AGENTIC_RAG_MAX_CHUNKS_PER_TOOL")
-    agentic_rag_max_total_chunks: int = Field(default=12, alias="AGENTIC_RAG_MAX_TOTAL_CHUNKS")
-    agentic_rag_iteration_timeout_seconds: float = Field(default=30.0, alias="AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS")
-    agentic_rag_total_timeout_seconds: float = Field(default=60.0, alias="AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS")
-    agentic_rag_max_context_tokens: int = Field(default=4000, alias="AGENTIC_RAG_MAX_CONTEXT_TOKENS")
+    # Simple Evidence-First RAG. Contract versions are source constants.
+    default_chat_language: str = Field(default="en", alias="DEFAULT_CHAT_LANGUAGE")
+    rag_query_interpretation_timeout_seconds: float = Field(default=15.0, ge=0.1, le=60.0, alias="RAG_QUERY_INTERPRETATION_TIMEOUT_SECONDS")
+    rag_evidence_retrieval_timeout_seconds: float = Field(default=20.0, ge=0.1, le=120.0, alias="RAG_EVIDENCE_RETRIEVAL_TIMEOUT_SECONDS")
+    rag_synthesis_primary_timeout_seconds: float = Field(default=60.0, ge=0.1, le=300.0, alias="RAG_SYNTHESIS_PRIMARY_TIMEOUT_SECONDS")
+    rag_synthesis_fallback_timeout_seconds: float = Field(default=40.0, ge=0.1, le=300.0, alias="RAG_SYNTHESIS_FALLBACK_TIMEOUT_SECONDS")
+    rag_finalization_reserve_seconds: float = Field(default=15.0, ge=1.0, le=120.0, alias="RAG_FINALIZATION_RESERVE_SECONDS")
+    rag_chat_turn_timeout_seconds: float = Field(default=150.0, ge=10.0, le=900.0, alias="RAG_CHAT_TURN_TIMEOUT_SECONDS")
+    rag_synthesis_contract_retries: int = Field(default=1, ge=1, le=1, alias="RAG_SYNTHESIS_CONTRACT_RETRIES")
+    llm_reasoning_mode: str = Field(default="disabled", alias="LLM_REASONING_MODE")
+    llm_prompt_data_policy: str = Field(default="trusted", alias="LLM_PROMPT_DATA_POLICY")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -162,6 +193,55 @@ class Settings(BaseSettings):
         populate_by_name=True,
         extra="ignore",
     )
+
+    @field_validator("llm_prompt_data_policy")
+    @classmethod
+    def validate_prompt_data_policy(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"trusted", "redact"}:
+            raise ValueError("LLM_PROMPT_DATA_POLICY must be trusted or redact")
+        return normalized
+
+    @field_validator("default_chat_language")
+    @classmethod
+    def validate_default_chat_language(cls, value: str) -> str:
+        normalized = value.strip().replace("_", "-").split("-", 1)[0].casefold()
+        if normalized not in {"en", "vi"}:
+            raise ValueError("DEFAULT_CHAT_LANGUAGE must be en or vi")
+        return normalized
+
+    @field_validator("llm_reasoning_mode")
+    @classmethod
+    def validate_reasoning_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"disabled", "enabled"}:
+            raise ValueError("LLM_REASONING_MODE must be disabled or enabled")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_chat_turn_lease(self) -> "Settings":
+        embedding_attempts = self.embedding_max_retries + 1
+        embedding_backoff = sum(
+            self.embedding_retry_backoff_seconds * (2**attempt)
+            for attempt in range(self.embedding_max_retries)
+        )
+        embedding_deadline = (
+            self.embedding_timeout_seconds * embedding_attempts
+            + embedding_backoff
+        )
+        required_lease = max(
+            self.rag_chat_turn_timeout_seconds + 30,
+            embedding_deadline + 60,
+            max(0.1, self.guardrail_timeout_seconds)
+            * (max(0, self.guardrail_max_retries) + 1)
+            + 30,
+        )
+        if self.chat_turn_lease_seconds < required_lease:
+            raise ValueError(
+                "CHAT_TURN_LEASE_SECONDS must cover the longest guarded RAG stage "
+                "(chat turn, embedding retries, or guardrail) plus its safety margin"
+            )
+        return self
 
     @computed_field
     @property
@@ -195,3 +275,23 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def simple_rag_runtime_summary(settings: Settings) -> dict[str, object]:
+    """Return only non-secret effective settings for startup diagnostics."""
+    return {
+        "queryInterpretationTimeoutSeconds": settings.rag_query_interpretation_timeout_seconds,
+        "retrievalTimeoutSeconds": settings.rag_evidence_retrieval_timeout_seconds,
+        "synthesisPrimaryTimeoutSeconds": settings.rag_synthesis_primary_timeout_seconds,
+        "synthesisFallbackTimeoutSeconds": settings.rag_synthesis_fallback_timeout_seconds,
+        "finalizationReserveSeconds": settings.rag_finalization_reserve_seconds,
+        "chatTurnTimeoutSeconds": settings.rag_chat_turn_timeout_seconds,
+        "contractRetries": settings.rag_synthesis_contract_retries,
+        "reasoningMode": settings.llm_reasoning_mode,
+        "embeddingTimeoutSeconds": settings.embedding_timeout_seconds,
+        "embeddingMaxRetries": settings.embedding_max_retries,
+        "promptDataPolicy": settings.llm_prompt_data_policy,
+        "turnLeaseSeconds": settings.chat_turn_lease_seconds,
+        "pipelineContract": "simple-rag.v1",
+        "retrievalContract": "simple-retrieval.v1",
+    }

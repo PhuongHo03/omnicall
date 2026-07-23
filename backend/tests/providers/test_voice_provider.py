@@ -129,6 +129,53 @@ class VoiceProviderTestCase(unittest.TestCase):
         self.assertEqual(segments[0].confidence, 0.91)
         self.assertEqual(provider.provider_model, "fake-whisper-int8")
 
+    def test_local_asr_rejects_low_confidence_hallucination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "noise.wav"
+            audio_path.write_bytes(_wav_bytes(with_tone=False))
+            script_path = Path(tmp_dir) / "fake_asr.py"
+            script_path.write_text(
+                "import json\n"
+                "print(json.dumps({'segments': [{"
+                "'text': 'Thank you.', 'start': 3.15, 'end': 4.15, "
+                "'confidence': 0.0103, 'avg_logprob': -0.942653, 'no_speech_prob': 0.820743"
+                "}]}))\n",
+                encoding="utf-8",
+            )
+            provider = LocalASRProvider(
+                Settings(asr_min_segment_confidence=0.1, asr_max_no_speech_probability=0.6),
+                command_template=f"{sys.executable} {script_path} --audio {{audio_path}}",
+            )
+
+            segments = provider.transcribe_audio(
+                audio=_audio_result(str(audio_path)),
+                speech_regions=[SpeechRegion(start_ms=200, end_ms=900, confidence=0.2)],
+            )
+
+        self.assertEqual(segments, [])
+
+    def test_local_asr_keeps_legacy_segment_without_quality_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "speech.wav"
+            audio_path.write_bytes(_wav_bytes(with_tone=True))
+            script_path = Path(tmp_dir) / "fake_asr.py"
+            script_path.write_text(
+                "import json\n"
+                "print(json.dumps({'segments': [{'text': 'Xin chao.', 'start': 0, 'end': 1}]}))\n",
+                encoding="utf-8",
+            )
+            provider = LocalASRProvider(
+                Settings(),
+                command_template=f"{sys.executable} {script_path} --audio {{audio_path}}",
+            )
+
+            segments = provider.transcribe_audio(
+                audio=_audio_result(str(audio_path)),
+                speech_regions=[SpeechRegion(start_ms=0, end_ms=1000, confidence=0.8)],
+            )
+
+        self.assertEqual([segment.text for segment in segments], ["Xin chao."])
+
     def test_asr_provider_factory_keeps_asr_local_only(self) -> None:
         provider = get_asr_provider(Settings())
 

@@ -24,6 +24,7 @@ from backend.repositories.meeting_repository import (
     MeetingRepository,
 )
 from backend.services.operational_log_service import OperationalLogService
+from backend.services.processing.failure_policy import processing_failure_code
 from backend.utils.exceptions import ApplicationError
 
 
@@ -290,6 +291,7 @@ class MeetingService:
             title=meeting.title,
             status=meeting.status,
             failure_reason=meeting.failure_reason,
+            failure_code=processing_failure_code(status=meeting.status, failure_reason=meeting.failure_reason),
             pending_chat_status=meeting.pending_chat_status,
             created_at=meeting.created_at,
             latest_asset=MeetingService._asset_response(latest_asset) if latest_asset else None,
@@ -307,6 +309,7 @@ class MeetingService:
             title=meeting.title,
             status=meeting.status,
             failure_reason=meeting.failure_reason,
+            failure_code=processing_failure_code(status=meeting.status, failure_reason=meeting.failure_reason),
             pending_chat_status=meeting.pending_chat_status,
             created_at=meeting.created_at,
             updated_at=meeting.updated_at,

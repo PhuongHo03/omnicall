@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from backend.models.enums import MeetingStatus
@@ -18,6 +20,7 @@ class MeetingResponse(BaseModel):
     title: str
     status: MeetingStatus
     failure_reason: str | None
+    failure_code: str | None = None
     pending_chat_status: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -45,6 +48,22 @@ class MeetingAssetResponse(BaseModel):
 
 class MeetingChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    # BCP 47 client locale, e.g. vi-VN. The backend falls back to its
+    # deployment default when an older/non-browser client omits it.
+    language: str | None = Field(default=None, max_length=35)
+
+
+class MeetingChatFeedbackRequest(BaseModel):
+    rating: Literal["up", "down", "neutral"]
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class MeetingChatFeedbackResponse(BaseModel):
+    message_id: str
+    rating: Literal["up", "down", "neutral"]
+    revision: int = Field(ge=1)
+    memory_status: str
+    cache_action: str
 
 
 class MeetingChatCitationResponse(BaseModel):
@@ -65,8 +84,9 @@ class MeetingChatMessageResponse(BaseModel):
     content: str
     retrieved_chunk_ids: list[str]
     citations: list[MeetingChatCitationResponse]
-    metadata: dict  # May include: evidenceState, confidence, provider, model, guardrails,
-                    # agentIterations, agentToolCalls, agentThoughts
+    metadata: dict  # Owner-visible diagnostics; may include explicit raw provider/tool JSON, never hidden reasoning tokens.
+    feedback_rating: Literal["up", "down"] | None = None
+    feedback_revision: int | None = None
     created_at: datetime
 
 
@@ -77,15 +97,6 @@ class AgentToolCallResponse(BaseModel):
     result_count: int = 0
 
 
-class AgentThoughtResponse(BaseModel):
-    """Response schema for agent thinking step."""
-    iteration: int
-    decision: str = ""
-    reasoning: str = ""
-    tools: list[str] = Field(default_factory=list)
-    duration_ms: int = 0
-
-
 class MeetingChatResponse(BaseModel):
     answer: str
     evidence_state: str
@@ -94,12 +105,12 @@ class MeetingChatResponse(BaseModel):
     # Agent metadata (optional for backward compatibility)
     iterations: int | None = None
     toolCalls: list[AgentToolCallResponse] | None = None
-    agentThoughts: list[AgentThoughtResponse] | None = None
 
 
 class MeetingChatAcceptedResponse(BaseModel):
     status: str = "processing"
     message: str = "Question accepted. Answer is being generated."
+    turn_id: str | None = None
 
 
 class MeetingChatHistoryResponse(BaseModel):

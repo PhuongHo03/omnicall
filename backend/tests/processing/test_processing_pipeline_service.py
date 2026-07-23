@@ -4,11 +4,13 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 
 from backend.configs.database import SessionLocal
+from backend.configs.settings import Settings
 from backend.models.core_models import User
 from backend.models.enums import MeetingStatus
 from backend.models.meeting_models import MeetingChunkRecord, MeetingIntelligenceResult, MeetingTranscriptWindow
 from backend.providers.analysis import ANALYSIS_CANDIDATE_SCHEMA_VERSION
 from backend.providers.transcript_types import TranscriptSegment
+from backend.providers.transcription_provider import NoRecognizableSpeechError
 from backend.providers.vector_provider import NoopVectorProvider
 from backend.repositories.auth_repository import AuthRepository
 from backend.repositories.meeting_repository import MeetingAssetRepository, MeetingRepository
@@ -23,6 +25,20 @@ class FakeLockProvider:
 
     def release(self, lock_key: str, token: str) -> None:
         return None
+
+
+class FencedLockProvider(FakeLockProvider):
+    def __init__(self, *, successful_renewals: int) -> None:
+        self.successful_renewals = successful_renewals
+        self.renewals = 0
+        self.released = False
+
+    def renew(self, lock_key: str, token: str, ttl_seconds: int | None = None) -> bool:
+        self.renewals += 1
+        return self.renewals <= self.successful_renewals
+
+    def release(self, lock_key: str, token: str) -> None:
+        self.released = True
 
 
 class FakeTranscriptionProvider:
@@ -43,6 +59,16 @@ class FakeTranscriptionProvider:
                 confidence=0.9,
             )
         ]
+
+
+class NoSpeechTranscriptionProvider(FakeTranscriptionProvider):
+    def transcribe(self, meeting, asset) -> list[TranscriptSegment]:
+        raise NoRecognizableSpeechError("No recognizable speech was detected in the recording.")
+
+
+class UnexpectedTranscriptionProvider(FakeTranscriptionProvider):
+    def transcribe(self, meeting, asset) -> list[TranscriptSegment]:
+        raise AssertionError("ASR should not run when a transcript checkpoint exists.")
 
 
 class FakeAnalysisProvider:
@@ -94,6 +120,11 @@ class FakeAnalysisProvider:
             "quality": {"coverage": "complete", "warnings": [], "confidence": 0.9},
             "extraction": {"overallConfidence": 0.9, "method": "test", "unsupportedClaims": [], "warnings": []},
         }
+
+
+class FailingAnalysisProvider(FakeAnalysisProvider):
+    def build_result(self, *, meeting, asset, transcript_segments: list[TranscriptSegment], detected_language=None) -> dict:
+        raise RuntimeError("analysis unavailable")
 
 
 class ProcessingPipelineServiceTestCase(unittest.TestCase):
@@ -156,6 +187,76 @@ class ProcessingPipelineServiceTestCase(unittest.TestCase):
             MeetingRepository(session).update_status(meeting, MeetingStatus.READY)
             self.assertIsNone(meeting.failure_reason)
             session.rollback()
+
+    def test_no_speech_failure_keeps_english_safe_reason_for_api_and_admin_logs(self) -> None:
+        meeting_id = self._create_uploaded_meeting()
+        with SessionLocal() as session:
+            service = ProcessingPipelineService(
+                session,
+                lock_provider=FakeLockProvider(),
+                transcription_provider=NoSpeechTranscriptionProvider(),
+                analysis_provider=FakeAnalysisProvider(),
+            )
+
+            response = service.process_meeting(meeting_id=meeting_id)
+            meeting = MeetingRepository(session).get(meeting_id)
+
+        self.assertEqual(response["status"], "failed")
+        self.assertEqual(meeting.status, MeetingStatus.FAILED)
+        self.assertEqual(meeting.failure_reason, "No clear speech was detected in this recording.")
+
+    def test_retry_restores_transcript_checkpoint_without_running_asr_again(self) -> None:
+        meeting_id = self._create_uploaded_meeting()
+        with SessionLocal() as session:
+            first_attempt = ProcessingPipelineService(
+                session,
+                lock_provider=FakeLockProvider(),
+                transcription_provider=FakeTranscriptionProvider(),
+                analysis_provider=FailingAnalysisProvider(),
+            )
+            self.assertEqual(first_attempt.process_meeting(meeting_id=meeting_id)["status"], "failed")
+
+        with SessionLocal() as session:
+            second_attempt = ProcessingPipelineService(
+                session,
+                lock_provider=FakeLockProvider(),
+                transcription_provider=UnexpectedTranscriptionProvider(),
+                analysis_provider=FakeAnalysisProvider(),
+                retrieval_index=RetrievalIndexService(
+                    session,
+                    embedding_provider=TestEmbeddingProvider(dimensions=8),
+                    vector_provider=NoopVectorProvider(),
+                ),
+            )
+            response = second_attempt.process_meeting(meeting_id=meeting_id)
+            meeting = MeetingRepository(session).get(meeting_id)
+
+        self.assertEqual(response["status"], "succeeded")
+        self.assertEqual(meeting.status, MeetingStatus.READY)
+        self.assertEqual(meeting.attempts, 2)
+
+    def test_lost_processing_lease_aborts_without_marking_meeting_failed(self) -> None:
+        meeting_id = self._create_uploaded_meeting()
+        lock = FencedLockProvider(successful_renewals=2)
+        with SessionLocal() as session:
+            service = ProcessingPipelineService(
+                session,
+                lock_provider=lock,
+                transcription_provider=FakeTranscriptionProvider(),
+                analysis_provider=FakeAnalysisProvider(),
+                settings=Settings(
+                    _env_file=None,
+                    REDIS_PROCESSING_LOCK_TTL_SECONDS=1,
+                ),
+            )
+
+            response = service.process_meeting(meeting_id=meeting_id)
+            session.expire_all()
+            meeting = MeetingRepository(session).get(meeting_id)
+
+        self.assertEqual(response["status"], "lock_lost")
+        self.assertEqual(meeting.status, MeetingStatus.PROCESSING)
+        self.assertTrue(lock.released)
 
     def _create_uploaded_meeting(self) -> str:
         with SessionLocal() as session:

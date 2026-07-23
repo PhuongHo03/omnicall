@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { deleteAdminAccount, getAdminAccounts, updateAdminAccountRole } from "../api/adminApi";
 import type { AdminAccount, AdminAccountRole } from "../types/adminTypes";
+import { useToast } from "../../../shared/layouts/ToastContext";
 
 export function useAdminAccounts(token: string) {
+  const { showToast } = useToast();
   const [accounts, setAccounts] = useState<AdminAccount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
@@ -11,19 +13,22 @@ export function useAdminAccounts(token: string) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const refreshAccounts = useCallback(async () => {
+  const refreshAccounts = useCallback(async (announce = false) => {
     setIsLoading(true);
     setError(null);
     try {
       const response = await getAdminAccounts(token);
       setAccounts(response.items);
       setNotice("Accounts refreshed.");
+      if (announce) showToast({ message: "Accounts refreshed.", tone: "success" });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Accounts request failed.");
+      const message = caught instanceof Error ? caught.message : "Accounts request failed.";
+      setError(message);
+      if (announce) showToast({ message, tone: "error" });
     } finally {
       setIsLoading(false);
     }
-  }, [token]);
+  }, [showToast, token]);
 
   useEffect(() => {
     void refreshAccounts();

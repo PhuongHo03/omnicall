@@ -2,6 +2,7 @@ import { AlertCircle, Bot, CheckCircle2, FileAudio, Workflow } from "lucide-reac
 import { EmptyState } from "../../../shared/components/EmptyState";
 
 import type { AdminOperationalLog } from "../types/adminTypes";
+import { adminLogProvenanceSummary } from "./adminLogProvenance";
 
 type AdminLogStreamProps = {
   logs: AdminOperationalLog[];
@@ -19,7 +20,7 @@ export function AdminLogStream({ logs, selectedEventId, onSelect, meetingNameOve
     <div className="admin-log-stream" role="list">
       {logs.map((event) => {
         const fileName = stringValue(event.file.name);
-        const question = stringValue(event.chat.questionPreview);
+        const question = stringValue(event.chat.questionPreview) ?? stringValue(event.chat.question);
         const isSelected = selectedEventId === event.id;
         const FlowIcon = event.flow === "rag" ? Bot : Workflow;
         const LevelIcon = event.level === "error" ? AlertCircle : CheckCircle2;
@@ -58,8 +59,7 @@ export function AdminLogStream({ logs, selectedEventId, onSelect, meetingNameOve
               </div>
               {question ? <blockquote>{question}</blockquote> : null}
               <div className="admin-log-event__technical">
-                {event.provider ? <span>Provider: {event.provider}</span> : null}
-                {event.model ? <span>Model: {event.model}</span> : null}
+                {adminLogProvenanceSummary(event).map(([label, value]) => <span key={label}>{label}: {value}</span>)}
                 {event.durationMs !== null ? <span>{formatDuration(event.durationMs)}</span> : null}
                 {event.errorType ? <span>Error: {event.errorType}</span> : null}
               </div>

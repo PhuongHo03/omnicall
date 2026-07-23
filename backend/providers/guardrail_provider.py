@@ -43,10 +43,22 @@ INJECTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_EMAIL_PATTERN = re.compile(
+    r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+)
+_CARD_PATTERN = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+_SSN_PATTERN = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
+_PHONE_PATTERN = re.compile(
+    r"(?<![\w.])\+?\d(?:[\s().-]?\d){8,14}(?!\w)"
+)
+
 PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"), "[EMAIL]"),
-    (re.compile(r"(?:\+?84|0)(?:\d[\s.-]?){8,9}\d"), "[PHONE]"),
-    (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[CARD]"),
+    (_EMAIL_PATTERN, "[EMAIL]"),
+    # Apply stronger identifiers before the deliberately broad international
+    # phone pattern so the guardrail prompt retains their stricter category.
+    (_CARD_PATTERN, "[CARD]"),
+    (_SSN_PATTERN, "[SSN]"),
+    (_PHONE_PATTERN, "[PHONE]"),
 ]
 
 _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -238,6 +250,25 @@ class OllamaGuardrailProvider:
             ):
                 return GuardrailResult(
                     action="allowed",
+                    categories=[
+                        "grounded_sensitive_lookup"
+                        if category == "S7"
+                        else "false_positive_override"
+                    ],
+                    confidence=0.5,
+                    provider=self.provider_name,
+                    model=self.model_name,
+                    latency_ms=_elapsed_ms(started),
+                    text_length=text_length,
+                )
+
+            if kind == "chat_input" and _should_override_input_block(
+                category=category,
+                text=text,
+                metadata=metadata,
+            ):
+                return GuardrailResult(
+                    action="allowed",
                     categories=["false_positive_override"],
                     confidence=0.5,
                     provider=self.provider_name,
@@ -273,6 +304,8 @@ class OllamaGuardrailProvider:
 
 def _should_override_output_block(*, category: str, text: str, metadata: dict[str, Any]) -> bool:
     """Override only clearly mismatched blocks on trusted meeting answers."""
+    if category == "S7":
+        return _allow_grounded_sensitive_lookup(text=text, metadata=metadata)
     if metadata.get("evidenceState") not in {"grounded", "partial"}:
         return False
     if not metadata.get("hasCitations"):
@@ -282,6 +315,136 @@ def _should_override_output_block(*, category: str, text: str, metadata: dict[st
         return False
     normalized = text.lower()
     return not any(keyword.lower() in normalized for keyword in keywords)
+
+
+_DISCLOSABLE_SENSITIVE_FIELDS = frozenset({
+    "address",
+    "emailAddress",
+    "phoneNumber",
+    "postalAddress",
+})
+_S7_FORBIDDEN_TERMS = (
+    "api key",
+    "card number",
+    "credit card",
+    "cvv",
+    "mật khẩu",
+    "ma pin",
+    "mã pin",
+    "password",
+    "private key",
+    "secret",
+    "social security",
+    "ssn",
+)
+
+
+def _allow_grounded_sensitive_lookup(
+    *,
+    text: str,
+    metadata: dict[str, Any],
+) -> bool:
+    """Allow only explicitly requested, verified contact data from this meeting.
+
+    S7 covers both ordinary contact details and credentials. The former may be
+    returned to a user who already passed meeting authorization, but only when
+    the typed query requested that exact field and claim verification retained
+    current-snapshot evidence. Credentials, cards, and government identifiers
+    remain blocked regardless of citations.
+    """
+
+    if metadata.get("authorizedMeetingAccess") is not True:
+        return False
+    if metadata.get("evidenceState") != "grounded":
+        return False
+    if not metadata.get("hasCitations"):
+        return False
+    if metadata.get("claimVerificationPassed") is not True:
+        return False
+    if metadata.get("claimVerificationMode") not in {
+        "claim_evidence",
+        "typed_contact_projection",
+    }:
+        return False
+    try:
+        verified_ref_count = int(metadata.get("verifiedEvidenceRefCount") or 0)
+    except (TypeError, ValueError):
+        return False
+    if verified_ref_count < 1:
+        return False
+
+    raw_fields = metadata.get("requestedFields")
+    requested_fields = {
+        item
+        for item in (raw_fields if isinstance(raw_fields, list) else [])
+        if isinstance(item, str) and item in _DISCLOSABLE_SENSITIVE_FIELDS
+    }
+    if not requested_fields:
+        return False
+
+    normalized = text.casefold()
+    if any(term in normalized for term in _S7_FORBIDDEN_TERMS):
+        return False
+    if _CARD_PATTERN.search(text) or _SSN_PATTERN.search(text):
+        return False
+
+    detected_fields: set[str] = set()
+    if _EMAIL_PATTERN.search(text) or "email" in normalized or "e-mail" in normalized:
+        detected_fields.add("emailAddress")
+    if (
+        _PHONE_PATTERN.search(text)
+        or "phone" in normalized
+        or "telephone" in normalized
+        or "số điện thoại" in normalized
+    ):
+        detected_fields.add("phoneNumber")
+    if any(
+        marker in normalized
+        for marker in ("address", "postal", "street", "địa chỉ")
+    ):
+        detected_fields.add("address")
+
+    if not detected_fields:
+        return False
+    allowed_groups = set(requested_fields)
+    if "postalAddress" in allowed_groups:
+        allowed_groups.add("address")
+    if "address" in allowed_groups:
+        allowed_groups.add("postalAddress")
+    return detected_fields.issubset(allowed_groups)
+
+
+def _should_override_input_block(*, category: str, text: str, metadata: dict[str, Any]) -> bool:
+    """Allow only typed, factual business lookups for known model confusions."""
+
+    if INJECTION_PATTERN.search(text):
+        return False
+    policy = metadata.get("deterministicQuery")
+    if not isinstance(policy, dict):
+        return False
+    try:
+        confidence = float(policy.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if policy.get("clarificationNeeded") or confidence < 0.75:
+        return False
+    operation = str(policy.get("operation") or "")
+    target = str(policy.get("target") or "")
+    if operation not in {"lookup", "count", "list", "exists"}:
+        return False
+
+    normalized = text.casefold()
+    if category == "S4" and target == "age":
+        unsafe_terms = (*_CATEGORY_KEYWORDS["S3"], *_CATEGORY_KEYWORDS["S4"])
+        return not any(term.casefold() in normalized for term in unsafe_terms)
+    if category == "S6" and target == "price":
+        advice_terms = (
+            "advice", "recommend", "should i", "invest", "diagnose",
+            "prescribe", "tư vấn", "khuyên", "đầu tư", "chẩn đoán", "kê đơn",
+        )
+        return not any(term in normalized for term in advice_terms)
+    return False
+
 
 def get_guardrail_provider(settings: Settings | None = None) -> GuardrailProvider:
     return OllamaGuardrailProvider(settings or get_settings())

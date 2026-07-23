@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -15,6 +16,30 @@ from backend.providers.llm import (
 )
 from backend.providers.transcript_types import TranscriptSegment
 from backend.providers.contracts.analysis import AnalysisProvider, ANALYSIS_CANDIDATE_SCHEMA_VERSION
+
+
+_WINDOW_PARTICIPANT_COUNT_ID = "derived-window-participant-count"
+_IGNORED_SPEAKER_LABELS = frozenset(
+    {
+        "background",
+        "background noise",
+        "crosstalk",
+        "n a",
+        "na",
+        "noise",
+        "none",
+        "null",
+        "other",
+        "overlap",
+        "silence",
+        "speaker unknown",
+        "unk",
+        "unassigned",
+        "unidentified",
+        "unknown",
+        "unknown speaker",
+    }
+)
 
 
 class LLMAnalysisProvider:
@@ -39,19 +64,31 @@ class LLMAnalysisProvider:
             asset=asset,
             transcript_segments=transcript_segments,
         )
-        generated = self.llm_provider.generate_json(
-            system_prompt=_build_system_prompt(),
-            user_prompt=_build_user_prompt(meeting, asset, transcript_segments),
+        generated = _generate_analysis_json(
+            llm_provider=self.llm_provider,
+            primary_system_prompt=_build_system_prompt(),
+            primary_user_prompt=_build_user_prompt(meeting, asset, transcript_segments),
+            fallback_system_prompt=_build_compact_system_prompt(),
+            fallback_user_prompt=_build_compact_user_prompt(meeting, asset, transcript_segments),
         )
         if not _has_meeting_intelligence(generated):
-            generated = self.llm_provider.generate_json(
-                system_prompt=_build_system_prompt(),
-                user_prompt=_build_repair_prompt(
+            generated = _generate_analysis_json(
+                llm_provider=self.llm_provider,
+                primary_system_prompt=_build_system_prompt(),
+                primary_user_prompt=_build_repair_prompt(
                     meeting=meeting,
                     asset=asset,
                     transcript_segments=transcript_segments,
                     invalid_response=generated,
                     detected_language=detected_language,
+                ),
+                fallback_system_prompt=_build_compact_system_prompt(),
+                fallback_user_prompt=_build_compact_user_prompt(
+                    meeting,
+                    asset,
+                    transcript_segments,
+                    detected_language=detected_language,
+                    repair=True,
                 ),
             )
         result = _merge_llm_result(
@@ -59,7 +96,7 @@ class LLMAnalysisProvider:
             generated=generated,
             llm_provider=self.llm_provider,
         )
-        self.last_provider_name = self.provider_name
+        self.last_provider_name = get_effective_provider_name(self.llm_provider)
         self.last_provider_model = get_effective_model_name(self.llm_provider)
         return result
 
@@ -158,7 +195,7 @@ def _build_base_result(*, meeting: Meeting, asset: MeetingAsset, transcript_segm
 def _build_speaker_stats(transcript_segments: list[TranscriptSegment]) -> dict:
     speakers: dict[str, dict] = {}
     for segment in transcript_segments:
-        label = segment.speaker or "Unknown"
+        label = _speaker_label(segment.speaker)
         entry = speakers.setdefault(
             label,
             {
@@ -167,6 +204,7 @@ def _build_speaker_stats(transcript_segments: list[TranscriptSegment]) -> dict:
                 "totalTalkTimeMs": 0,
                 "mappedParticipantId": None,
                 "confidence": 0.0,
+                "countsTowardParticipantCount": _is_countable_speaker_label(label),
             },
         )
         entry["segmentCount"] += 1
@@ -182,7 +220,34 @@ def _build_speaker_stats(transcript_segments: list[TranscriptSegment]) -> dict:
             entry["confidence"] = round(total / entry["segmentCount"], 4)
         items.append(entry)
     items.sort(key=lambda item: str(item["label"]))
-    return {"speakerCount": len(items), "identifiedParticipantCount": 0, "mentionedOnlyCount": 0, "items": items}
+    counted_items = [item for item in items if item["countsTowardParticipantCount"]]
+    ignored_items = [item for item in items if not item["countsTowardParticipantCount"]]
+    return {
+        "speakerCount": len(counted_items),
+        "identifiedParticipantCount": 0,
+        "mentionedOnlyCount": 0,
+        "ignoredSpeakerLabelCount": len(ignored_items),
+        "ignoredSegmentCount": sum(int(item["segmentCount"]) for item in ignored_items),
+        "items": items,
+    }
+
+
+def _speaker_label(value: object) -> str:
+    label = re.sub(r"\s+", " ", str(value or "")).strip()
+    return label or "Unknown"
+
+
+def _is_countable_speaker_label(value: object) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized.casefold()).strip()
+    if not normalized or normalized in _IGNORED_SPEAKER_LABELS:
+        return False
+    return not bool(
+        re.fullmatch(
+            r"(?:background(?: noise)?|crosstalk|noise|silence|overlap|unk|unknown|unassigned|unidentified)(?: \d+)?",
+            normalized,
+        )
+    )
 
 
 def get_analysis_provider(settings: Settings | None = None) -> AnalysisProvider:
@@ -196,6 +261,61 @@ def _build_system_prompt() -> str:
         "Extract useful meeting intelligence from the transcript while preserving evidence links. "
         "Use the provided transcript segment IDs in citationIds whenever evidence exists. "
         "Do not echo the input, required output shape, transcript wrapper, or instructions."
+    )
+
+
+def _generate_analysis_json(
+    *,
+    llm_provider: LLMProvider,
+    primary_system_prompt: str,
+    primary_user_prompt: str,
+    fallback_system_prompt: str,
+    fallback_user_prompt: str,
+) -> dict:
+    """Use the full contract on the primary and a bounded contract locally."""
+    generate_with_fallback = getattr(llm_provider, "generate_json_with_fallback_prompts", None)
+    if callable(generate_with_fallback):
+        return generate_with_fallback(
+            system_prompt=primary_system_prompt,
+            user_prompt=primary_user_prompt,
+            fallback_system_prompt=fallback_system_prompt,
+            fallback_user_prompt=fallback_user_prompt,
+        )
+    return llm_provider.generate_json(
+        system_prompt=primary_system_prompt,
+        user_prompt=primary_user_prompt,
+    )
+
+
+def _build_compact_system_prompt() -> str:
+    return (
+        "Extract meeting intelligence. Return one valid JSON object only, without markdown. "
+        "Use transcript segment IDs in citationIds and do not invent unsupported details."
+    )
+
+
+def _build_compact_user_prompt(
+    meeting: Meeting,
+    asset: MeetingAsset,
+    transcript_segments: list[TranscriptSegment],
+    *,
+    detected_language: str | None = None,
+    repair: bool = False,
+) -> str:
+    transcript = _build_prompt_transcript(transcript_segments)
+    language_name = _language_code_to_name(detected_language or "vi")
+    repair_instruction = "The previous response was incomplete. " if repair else ""
+    return (
+        f"{repair_instruction}Summarize this transcript in {language_name}. "
+        "Return only supported keys from: summaries, participants, facts, topics, actions, decisions, risks, questions. "
+        "summaries.executive must be {text, topicIds, citationIds} with non-empty text. "
+        "Each list must contain at most one very short item; omit empty lists and keep at most four list items total. "
+        "Every supported item must have id and citationIds using segment IDs; include confidence only when it is essential. "
+        "Do not include explanations, duplicated evidence, or optional fields. "
+        "Omit unknown fields and unsupported items.\n"
+        f"Meeting: {json.dumps(_prompt_payload(meeting=meeting, asset=asset), ensure_ascii=False)}\n"
+        "Lines are segmentId|speaker|startMs|endMs|confidence|text\n"
+        f"{transcript}"
     )
 
 
@@ -292,12 +412,17 @@ def _language_code_to_name(language_code: str | None) -> str:
 
 def _has_meeting_intelligence(generated: dict) -> bool:
     summaries = generated.get("summaries")
-    if not isinstance(summaries, dict):
-        return False
-    executive_obj = summaries.get("executive")
+    executive_obj = summaries.get("executive") if isinstance(summaries, dict) else None
     executive = executive_obj.get("text") if isinstance(executive_obj, dict) else None
-    if not isinstance(executive, str) or not executive.strip():
-        return False
+    # A bounded local fallback may deliberately return only a cited executive
+    # summary. The reducer still retains the authoritative transcript and
+    # deterministic speaker/count facts, so forcing a second full LLM call
+    # merely to add an optional record wastes the fallback budget.
+    if isinstance(executive, str) and executive.strip():
+        return True
+    # The reducer can create a transcript-grounded executive summary when a
+    # bounded fallback returned supported records but omitted that projection.
+    # Only echo/shape-only output needs another LLM repair attempt.
     return any(
         isinstance(generated.get(key), list) and generated[key]
         for key in ("facts", "events", "actions", "decisions", "risks", "questions", "topics", "participants")
@@ -355,6 +480,9 @@ def _merge_llm_result(*, baseline: dict, generated: dict, llm_provider: LLMProvi
         "analysisProvider": "llm-analysis",
         "analysisModel": get_effective_model_name(llm_provider),
         "llmProvider": get_effective_provider_name(llm_provider),
+        "fallbackUsed": bool(getattr(llm_provider, "last_fallback_used", False)),
+        "primaryErrorType": getattr(llm_provider, "last_primary_error_type", None),
+        "primaryErrorMessage": getattr(llm_provider, "last_primary_error_message", None),
         "generatedAt": datetime.now(UTC).isoformat(),
     }
     result["transcript"] = baseline["transcript"]
@@ -558,6 +686,10 @@ def _ensure_executive_summary(result: dict) -> None:
     executive["text"] = "Tóm tắt dựa trên transcript: " + " ".join(evidence)
     executive["topicIds"] = executive.get("topicIds") if isinstance(executive.get("topicIds"), list) else []
     executive["citationIds"] = citation_ids
+    # This is only a UI/context fallback constructed from the opening
+    # transcript snippets. It must never masquerade as a whole-meeting,
+    # claim-eligible executive summary.
+    executive["lineageStatus"] = "context_only"
     warning = "LLM did not provide an executive summary; a transcript-grounded fallback was used."
     result.setdefault("quality", {}).setdefault("warnings", []).append(warning)
     result.setdefault("extraction", {}).setdefault("warnings", []).append(warning)
@@ -603,29 +735,53 @@ def _link_speakers_to_participants(result: dict) -> None:
 
 def _add_deterministic_facts(result: dict) -> None:
     facts = [item for item in result.get("facts", []) if isinstance(item, dict)]
-    existing_types = {fact.get("type") for fact in facts}
-    speakers = result.get("speakers", {})
-    citation_ids = [
-        citation.get("id")
-        for citation in result.get("evidence", {}).get("citations", [])
-        if isinstance(citation, dict) and isinstance(citation.get("id"), str)
+    facts = [
+        fact
+        for fact in facts
+        if (fact.get("subtype") or fact.get("type")) != "participant_count"
     ]
-    if "participant_count" not in existing_types:
-        facts.insert(
-            0,
-            {
-                "id": "fact-001",
-                "type": "participant_count",
-                "subject": {"type": "meeting", "id": "meeting"},
-                "predicate": "has_speaker_count",
-                "value": speakers.get("speakerCount", 0),
-                "unit": "people",
-                "confidence": 0.95 if speakers.get("speakerCount") else 0.5,
-                "derivedFrom": "speakers",
-                "citationIds": citation_ids,
-            },
-        )
+    speakers = result.get("speakers", {})
+    speaker_count = int(speakers.get("speakerCount") or 0)
+    ignored_segments = int(speakers.get("ignoredSegmentCount") or 0)
+    if speaker_count <= 0:
+        result["facts"] = facts
+        if ignored_segments:
+            warning = "Participant count was omitted because no reliable diarization speaker label was available."
+            result.setdefault("quality", {}).setdefault("warnings", []).append(warning)
+            result.setdefault("extraction", {}).setdefault("warnings", []).append(warning)
+        return
+    facts.insert(
+        0,
+        {
+            "id": _available_record_id(_WINDOW_PARTICIPANT_COUNT_ID, facts),
+            "type": "participant_count",
+            "subject": {"type": "meeting", "id": "meeting"},
+            "predicate": "has_reliable_speaker_count",
+            "value": speaker_count,
+            "unit": "people",
+            "countBasis": "reliable_diarization_labels",
+            "ignoredSegmentCount": ignored_segments,
+            "isLowerBound": bool(ignored_segments),
+            "confidence": 0.9 if ignored_segments else 0.95 if speaker_count else 0.5,
+            "derivedFrom": "speakers",
+            "citationIds": [],
+        },
+    )
     result["facts"] = facts
+
+
+def _available_record_id(base: str, records: list[dict]) -> str:
+    existing = {
+        item.get("id")
+        for item in records
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    if base not in existing:
+        return base
+    suffix = 2
+    while f"{base}-{suffix}" in existing:
+        suffix += 1
+    return f"{base}-{suffix}"
 
 
 def _mark_unsupported_claims(result: dict) -> None:

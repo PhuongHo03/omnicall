@@ -1,5 +1,13 @@
 # Frontend Explanation
 
+> **Phase 47 authority:** chat diagnostics use only `pipelineTrace v1`. The former Agent Flow/Trace/Full Raw types, parsers, state, components, and SSE events have been removed.
+
+## Pipeline Trace Viewer
+
+`meetingDtos.ts` accepts the bounded backend trace stages `request_gate`, `query_interpretation`, `retrieval`, `evidence_validation`, `synthesis`, `answer_verification`, `output_policy`, and `persistence`. `PipelineTraceViewer` renders status, duration, effective provider/model, and bounded redacted details. `ChatMessageBubble` keeps citations and evidence-state badges beside the trace. The browser never receives full prompts, hidden reasoning, arbitrary tool payloads, answer-cache metadata, or Agent Memory state.
+
+The chat stream parser accepts lifecycle/status/token/done/control/error/connected events only. Unknown former agent events are rejected at the DTO boundary; history/polling remains authoritative after reconnect.
+
 ## Structure
 
 ```text
@@ -22,14 +30,16 @@ frontend/
     │   │   ├── EmptyState.tsx
     │   │   ├── IconButton.tsx
     │   │   ├── IconOnlyButton.tsx
-    │   │   └── PageHeader.tsx
+    │   │   ├── PageHeader.tsx
+    │   │   └── ToastViewport.tsx
     │   ├── hooks/
     │   │   ├── useDebounceCallback.ts
     │   │   ├── usePollingEffect.ts
     │   │   └── useTheme.ts
     │   ├── layouts/
     │   │   ├── AppShell.tsx
-    │   │   └── SidebarContext.tsx
+    │   │   ├── SidebarContext.tsx
+    │   │   └── ToastContext.tsx
     │   ├── styles/
     │   │   ├── global.css
     │   │   ├── tokens.css
@@ -57,6 +67,7 @@ frontend/
         │   │   ├── AdminAccountsTable.tsx
         │   │   ├── AdminLogDetails.tsx
         │   │   ├── AdminLogStream.tsx
+        │   │   ├── adminLogProvenance.ts
         │   │   ├── AdminLogToolbar.tsx
         │   │   ├── AdminMetricsGroup.tsx
         │   │   ├── AdminSummaryCards.tsx
@@ -90,10 +101,13 @@ frontend/
         └── meetings/
             ├── api/
             │   ├── chatStreamApi.ts
-            │   └── meetingApi.ts
+            │   ├── meetingApi.ts
+            │   └── recordingStorage.ts
             ├── dtos/
+            │   ├── chatStreamDtos.ts
             │   └── meetingDtos.ts
             ├── hooks/
+            │   ├── useChatFeedback.ts
             │   ├── useMeetingAssetPlayback.ts
             │   ├── useMeetingChatWatch.ts
             │   ├── useMeetingRecording.ts
@@ -104,11 +118,13 @@ frontend/
             ├── screens/
             │   └── MeetingsScreen.tsx
             ├── states/
+            │   ├── chatFlowState.ts
             │   ├── chatState.ts
             │   └── meetingState.ts
             ├── types/
             │   └── meetingTypes.ts
             ├── utils/
+            │   ├── chatTrace.ts
             │   ├── citationFormatters.ts
             │   ├── jsonDisplay.ts
             │   ├── markdownParser.ts
@@ -117,6 +133,8 @@ frontend/
             └── components/
                 ├── AssetMetadataBar.tsx
                 ├── AssetPlaybackPanel.tsx
+                ├── ChatFlowBadge.tsx
+                ├── ChatFlowTrace.tsx
                 ├── ChatMessageBubble.tsx
                 ├── JsonSection.tsx
                 ├── JsonValue.tsx
@@ -124,6 +142,7 @@ frontend/
                 ├── MeetingChatPanel.tsx
                 ├── MeetingIntelligenceResultPanel.tsx
                 ├── MeetingList.tsx
+                ├── MeetingRecordingStatus.tsx
                 ├── MeetingProgressBar.tsx
                 ├── PlaybackDrawer.tsx
                 ├── PlayerControls.tsx
@@ -200,7 +219,9 @@ Accounts link -> /admin/accounts -> AdminAccountsScreen -> useAdminAccounts -> a
 Logs link -> /admin/logs -> AdminLogsScreen -> useAdminLogs -> operational log APIs
 ```
 
-The logs page has separate Processing Logs and RAG Chat Logs tabs. Each row already shows the event level, time, stage, session, file or question preview, provider/model, duration, status, and error type when present; selecting an event only opens deeper structured metadata. Controls provide a left-icon search input, `All`/`Info`/`Error`, a compact Tail selector with sizes of 100/300/1000, manual refresh, a button-style two-second Live toggle, and confirmed clear. The browser calls only the authenticated backend APIs and never connects directly to Redis.
+The logs page has separate Processing Logs and RAG Chat Logs tabs. Each row shows the event level, time, stage, session, file or bounded question preview, typed executor provenance, duration, status, and error type when present. Selecting a linked RAG event shows the durable Question and turn/user message IDs returned by the admin API. The Answer and assistant message ID appear only on the terminal `answer` event, never retroactively on `received`, `queued`, guardrail, resolver, Agent, or tool events after the turn completes. Older or pre-linkage events gracefully remain preview-only. The Event metadata JSON excludes duplicated full Question/Answer bodies and keeps only traceback fields.
+
+Labels follow the executor type and show only runtime provenance: LLM Provider/Model, Embedding Provider/Model, Vector Store/Collection, Rule Engine/Rule, ASR, diarization, worker, cache store, or implementation/component. Configured/default provider values are intentionally omitted from row badges, the details grid, and displayed Event metadata because they did not execute the event. A pipeline-only `Agent started` event therefore has no Provider/Model. Query resolution shows its effective interpreter provider; terminal answer events show the actual answer producer. A served cache hit puts the cached answer's origin under `Answer Provider/Model` and identifies Redis separately as `Cache Store`. In particular, `local-direct-intent` is displayed as `Implementation` with component `closed-direct-intent-router`, never as Provider/Model. Fallback use remains explicit. Controls provide a left-icon search input, `All`/`Info`/`Error`, a compact Tail selector with sizes of 100/300/1000, manual refresh, a button-style two-second Live toggle, and confirmed clear. The browser calls only authenticated backend APIs and never connects directly to Redis or PostgreSQL.
 
 The metrics page auto-refreshes every 30 seconds and renders:
 
@@ -224,9 +245,13 @@ Admin access is guarded twice in the frontend: non-admin accounts do not receive
 
 The accounts page renders `AdminAccountsTable`, backed by `GET /api/admin/accounts`, `PATCH /api/admin/accounts/{userId}/role`, and `DELETE /api/admin/accounts/{userId}`. Admins can change another account's role with a dropdown or delete another account. The current admin's dropdown and delete action are disabled, and backend still enforces `409 cannot_change_own_role` or `409 cannot_delete_own_account` if a direct request tries to modify the caller's account.
 
-The recording entry point uses `MediaRecorder` to produce a completed `audio/webm` file and uploads it through the same asset endpoint as normal file uploads. It is not live transcription.
+The recording entry point and manual file picker converge on one explicit `uploadFileToMeeting(meetingId, file)` orchestration and the same backend asset endpoint. A recording session captures its owner and meeting IDs before requesting microphone permission, negotiates a backend-supported WebM/Opus, WebM, or MP4 audio MIME type, and calls `MediaRecorder.start(1000)` so ordered chunks are available every second. Recording is not live transcription.
 
-`MeetingActionPanel` follows the one-analysis-per-meeting rule. Upload and recording are shown only while the selected meeting is `DRAFT` and has no asset. The file picker accepts audio and supported video files only, matching the backend voice-only meeting processing allowlist. Once a file is uploaded, the intake box is hidden and the meeting is locked to that asset whether processing later succeeds or fails. Processing remains available for an uploaded asset and retryable after a failed job. These controls are UI affordances only; backend state validation remains authoritative and returns `409 Conflict` for stale or direct requests that try to upload another file.
+`recordingStorage.ts` persists session metadata and ordered chunk `ArrayBuffer` values in browser IndexedDB under the authenticated owner and meeting identity. Stop flushes the last chunk, rebuilds a `File`, repairs missing WebM duration metadata using the measured recording duration, and uploads it to the captured meeting rather than the mutable UI selection. Successful authoritative upload or explicit Discard removes local data. Permission, storage, finalization, and upload failures remain visible; a saved recording can be retried, downloaded, or discarded. Reload recovery is best effort: a session interrupted during active recording is marked partial and can lose the last chunk that the browser had not emitted. IndexedDB is local to that browser and does not provide cross-device durability.
+
+`MeetingActionPanel` follows the one-analysis-per-meeting rule. Upload and recording are shown only while the selected meeting is `DRAFT` and has no asset. During permission, recording, finalization, upload, failure recovery, or partial recovery, Upload remains visible but disabled; only the owner meeting may show Stop. Meeting creation/selection, rename, delete, process, refresh, and competing upload handlers are locked in both presentation and orchestration layers. URL-backed selection restores the owner meeting when history requests another meeting, and full-page unload receives a browser warning. Once a file is uploaded, intake controls are hidden and the meeting is locked to that asset whether processing later succeeds or fails. Backend validation remains authoritative and returns `409 Conflict` for stale or direct requests.
+
+Meeting processing failures are localized at the feature boundary. The meeting DTO retains the backend's safe English `failureReason` for diagnostics but `MeetingsScreen` never renders it directly; it maps the stable `failureCode` to Vietnamese presentation text. `NO_RECOGNIZABLE_SPEECH` explains that no clear speech was detected while keeping playback/download available, and unknown or generic failures use a non-technical Vietnamese fallback. Admin operational-log screens continue to render the backend's English technical events unchanged.
 
 The process action treats both `QUEUED` and `PROCESSING` meetings as actively processing: the button displays `Processing` and is disabled, while rename and delete remain locked until processing completes. The workspace reuses `EmptyState` for meeting lifecycle feedback: draft meetings ask for an audio file, uploaded meetings prompt the user to press `Process`, upload requests show a determinate `MeetingProgressBar`, queued/processing meetings show an indeterminate progress bar, and failed meetings show a retry message. Ready meetings continue to render the chat panel.
 
@@ -250,7 +275,9 @@ Meeting chat calls are handled through the same feature boundary:
 MeetingChatPanel -> useMeetingWorkspace -> meetingApi/chatStreamApi -> /api/meetings/{meetingId}/chat
 ```
 
-Chat request building and response/history mapping live in `meetingDtos.ts`. REST chat calls remain in `meetingApi.ts`, while SSE parsing and stream-event typing live in `chatStreamApi.ts`. The frontend keeps only lightweight UI state: current question text, temporary optimistic messages while an answer is pending, and the message list returned by the backend. It does not create, store, or send a chat-session ID. When a question is submitted, `useMeetingWorkspace` immediately adds the user bubble and a local assistant `Đang chờ xử lý...` bubble. `useMeetingChatWatch` consumes the legacy status/search/observation/synthesis events plus Phase 26 `agent_plan`, `agent_verify`, and `agent_replan` events. It renders sanitized Vietnamese status text and replaces local optimistic state with persisted chat history from `GET /api/meetings/{meetingId}/chat`. Unknown or missing optional event fields remain safe, and a failed stream recovers through history polling.
+Chat request building and response/history mapping live in `meetingDtos.ts`. Each new chat request includes the browser's `navigator.language`; the backend uses it as the output locale and falls back to its deployment default for clients that omit it. REST chat calls remain in `meetingApi.ts`; `chatStreamApi.ts` owns the connection and `chatStreamDtos.ts` runtime-validates lifecycle/status/token/done/control/error/connected events. The frontend keeps only lightweight UI state: current question text, temporary optimistic messages, the bounded `pipelineTrace v1`, and backend-returned messages. It does not create, store, or send a chat-session ID. Unknown or malformed events are dropped, and a failed stream recovers through history polling.
+
+The accepted chat response supplies a durable `turnId`. `useMeetingChatWatch` passes it to the SSE URL and ignores nonmatching progress/terminal events, then replaces the optimistic assistant message immediately from the terminal persisted payload. The backend replays the most recent durable stage on connection, so the optimistic `queued` label is replaced even when the initial Pub/Sub event occurred before the stream opened. A terminal SSE `error` is rendered immediately; history polling remains a fallback for network interruption. While a turn is pending, each SSE pipeline-stage update builds a temporary `pipelineTrace` with completed prior stages and one `in_progress` current stage; the persisted trace with real durations/details replaces it at completion. The owner-facing viewer is labeled `Steps (n)` and uses the same message-card scroll behavior as the Citations badge when opened.
 
 ### Resilience Hooks and States
 
@@ -261,11 +288,11 @@ Chat request building and response/history mapping live in `meetingDtos.ts`. RES
 - `useAuthSession.refreshAccount()` distinguishes transient network errors from real auth failures: network errors keep the session token; only server 401 removes it.
 - Meeting API functions (`listMeetings`, `getMeeting`, etc.) accept an optional `AbortSignal` for request cancellation.
 
-Assistant messages display the backend evidence state and citation-level evidence. After streaming completes, unique verified citations are shown under a `Citations (n)` badge. Each citation displays its quote, processed JSON section pointer, source label, and transcript time range when available. Transcript citations expose a playback action that opens the playback drawer, seeks to `startMs`, and focuses the matching transcript segment when `segmentIds` are available. Structured sources such as facts, events, participants, relationships, topics, meeting metadata, quality warnings, and extraction warnings remain readable without a playback action when no transcript location exists. Legacy persisted citation records are normalized by the DTO mapper. Unsupported answers are shown as normal assistant messages with the backend `not_enough_evidence` state rather than optimistic certainty.
+Assistant messages display the backend evidence state and citation-level evidence. `ChatFlowBadge` renders a collapsible `Flow (n)` badge beside `Citations (n)` with three views. `Summary` shows plan intent/answer shape, exact code-level tool names, result counts, per-iteration sufficiency, replans/cache state, and the final evidence/citation result. `Trace` uses the pure `chatTrace.ts` projection to retain only answer-affecting interpretation/plan fields, LLM action and decision code, exact tool calls/parameters, tool outcome counts, at most 20 unique evidence previews with citation health, evidence verification, synthesis claims, repair evidence-ref diff, claim/goal verification, final state transition, and automatically derived failure findings. `Full Raw` keeps the owner-visible JSON captured from query interpretation, executable plan, each LLM decision, exact tool parameters/results/errors, evidence verification, synthesis/repair, claim verification, and goal coverage. Full Raw may contain meeting text, contact data, queries, and provider/tool details; hidden reasoning tokens and prompts remain unavailable.
 
 Transcript playback extracts entries from `transcript.segments` and now prefers `speakerLabel` while keeping `speaker` as a fallback for renderer compatibility. The frontend does not infer participant counts, events, facts, or relationships; those remain backend-owned intelligence records.
 
-For selected meetings, the hook loads `GET /api/meetings/{meetingId}/processing-status` to retrieve the latest job and latest asset, then loads `GET /api/meetings/{meetingId}/intelligence-result` when the meeting is `READY`. When the latest asset is playable audio or video, the hook fetches `GET /api/meetings/{meetingId}/assets/{assetId}/content` with the bearer token, creates a temporary browser Blob URL, and revokes it when the selected meeting or asset changes. While a meeting is `QUEUED` or `PROCESSING`, the hook polls processing status every 3 seconds. The frontend does not parse or recompute intelligence sections; it renders the JSON returned by the backend.
+For selected meetings, the hook loads `GET /api/meetings/{meetingId}/processing-status` to retrieve the latest job and latest asset, then loads `GET /api/meetings/{meetingId}/intelligence-result` when the meeting is `READY`. Playable asset loading has explicit idle/loading/ready/error state. The authenticated content request is aborted when stale, its temporary Blob URL is revoked when meeting or asset identity changes, drawers close on selection changes, and the player stays disabled until media metadata or decoded Web Audio duration is available. Decoded duration keeps total time, waveform progress, and seeking usable for older MediaRecorder WebM assets whose container reports no finite duration. A missing or mismatched asset renders a safe empty/error state instead of asserting a non-null value. While a meeting is `QUEUED` or `PROCESSING`, the hook polls processing status every 3 seconds. The frontend does not parse or recompute intelligence sections; it renders the JSON returned by the backend.
 
 Meeting deletion is exposed in `MeetingActionPanel` for authenticated `User` and `Admin` accounts. It asks for in-app confirmation before calling owner-scoped `DELETE /api/meetings/{meetingId}` through the meeting API wrapper with the current bearer token, then clears the selected meeting and reloads meeting state. The backend remains authoritative and returns `404` if a direct request targets another account's meeting.
 
@@ -317,12 +344,17 @@ Playwright verification:
 | Phase 19 no unused-import workaround scan | Passed |
 | Phase 20 frontend design token cleanup TypeScript/Vite build | Passed |
 | Phase 20 hard-coded style scan outside `tokens.css` | Passed |
+| Phase 44 frontend Vitest suite | `25` tests passed across `9` files |
+| Phase 44 TypeScript/Vite production build | Passed (`1,791` modules transformed) |
+| Phase 45 recording/playback and localized failure Vitest suite | `38` tests passed across `15` files |
+| Phase 45 TypeScript/Vite production build | Passed (`1,794` modules transformed) |
+| Phase 45 WebM duration repair follow-up | `37` tests across `15` files; build passed with `1,823` modules; reported asset repaired from `Duration: N/A` to `1.333000s` |
 
 Earlier phase screenshots were generated under ignored `tmp/screenshots/`.
 
 Playwright screenshot re-verification was attempted on 2026-06-17, but the local Playwright package could not install Chromium because the current environment reports `ubuntu26.04-x64`, which Playwright did not support for that browser build. The verified fallback for the Phase 20 design-token cleanup pass is TypeScript/Vite build, static source review, and frontend style scans.
 
-## Agentic RAG Frontend (Phase 26)
+## Historical Agentic RAG Frontend (Removed In Phase 47)
 
 ### New SSE Events
 
@@ -330,55 +362,71 @@ The frontend now handles additional SSE events for the Agentic RAG agent loop:
 
 | Event | Type | Description |
 |-------|------|-------------|
-| `agent_think` | `{ type, iteration, message }` | Shows agent iteration progress |
-| `agent_plan` | `{ type, iteration, intent, sections }` | Shows sanitized retrieval plan status |
+| `agent_think` | `{ type, iteration }` | Shows agent iteration progress |
+| `agent_plan` | `{ type, iteration, intent, answerShape }` | Shows sanitized retrieval intent/answer-shape status |
 | `agent_search` | `{ type, iteration, tools, message }` | Shows tools being called |
-| `observation` | `{ type, iteration, tool_results, total_chunks }` | Shows chunks found |
-| `agent_verify` | `{ type, iteration, sufficient, missingFields }` | Shows evidence sufficiency |
-| `agent_replan` | `{ type, iteration, replanCount, missingFields }` | Shows bounded evidence replan |
-| `agent_synthesize` | `{ type, message }` | Shows final-answer generation status |
+| `observation` | `{ type, iteration, resultCount, successCount, failureCount }` | Shows sanitized retrieval counts |
+| `agent_verify` | `{ type, iteration, sufficient }` | Shows evidence sufficiency |
+| `agent_replan` | `{ type, iteration, replanCount }` | Shows bounded evidence replan |
+| `agent_synthesize` | `{ type, iteration?, forced?, message? }` | Shows final-answer generation status |
 | `fast_path` | `{ type, intent, message }` | Shows immediate response |
+| `clarification` / `clarification_needed` | `{ type, message, assistantMessage? }` | Ends the turn with the persisted clarification bubble |
 | `connected` | `{ type: "connected", status: "connected" }` | Initial stream handshake |
 
-### Agent Metadata
+### Public chat metadata
 
-Chat messages now include optional `agentMetadata`:
+`meetingDtos.ts` maps only the backend's user-visible metadata allowlist:
 
 ```typescript
-interface MeetingChatMessage {
-  // ... existing fields
-  agentMetadata?: {
-    iterations?: number;      // Number of agent iterations used
-    replans?: number;          // Number of evidence replans used
-    toolCalls?: string[];     // Tools called during processing
-    agentThoughts?: string[]; // Agent reasoning messages
-    intent?: string;           // Sanitized plan intent
-    sections?: string[];       // Planned JSON sections
-    missingFields?: string[];  // Fields still missing during verification
-    evidenceCount?: number;    // Accumulated evidence count
+type MeetingChatMessageMetadata = {
+  evidenceState?: ChatEvidenceState;
+  confidence?: number;
+  cache?: { hit: boolean; mode?: "exact" | "semantic" };
+  conversationContextTurns?: number;
+  conversationContextUsed?: boolean;
+  conversationContextTruncated?: boolean;
+  dependencyMode?: "standalone" | "resolved" | "ambiguous";
+  feedbackEligible?: boolean;
+  clarificationNeeded?: boolean;
+  agentIterations?: number;
+  agentReplans?: number;
+  agentToolNames?: string[];
+  agentFlow?: {
+    version: 1;
+    steps: Array<{
+      iteration: number;
+      tools: string[];
+      resultCount?: number;
+      successCount?: number;
+      failureCount?: number;
+      sufficient?: boolean;
+    }>;
   };
-}
+  agentRawFlow?: ChatAgentRawFlow;
+  intent?: string;
+  answerShape?: string;
+};
 ```
 
-Agent SSE handling is defensive: `agent_search`, `observation`, and `agent_synthesize` events may arrive with only structured fields such as `tools`, `resultCount`, or `forced`, so `useMeetingWorkspace` derives a safe Vietnamese status message instead of assigning `undefined` into chat message content. The backend stream handshake also sends a typed JSON payload (`type: "connected"`), while the markdown/typewriter renderer treats missing message content as an empty string so one malformed transient streaming message cannot crash the chat thread.
+Unknown metadata is discarded during runtime mapping. `agentFlow` remains a versioned summary capped at eight iterations. `agentRawFlow` is a separate versioned owner-visible contract whose nested values are runtime-validated as JSON while preserving provider field names and tool identifiers exactly. It contains raw returned payloads and tool execution data by explicit product choice, so it is not a redaction or security boundary. Legacy `agentThoughts`, prompts, memory IDs, token details, Redis keys, and hidden model reasoning remain outside browser state.
+
+Agent SSE handling is defensive: every decoded object passes through a discriminated runtime parser before dispatch, and `useMeetingChatWatch` applies the tool allowlist again before writing progress metadata. `agent_search`, `observation`, and `agent_synthesize` events may arrive with only structured fields such as `tools`, `resultCount`, or `forced`, so the watcher derives a safe Vietnamese status message instead of assigning `undefined` into chat message content. Terminal events prefer their already-sanitized persisted `assistantMessage`; polling/history recovery remains authoritative after malformed or lost stream events. The markdown/typewriter renderer treats missing transient content as an empty string so one malformed event cannot crash the thread.
 
 ### UI Components
 
 | Component | Feature |
 |-----------|---------|
-| `ChatMessageBubble` | Shows fast path badge for immediate responses |
-| `ChatMessageBubble` | Shows agent iteration badge during processing |
-| `ChatMessageBubble` | Shows tools called section with badges |
+| `ChatMessageBubble` | Places the answer, evidence state, Flow/Citations badges, and feedback controls |
+| `ChatFlowBadge` | Switches between Summary, filtered Trace, and Full Raw views |
+| `ChatFlowTrace` | Renders traceback-focused stages, evidence citation health, repair diff, final downgrade, and failure findings |
 
 ### CSS Classes
 
 | Class | Purpose |
 |-------|---------|
-| `.fast-path-badge` | Green badge for fast path responses |
-| `.agent-iteration-badge` | Blue badge showing iteration count |
-| `.agent-tools` | Container for tool badges |
+| `.chat-message__insights` | Keeps Flow and Citations badges adjacent and responsive |
+| `.flow__panel` / `.flow__row` | Collapsible execution timeline and individual stages |
 | `.agent-tool-badge` | Individual tool badges |
-| `.chat-message--fast-path` | Left border highlight for fast path |
 
 ## Typewriter Expansion (Phase 17)
 
@@ -432,4 +480,14 @@ All evidence states display a badge with appropriate styling:
 
 The meeting result panel renders `meeting-intelligence-result.v2` as generic JSON sections, including `knowledge.records` and `evidence.items`, without flattening subtype records into hardcoded top-level UI sections. A `KnowledgeRecord` carries canonical type, subtype, payload, evidence references, source references, and derivation metadata; playback remains available only through chat citations that contain transcript location data.
 
-*Document reflects project state during **Phase 36 Frontend V2 Intelligence Rendering**. Frontend source follows feature-layer boundaries and renders generic v2 records with transcript/playback seeking while backend remains the evidence source of truth.*
+Meeting feedback follows the feature layers: `meetingApi.ts` sends the owner-scoped revisioned request, `meetingDtos.ts` validates/maps the response, `useChatFeedback` owns optimistic orchestration and rollback, `chatState.ts` owns eligibility/toggle transitions, and `ChatMessageBubble` renders the controls. Feedback is shown only for persisted terminal assistant answers whose backend metadata marks an eligible evidence state; local, pending, streaming, blocked, error, fast-path, and clarification messages do not expose the buttons.
+
+Each message has an independent pending set. While its request is in flight both buttons are disabled and the group exposes `aria-busy`; `aria-pressed` reflects the selected rating. Clicking an unselected button sends `up` or `down`; clicking the selected button sends `neutral`. The UI applies an optimistic message-local state, accepts the server response as authoritative, and rolls back on error. The response DTO preserves backend lifecycle values such as `source_retained`, `promoted`, and `semantic_mapping_quarantined` instead of collapsing them to an unknown state. Request versions and meeting/token scope versions prevent a late mutation response from overwriting newer state. All chat-history replacement paths use a deterministic merge: a stale GET cannot overwrite pending feedback or a higher `feedbackRevision`, while a genuinely newer server revision wins. Chat history maps top-level `feedback_rating`/`feedback_revision`, so refresh preserves `up`/`down` and renders persisted neutral as no selected button.
+
+Only one question may be active for a meeting. On backend `409 chat_busy`, the workspace restores the submitted text unless the user has already typed a newer draft, refreshes persisted history, continues watching the in-flight turn, and sends the backend-safe message to the global toast surface. Feedback rollback errors use the same surface. `ToastProvider` is mounted once around the authenticated App Shell, while `ToastViewport` renders a single fixed toast at the top center of the UI across meeting and admin routes. Success notices auto-dismiss after four seconds and errors remain until explicitly dismissed or replaced; both variants expose an accessible close control.
+
+Meeting operations publish their terminal result directly to this shared surface, so create and delete notices survive meeting selection/route changes and stopping a recording remains visible while its upload starts. The meeting Refresh button performs one authoritative refresh path. It uses the meeting state returned by that request: a `READY` meeting whose result and chat history were rehydrated emits `Chat refreshed.`, while non-chat states emit `Status refreshed.`. It does not launch a second competing chat-history request. Synchronous and SSE/polling clarification results render only as persisted assistant chat bubbles inside the polite live chat thread; they do not duplicate the same conversational content in a toast.
+
+Admin hooks do not announce initial loads, polling, or background refreshes. The explicit Refresh buttons on Metrics, Accounts, Logs, and Meeting Log Detail opt into a global success/error toast; existing non-refresh admin mutations keep their own feature-local state and do not publish to the shared toast surface.
+
+*Document reflects project state during **Phase 47 Query Graph Discourse and Evidence Branch Architecture (In Progress)**. Frontend recording recovery remains owner/meeting-scoped, while admin operational logs render backend-owned typed executor provenance and PostgreSQL-hydrated chat traceback.*

@@ -4,12 +4,14 @@ import time
 
 from sqlalchemy.orm import Session
 
+from backend.configs.settings import Settings, get_settings
 from backend.models.meeting_models import MeetingIntelligenceResult
 from backend.providers.embedding_provider import TextEmbeddingProvider, get_embedding_provider
 from backend.providers.vector_provider import VectorProvider, VectorProviderError, get_vector_provider
 from backend.repositories.meeting_repository import MeetingIntelligenceResultRepository
 from backend.repositories.retrieval_repository import MeetingChunkRepository
 from backend.services.retrieval.chunk_builder import build_retrieval_chunks, elapsed_ms
+from backend.services.simple_rag.contracts import RETRIEVAL_CONTRACT_VERSION
 
 
 
@@ -19,8 +21,10 @@ class RetrievalIndexService:
         session: Session,
         embedding_provider: TextEmbeddingProvider | None = None,
         vector_provider: VectorProvider | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.session = session
+        self.settings = settings or get_settings()
         self.results = MeetingIntelligenceResultRepository(session)
         self.chunks = MeetingChunkRepository(session)
         self.embedding_provider = embedding_provider or get_embedding_provider()
@@ -67,7 +71,23 @@ class RetrievalIndexService:
             "vectorProvider": self.vector_provider.provider_name,
             "vectorDurationMs": vector_duration_ms,
             "vector": self.last_vector_metadata,
+            "indexGeneration": generation,
+            "retrievalContract": RETRIEVAL_CONTRACT_VERSION,
         }
+        embedding_identity = _embedding_identity(self.embedding_provider, records)
+        self.chunks.upsert_snapshot(
+            meeting_id=result.meeting_id,
+            intelligence_result_id=result.id,
+            index_generation=generation,
+            embedding_identity=embedding_identity,
+            retrieval_contract=RETRIEVAL_CONTRACT_VERSION,
+            chunk_count=len(records),
+            error=(
+                "vector_repair_pending"
+                if self.last_vector_metadata.get("status") == "failed"
+                else None
+            ),
+        )
         return [
             {
                 "id": record.id,

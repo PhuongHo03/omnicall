@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useFormattedTypewriter } from "../hooks/useFormattedTypewriter";
-import type { MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
+import { isFeedbackEligibleMessage, toggledFeedbackSelection } from "../states/chatState";
+import type { ChatFeedbackSelection, MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
 import { formatCitationKind, formatRange, formatSectionType } from "../utils/citationFormatters";
+import { PipelineTraceViewer } from "./PipelineTraceViewer";
 
 type ChatMessageBubbleProps = {
   enableTypewriter: boolean;
@@ -11,6 +14,8 @@ type ChatMessageBubbleProps = {
   onTypewriterComplete: (id: string) => void;
   threadRef: React.RefObject<HTMLDivElement | null>;
   onCitationClick: (citation: MeetingChatCitation) => void;
+  onFeedback: (messageId: string, rating: ChatFeedbackSelection) => void;
+  feedbackPending: boolean;
 };
 
 export function ChatMessageBubble({
@@ -19,12 +24,16 @@ export function ChatMessageBubble({
   onTypewriterComplete,
   threadRef,
   onCitationClick,
+  onFeedback,
+  feedbackPending,
 }: ChatMessageBubbleProps) {
+  const [openInsight, setOpenInsight] = useState<"flow" | "citations" | null>(null);
   const evidenceState = typeof message.metadata.evidenceState === "string" ? message.metadata.evidenceState : null;
   const isStreaming = message.metadata.streaming === true;
   const isTyping = message.metadata.pending === true && !isStreaming;
-  const agentMetadata = message.agentMetadata;
   const content = typeof message.content === "string" ? message.content : "";
+  const feedbackRating = message.feedbackRating;
+  const feedbackEligible = isFeedbackEligibleMessage(message);
 
   const { displayed, visibleHtml, isAnimating } = useFormattedTypewriter(
     content,
@@ -50,14 +59,6 @@ export function ChatMessageBubble({
         <strong>{message.role === "assistant" ? "Assistant" : "You"}</strong>
         {evidenceState ? <span className={`evidence-badge evidence-badge--${evidenceState}`}>{evidenceState}</span> : null}
       </div>
-      {agentMetadata?.toolCalls && agentMetadata.toolCalls.length > 0 ? (
-        <div className="agent-tools">
-          <span className="agent-tools__label">Tools:</span>
-          {agentMetadata.toolCalls.map((tool, index) => (
-            <span key={index} className="agent-tool-badge">{tool}</span>
-          ))}
-        </div>
-      ) : null}
       {isTyping ? (
         <p>{content}<span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></p>
       ) : isAnimating ? (
@@ -65,15 +66,65 @@ export function ChatMessageBubble({
       ) : (
         <div className="chat-message__body" dangerouslySetInnerHTML={{ __html: displayed }} />
       )}
-      {message.citations.length > 0 ? (
-        <CitationsBadge citations={message.citations} messageId={message.id} onCitationClick={onCitationClick} />
+      {message.role === "assistant" ? (
+        <div className="chat-message__insights">
+          <PipelineTraceViewer
+            isOpen={openInsight === "flow"}
+            message={message}
+            onToggle={() => setOpenInsight((current) => current === "flow" ? null : "flow")}
+          />
+          {message.citations.length > 0 ? (
+            <CitationsBadge
+              citations={message.citations}
+              isOpen={openInsight === "citations"}
+              messageId={message.id}
+              onCitationClick={onCitationClick}
+              onToggle={() => setOpenInsight((current) => current === "citations" ? null : "citations")}
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {feedbackEligible ? (
+        <div className="chat-feedback" aria-label="Answer feedback" aria-busy={feedbackPending}>
+          <button
+            type="button"
+            className={feedbackRating === "up" ? "chat-feedback__button chat-feedback__button--selected" : "chat-feedback__button"}
+            onClick={() => onFeedback(message.id, toggledFeedbackSelection(feedbackRating, "up"))}
+            aria-label={feedbackRating === "up" ? "Remove helpful feedback" : "Helpful answer"}
+            aria-pressed={feedbackRating === "up"}
+            disabled={feedbackPending}
+          >
+            <ThumbsUp size={14} />
+          </button>
+          <button
+            type="button"
+            className={feedbackRating === "down" ? "chat-feedback__button chat-feedback__button--selected" : "chat-feedback__button"}
+            onClick={() => onFeedback(message.id, toggledFeedbackSelection(feedbackRating, "down"))}
+            aria-label={feedbackRating === "down" ? "Remove unhelpful feedback" : "Unhelpful answer"}
+            aria-pressed={feedbackRating === "down"}
+            disabled={feedbackPending}
+          >
+            <ThumbsDown size={14} />
+          </button>
+        </div>
       ) : null}
     </article>
   );
 }
 
-function CitationsBadge({ citations, messageId, onCitationClick }: { citations: MeetingChatCitation[]; messageId: string; onCitationClick: (citation: MeetingChatCitation) => void }) {
-  const [isOpen, setIsOpen] = useState(false);
+function CitationsBadge({
+  citations,
+  isOpen,
+  messageId,
+  onCitationClick,
+  onToggle,
+}: {
+  citations: MeetingChatCitation[];
+  isOpen: boolean;
+  messageId: string;
+  onCitationClick: (citation: MeetingChatCitation) => void;
+  onToggle: () => void;
+}) {
   const sourcesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -85,7 +136,7 @@ function CitationsBadge({ citations, messageId, onCitationClick }: { citations: 
 
   return (
     <div className="sources" ref={sourcesRef}>
-      <button className="sources__badge" type="button" onClick={() => setIsOpen(!isOpen)}>
+      <button aria-expanded={isOpen} className="sources__badge" type="button" onClick={onToggle}>
         <span>Citations ({citations.length})</span>
         <span className={"sources__chevron" + (isOpen ? " sources__chevron--open" : "")}>&#9662;</span>
       </button>

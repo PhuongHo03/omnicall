@@ -12,6 +12,7 @@ import type { Account } from "../features/auth/types/authTypes";
 import { MeetingsScreen } from "../features/meetings/screens/MeetingsScreen";
 import { AppShell } from "../shared/layouts/AppShell";
 import { SidebarProvider } from "../shared/layouts/SidebarContext";
+import { ToastProvider } from "../shared/layouts/ToastContext";
 import { IconButton } from "../shared/components/IconButton";
 
 type AuthState = ReturnType<typeof useAuthSession>;
@@ -81,9 +82,13 @@ function AuthenticatedLayout({ auth }: { auth: AuthState }) {
     return <Navigate to="/auth" replace />;
   }
   return (
-    <SidebarProvider><AppShell account={auth.account} onLogout={auth.logout}>
-      <Outlet />
-    </AppShell></SidebarProvider>
+    <ToastProvider>
+      <SidebarProvider>
+        <AppShell account={auth.account} onLogout={auth.logout}>
+          <Outlet />
+        </AppShell>
+      </SidebarProvider>
+    </ToastProvider>
   );
 }
 
@@ -108,6 +113,7 @@ function MeetingsRoute({ auth }: { auth: AuthState }) {
   }
   return (
     <MeetingsScreen
+      userId={auth.account.userId}
       token={auth.token}
       requestedMeetingId={meetingId ?? null}
       onSelectedMeetingChange={handleSelectedMeetingChange}

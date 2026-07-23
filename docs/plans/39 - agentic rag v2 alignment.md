@@ -1,6 +1,6 @@
 # Phase 39 - Agentic RAG v2 alignment
 
-## Status: In Progress
+## Status: Done
 
 ## Objectives
 
@@ -39,19 +39,20 @@ This phase also makes `knowledge.records` the only intelligence collection: tran
 - [x] `git diff --check`
 - [x] Run the Agentic RAG backend test suite in the backend test environment (`131 tests OK`).
 - [x] Validate v2 record/evidence metadata paths with generalized evidence fixtures and source compilation.
-- [x] Run `python -m backend.scripts.verify_v2_cutover` (`4 meetings, 3 processable v2 results, 196 chunks, 0 orphan chunks, 0 failures`).
-- [ ] Reprocess existing local meetings with the migrated reducer and verify their persisted JSON has no top-level `speakers`.
+- [x] Run `python -m backend.scripts.verify_v2_cutover` (`1 meeting, 1 processable v2 result, 100 chunks, 1 identity relationship, 0 orphan chunks, 0 failures`).
+- [x] Reprocess existing local meetings with the migrated reducer and verify their persisted JSON has no top-level `speakers`.
 - [x] Scan and remove all active v1 provider constants and v1 fixtures after candidate-contract migration.
 
 ## Completion Report
 
-> **Completed at:** 2026-07-14
-> **Verified by:** full backend unittest discovery (`all tests OK`), v2 cutover verifier, compileall, diff check, and frontend build
-> **Verified by:** backend Agentic RAG unittest discovery, frontend production build, Python compileall, and git diff check
+> **Completed at:** 2026-07-15
+> **Verified by:** backend unittest discovery, v2 cutover verifier, persisted JSON audit, frontend production build, Python compileall, and git diff check
 
 ### Notes
 
 The v2 contract remains authoritative. Existing section names are retained only where the persisted v2 document has a top-level projection that is not a knowledge record.
+
+The final runtime audit reports `meetings=1`, `processable=1`, `v2Results=1`, `chunks=100`, `identityRelationships=1`, `orphanChunks=[]`, and `failures=[]`. The persisted result has no top-level `speakers`; speaker profiles and counts are canonical records.
 
 ### Related docs updated
 

@@ -18,6 +18,7 @@ from backend.providers.storage_provider import ObjectStorageProvider, get_object
 from backend.repositories.auth_repository import AuditEventRepository
 from backend.services.admin_account_service import AdminAccountService
 from backend.services.admin_metrics_service import AdminMetricsService, get_admin_metrics_service
+from backend.services.admin_operational_log_service import AdminOperationalLogService
 from backend.services.operational_log_service import OperationalLogService, get_operational_log_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -29,6 +30,13 @@ def get_admin_account_service(
     operational_logs: OperationalLogService = Depends(get_operational_log_service),
 ) -> AdminAccountService:
     return AdminAccountService(session, storage_provider, operational_logs=operational_logs)
+
+
+def get_admin_operational_log_service(
+    session: Session = Depends(get_db_session),
+    operational_logs: OperationalLogService = Depends(get_operational_log_service),
+) -> AdminOperationalLogService:
+    return AdminOperationalLogService(session, operational_logs)
 
 
 @router.get("/metrics", response_model=AdminMetricsResponse)
@@ -91,7 +99,7 @@ def read_operational_logs(
     search: str | None = Query(default=None, max_length=200),
     meeting_id: str | None = Query(default=None, max_length=200),
     _: CurrentUserContext = Depends(require_admin_context),
-    service: OperationalLogService = Depends(get_operational_log_service),
+    service: AdminOperationalLogService = Depends(get_admin_operational_log_service),
 ) -> AdminOperationalLogListResponse:
     settings = get_settings()
     return AdminOperationalLogListResponse(

@@ -1,6 +1,4 @@
 import re
-import time
-from collections.abc import Iterable
 
 from backend.providers.embedding_provider import TextEmbeddingProvider
 from backend.services.retrieval.section_registry import SECTION_TYPE_SET
@@ -8,8 +6,8 @@ from backend.services.retrieval.chunk_text import (
     citation_ids as _citation_ids,
     citations_by_id as _citations_by_id,
     elapsed_ms,
-    format_ms as _format_ms,
     is_signal_text as _is_signal_text,
+    is_transcript_signal_text as _is_transcript_signal_text,
     labelize as _labelize,
     metadata_text as _metadata_text,
     record_id as _record_id,
@@ -22,6 +20,7 @@ from backend.services.retrieval.chunk_text import (
 SECTION_PRIORITY = {
     "meeting.metadata": 5,
     "source.processing": 10,
+    "speaker.stats": 15,
     "fact.participant_count": 20,
     "fact.record": 30,
     "participant.overview": 35,
@@ -57,13 +56,12 @@ def build_retrieval_chunks(result_json: dict, embedding_provider: TextEmbeddingP
     citations_by_id = _citations_by_id(result_json)
     chunks: list[dict] = []
     chunks.extend(_metadata_chunks(result_json, citations_by_id, embedding_provider))
+    chunks.extend(_speaker_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_participant_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_record_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_topic_chunks(result_json, citations_by_id, embedding_provider))
     chunks.extend(_summary_chunks(result_json, citations_by_id, embedding_provider))
-    chunks.extend(_quality_chunks(result_json, citations_by_id, embedding_provider))
-    chunks.extend(_evidence_chunks(result_json, citations_by_id, embedding_provider))
-    chunks.extend(_transcript_window_chunks(result_json, embedding_provider))
+    chunks.extend(_transcript_window_chunks(result_json, citations_by_id, embedding_provider))
     _attach_embeddings(chunks, embedding_provider)
     unknown_sections = {chunk.get("sectionType") for chunk in chunks} - SECTION_TYPE_SET
     if unknown_sections:
@@ -77,13 +75,14 @@ def _canonical_record_view(result_json: dict) -> dict:
     if not isinstance(knowledge, dict):
         raise ValueError("JSON v2 knowledge section is required for retrieval indexing.")
     view = dict(result_json)
-    sections = {section: [] for section in ("participants", "entities", "facts", "events", "topics", "actions", "decisions", "risks", "questions", "observations")}
+    sections = {section: [] for section in ("participants", "entities", "facts", "events", "topics", "relationships", "actions", "decisions", "risks", "questions", "observations")}
     record_sections = {
         "participant": "participants",
         "entity": "entities",
         "fact": "facts",
         "event": "events",
         "topic": "topics",
+        "relationship": "relationships",
         "action": "actions",
         "decision": "decisions",
         "risk": "risks",
@@ -108,7 +107,10 @@ def _canonical_record_view(result_json: dict) -> dict:
         item["confidence"] = record.get("confidence", item.get("confidence", 0.5))
         sections[section].append(item)
     view.update(sections)
-    view["relationships"] = list(knowledge.get("relationships", []))
+    sections["relationships"].extend(
+        item for item in knowledge.get("relationships", []) if isinstance(item, dict)
+    )
+    view["relationships"] = sections["relationships"]
     summaries = dict(view.get("summaries", {}))
     if "topics" in summaries and "topicLevel" not in summaries:
         summaries["topicLevel"] = summaries.pop("topics")
@@ -176,44 +178,6 @@ def _metadata_chunks(result_json: dict, citations_by_id: dict, embedding_provide
                     title="Meeting metadata",
                 )
             )
-    source = result_json.get("source", {})
-    if isinstance(source, dict):
-        text = _metadata_text(source, heading="Processing source")
-        if text:
-            chunks.append(
-                _chunk(
-                    chunk_id="source-processing",
-                    source_type="metadata",
-                    section_type="source.processing",
-                    source_id="source-processing",
-                    json_pointer="/source",
-                    text=text,
-                    citation_ids=[_json_citation_id("source-processing")],
-                    citations_by_id=citations_by_id,
-                    embedding_provider=embedding_provider,
-                    priority=SECTION_PRIORITY["source.processing"],
-                    title="Processing source",
-                )
-            )
-    coverage = result_json.get("transcript", {}).get("coverage", {})
-    if isinstance(coverage, dict):
-        text = _metadata_text(coverage, heading="Transcript coverage")
-        if text:
-            chunks.append(
-                _chunk(
-                    chunk_id="transcript-coverage",
-                    source_type="metadata",
-                    section_type="transcript.coverage",
-                    source_id="transcript-coverage",
-                    json_pointer="/transcript/coverage",
-                    text=text,
-                    citation_ids=[_json_citation_id("transcript-coverage")],
-                    citations_by_id=citations_by_id,
-                    embedding_provider=embedding_provider,
-                    priority=SECTION_PRIORITY["transcript.coverage"],
-                    title="Transcript coverage",
-                )
-            )
     return chunks
 
 
@@ -222,11 +186,75 @@ def _participant_chunks(result_json: dict, citations_by_id: dict, embedding_prov
     if not participants:
         return []
     chunks = []
+    explicit_attendees = [item for item in participants if item.get("isAttendee") is True]
+    speaker_profiles = [
+        item
+        for item in participants
+        if str(item.get("subtype") or item.get("type") or "").casefold()
+        == "speaker_profile"
+    ]
+    speakers = result_json.get("speakers")
+    speaker_count = (
+        speakers.get("speakerCount")
+        if isinstance(speakers, dict)
+        and isinstance(speakers.get("speakerCount"), int)
+        and not isinstance(speakers.get("speakerCount"), bool)
+        else None
+    )
+    ignored_segment_count = (
+        int(speakers.get("ignoredSegmentCount") or 0)
+        if isinstance(speakers, dict)
+        else 0
+    )
+    speaker_count_exact = bool(
+        isinstance(speakers, dict)
+        and (
+            speakers.get("speakerCountExact") is True
+            or (
+                "speakerCountExact" not in speakers
+                and ignored_segment_count == 0
+            )
+        )
+    )
+
+    # The deterministic diarization aggregate owns global speaker
+    # cardinality. Provider participant records may have incomplete attendee
+    # flags or duplicate the same people under names and Speaker N aliases;
+    # counting those flags created false 0-vs-N conflicts at verification.
+    participant_count: int | None = None
+    count_basis = "unresolved"
+    attendee_sources: list[dict] = []
+    if speaker_count is not None and speaker_count > 0 and speaker_count_exact:
+        participant_count = speaker_count
+        count_basis = "reliable_diarization_labels"
+        attendee_sources = (
+            explicit_attendees
+            if len(explicit_attendees) == speaker_count
+            else speaker_profiles
+            if len(speaker_profiles) == speaker_count
+            else []
+        )
+    elif speaker_count in (None, 0) and explicit_attendees:
+        participant_count = len(explicit_attendees)
+        count_basis = "explicit_attendee_records"
+        attendee_sources = explicit_attendees
+    elif participants and all(item.get("isMentionedOnly") is True for item in participants):
+        participant_count = 0
+        count_basis = "mentioned_only_records"
+
+    attendee_names = [
+        label
+        for index, item in enumerate(attendee_sources, start=1)
+        if (label := _record_label(item, index)) != f"Record {index}"
+    ]
     overview = {
-        "participantCount": len([item for item in participants if item.get("isAttendee")]),
         "mentionedOnlyCount": len([item for item in participants if item.get("isMentionedOnly")]),
+        "attendeeNames": attendee_names,
         "participants": [_record_label(item, index) for index, item in enumerate(participants, start=1)],
+        "countBasis": count_basis,
     }
+    if participant_count is not None:
+        overview["participantCount"] = participant_count
     chunks.append(
         _chunk(
             chunk_id="participant-overview",
@@ -240,7 +268,16 @@ def _participant_chunks(result_json: dict, citations_by_id: dict, embedding_prov
             embedding_provider=embedding_provider,
             priority=SECTION_PRIORITY["participant.overview"],
             title="Participant overview",
-            metadata={"recordType": "participant", "subtype": "overview", "recordFields": overview},
+            metadata={
+                "recordType": "participant",
+                "subtype": "overview",
+                # The overview is a deterministic, meeting-local aggregate.
+                # Giving it a stable record identity lets typed
+                # ``search_records`` retrieve the exact participant count
+                # instead of relying on semantic ranking to retain it.
+                "recordId": "participant-overview",
+                "recordFields": overview,
+            },
         )
     )
     for index, participant in enumerate(participants, start=1):
@@ -274,6 +311,32 @@ def _participant_chunks(result_json: dict, citations_by_id: dict, embedding_prov
     return chunks
 
 
+def _speaker_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
+    """Index the deterministic speaker aggregate retained by the v2 result."""
+    speakers = result_json.get("speakers")
+    if not isinstance(speakers, dict):
+        return []
+    text = _metadata_text(speakers, heading="Speaker statistics")
+    if not _is_signal_text(text, min_tokens=1):
+        return []
+    return [
+        _chunk(
+            chunk_id="speaker-stats",
+            source_type="structured",
+            section_type="speaker.stats",
+            source_id="speaker-stats",
+            json_pointer="/speakers",
+            text=text,
+            citation_ids=[_json_citation_id("speaker-stats")],
+            citations_by_id=citations_by_id,
+            embedding_provider=embedding_provider,
+            priority=SECTION_PRIORITY["speaker.stats"],
+            title="Speaker statistics",
+            metadata={"recordType": "speaker", "subtype": "statistics"},
+        )
+    ]
+
+
 def _record_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
     specs = [
         ("facts", "fact.record", "fact", "Fact"),
@@ -291,7 +354,7 @@ def _record_chunks(result_json: dict, citations_by_id: dict, embedding_provider:
         values = [item for item in result_json.get(section, []) if isinstance(item, dict)]
         for index, item in enumerate(values, start=1):
             section_type = default_section_type
-            if section == "facts" and item.get("type") == "participant_count":
+            if section == "facts" and (item.get("subtype") or item.get("type")) == "participant_count":
                 section_type = "fact.participant_count"
             text = _metadata_text(item, heading=heading)
             if not _is_signal_text(text, min_tokens=1):
@@ -334,7 +397,7 @@ def _structured_citation_ids(item: dict, result_json: dict, citations_by_id: dic
 
 
 def _overview_citation_ids(participants: list[dict], result_json: dict, citations_by_id: dict) -> list[str]:
-    ids: list[str] = []
+    ids: list[str] = [_json_record_citation_id("participant-overview")]
     for participant in participants:
         ids.extend(_structured_citation_ids(participant, result_json, citations_by_id))
     return list(dict.fromkeys(ids))
@@ -370,7 +433,14 @@ def _topic_chunks(result_json: dict, citations_by_id: dict, embedding_provider: 
                 embedding_provider=embedding_provider,
                 priority=SECTION_PRIORITY["topic.summary"],
                 title=_record_label(topic, index),
-                metadata={"recordType": "topic", "level": topic.get("level")},
+                metadata={
+                    "recordType": "topic",
+                    "subtype": topic.get("subtype") or "summary",
+                    "recordId": topic.get("id"),
+                    "recordFields": topic,
+                    "evidenceRefs": _citation_ids(topic),
+                    "level": topic.get("level"),
+                },
             )
         )
     return chunks
@@ -396,6 +466,13 @@ def _summary_chunks(result_json: dict, citations_by_id: dict, embedding_provider
                 embedding_provider=embedding_provider,
                 priority=SECTION_PRIORITY["summary.executive"],
                 title="Executive summary",
+                metadata={
+                    "evidenceEligible": bool(_citation_ids(executive)),
+                    "lineageStatus": (
+                        executive.get("lineageStatus")
+                        or ("verified" if _citation_ids(executive) else "context_only")
+                    ),
+                },
             )
         )
     for key, section_type in (("topicLevel", "summary.topic"), ("timelineLevel", "summary.timeline")):
@@ -423,103 +500,81 @@ def _summary_chunks(result_json: dict, citations_by_id: dict, embedding_provider
     return chunks
 
 
-def _quality_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
-    chunks = []
-    for section, heading, pointer in (("quality", "Quality overview", "/quality"), ("extraction", "Extraction overview", "/extraction")):
-        value = result_json.get(section, {})
-        if not isinstance(value, dict):
+def _transcript_window_chunks(
+    result_json: dict,
+    citations_by_id: dict,
+    embedding_provider: TextEmbeddingProvider,
+) -> list[dict]:
+    segments = [item for item in result_json.get("transcript", {}).get("segments", []) if isinstance(item, dict)]
+    evidence_ids_by_segment: dict[str, list[str]] = {}
+    for evidence_id, evidence in citations_by_id.items():
+        for segment_id in evidence.get("segmentIds", []):
+            if isinstance(segment_id, str):
+                evidence_ids_by_segment.setdefault(segment_id, []).append(evidence_id)
+    source_refs_by_segment: dict[str, list[str]] = {}
+    for source_window in result_json.get("transcript", {}).get("windows", []):
+        if not isinstance(source_window, dict) or not isinstance(source_window.get("id"), str):
             continue
-        overview = {key: item for key, item in value.items() if key not in {"warnings", "unsupportedClaims"}}
-        text = _metadata_text(overview, heading=heading)
-        section_type = f"{section}.overview"
-        if text:
+        for segment_id in source_window.get("segmentIds", []):
+            if isinstance(segment_id, str):
+                source_refs_by_segment.setdefault(segment_id, []).append(source_window["id"])
+    chunks = []
+    window: list[tuple[int, dict]] = []
+    for segment_index, segment in enumerate(segments):
+        text = str(segment.get("text") or "").strip()
+        if not _is_transcript_signal_text(text):
+            continue
+        window.append((segment_index, segment))
+        if len(window) >= 3:
             chunks.append(
-                _chunk(
-                    chunk_id=f"{section}-overview",
-                    source_type="metadata",
-                    section_type=section_type,
-                    source_id=f"{section}-overview",
-                    json_pointer=pointer,
-                    text=text,
-                    citation_ids=[_json_citation_id(f"{section}-overview")],
-                    citations_by_id=citations_by_id,
-                    embedding_provider=embedding_provider,
-                    priority=SECTION_PRIORITY.get(section_type, 200),
-                    title=heading,
+                _transcript_window_chunk(
+                    window,
+                    len(chunks) + 1,
+                    citations_by_id,
+                    evidence_ids_by_segment,
+                    source_refs_by_segment,
+                    embedding_provider,
                 )
             )
-        for index, warning in enumerate(_section_items(value.get("warnings", [])), start=1):
-            warning_text = _metadata_text(warning, heading=f"{heading} warning")
-            if _is_signal_text(warning_text, min_tokens=1):
-                chunks.append(
-                    _chunk(
-                        chunk_id=f"{section}-warning-{index:03d}",
-                        source_type="metadata",
-                        section_type=f"{section}.warning",
-                        source_id=f"{section}-warning-{index:03d}",
-                        json_pointer=f"{pointer}/warnings/{index - 1}",
-                        text=warning_text,
-                        citation_ids=[_json_citation_id(f"{section}-warning-{index:03d}")],
-                        citations_by_id=citations_by_id,
-                        embedding_provider=embedding_provider,
-                        priority=SECTION_PRIORITY.get(f"{section}.warning", 201),
-                        title=f"{heading} warning",
-                    )
-                )
-    return chunks
-
-
-def _evidence_chunks(result_json: dict, citations_by_id: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
-    citations = list(citations_by_id.values())
-    if not citations:
-        return []
-    starts = [item.get("startMs") for item in citations if isinstance(item.get("startMs"), int | float)]
-    ends = [item.get("endMs") for item in citations if isinstance(item.get("endMs"), int | float)]
-    text = _metadata_text(
-        {
-            "citationCount": len(citations),
-            "referencedSegmentCount": len({segment_id for citation in citations for segment_id in citation.get("segmentIds", [])}),
-            "firstEvidenceTime": _format_ms(min(starts)) if starts else None,
-            "lastEvidenceTime": _format_ms(max(ends)) if ends else None,
-        },
-        heading="Evidence map",
-    )
-    return [
-        _chunk(
-            chunk_id="evidence-map",
-            source_type="metadata",
-            section_type="evidence.map",
-            source_id="evidence-map",
-            json_pointer="/evidence/items",
-            text=text,
-            citation_ids=[],
-            citations_by_id=citations_by_id,
-            embedding_provider=embedding_provider,
-            priority=SECTION_PRIORITY["evidence.map"],
-            title="Evidence map",
-        )
-    ]
-
-
-def _transcript_window_chunks(result_json: dict, embedding_provider: TextEmbeddingProvider) -> list[dict]:
-    segments = [item for item in result_json.get("transcript", {}).get("segments", []) if isinstance(item, dict)]
-    chunks = []
-    window: list[dict] = []
-    for segment in segments:
-        text = str(segment.get("text") or "").strip()
-        if not _is_signal_text(text):
-            continue
-        window.append(segment)
-        if len(window) >= 3:
-            chunks.append(_transcript_window_chunk(window, len(chunks) + 1, embedding_provider))
             window = []
     if window:
-        chunks.append(_transcript_window_chunk(window, len(chunks) + 1, embedding_provider))
+        chunks.append(
+            _transcript_window_chunk(
+                window,
+                len(chunks) + 1,
+                citations_by_id,
+                evidence_ids_by_segment,
+                source_refs_by_segment,
+                embedding_provider,
+            )
+        )
     return chunks
 
 
-def _transcript_window_chunk(window: list[dict], index: int, embedding_provider: TextEmbeddingProvider) -> dict:
+def _transcript_window_chunk(
+    indexed_window: list[tuple[int, dict]],
+    index: int,
+    citations_by_id: dict,
+    evidence_ids_by_segment: dict[str, list[str]],
+    source_refs_by_segment: dict[str, list[str]],
+    embedding_provider: TextEmbeddingProvider,
+) -> dict:
+    window = [item for _, item in indexed_window]
     segment_ids = [item.get("id") for item in window if isinstance(item.get("id"), str)]
+    citation_ids = list(
+        dict.fromkeys(
+            evidence_id
+            for segment_id in segment_ids
+            for evidence_id in evidence_ids_by_segment.get(segment_id, [])
+        )
+    )
+    source_refs = list(
+        dict.fromkeys(
+            source_ref
+            for segment_id in segment_ids
+            for source_ref in source_refs_by_segment.get(segment_id, [])
+        )
+    )
     start_ms = min([item.get("startMs") for item in window if isinstance(item.get("startMs"), int)] or [None])
     end_ms = max([item.get("endMs") for item in window if isinstance(item.get("endMs"), int)] or [None])
     text = _metadata_text(
@@ -542,16 +597,23 @@ def _transcript_window_chunk(window: list[dict], index: int, embedding_provider:
         source_type="transcript",
         section_type="transcript.window",
         source_id=f"transcript-window-{index:03d}",
-        json_pointer=f"/transcript/segments/{max(0, index - 1)}",
+        json_pointer=f"/transcript/segments/{indexed_window[0][0]}",
         text=text,
-        citation_ids=[],
-        citations_by_id={},
+        citation_ids=citation_ids,
+        citations_by_id=citations_by_id,
         embedding_provider=embedding_provider,
         priority=SECTION_PRIORITY["transcript.window"],
         title="Transcript evidence window",
         segment_ids=segment_ids,
         start_ms=start_ms,
         end_ms=end_ms,
+        metadata={
+            "recordType": "transcript",
+            "subtype": "window",
+            "evidenceRefs": citation_ids,
+            "sourceRefs": source_refs,
+            "recordFields": {"segmentIds": segment_ids},
+        },
     )
 
 
@@ -579,8 +641,12 @@ def _chunk(
     for citation_id in citation_ids:
         citation = citations_by_id.get(citation_id, {})
         resolved_segment_ids.extend(citation.get("segmentIds", []))
-        resolved_start = citation.get("startMs", resolved_start)
-        resolved_end = citation.get("endMs", resolved_end)
+        citation_start = citation.get("startMs")
+        citation_end = citation.get("endMs")
+        if isinstance(citation_start, int | float):
+            resolved_start = citation_start if resolved_start is None else min(resolved_start, citation_start)
+        if isinstance(citation_end, int | float):
+            resolved_end = citation_end if resolved_end is None else max(resolved_end, citation_end)
     if segment_ids:
         resolved_segment_ids.extend([segment_id for segment_id in segment_ids if segment_id])
     citation_quotes = {
@@ -598,6 +664,7 @@ def _chunk(
         if citation_id in citations_by_id
     }
     chunk_metadata = dict(metadata or {})
+    chunk_metadata.setdefault("evidenceEligible", bool(citation_ids))
     if citation_quotes:
         chunk_metadata["citationQuotes"] = citation_quotes
     if citation_locations:
@@ -622,163 +689,3 @@ def _chunk(
             **chunk_metadata,
         },
     }
-
-
-def _legacy_citations_by_id(result_json: dict) -> dict[str, dict]:
-    citations = result_json.get("evidence", {}).get("citations", [])
-    if not isinstance(citations, list):
-        return {}
-    return {
-        citation["id"]: citation
-        for citation in citations
-        if isinstance(citation, dict) and isinstance(citation.get("id"), str)
-    }
-
-
-def _legacy_citation_ids(item: object) -> list[str]:
-    if not isinstance(item, dict):
-        return []
-    value = item.get("citationIds")
-    return [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
-
-
-def _legacy_record_id(item: dict, fallback: str) -> str:
-    value = item.get("id")
-    return value if isinstance(value, str) and value else fallback
-
-
-def _legacy_record_label(item: dict, index: int) -> str:
-    for key in ("title", "displayName", "name", "task", "text", "type", "id"):
-        value = item.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return f"Record {index}"
-
-
-def _legacy_section_items(value: object) -> list[object]:
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str) and value.strip():
-        return [value]
-    if isinstance(value, dict):
-        return [value]
-    return []
-
-
-def _legacy_metadata_text(value: object, *, heading: str | None = None) -> str:
-    parts: list[str] = []
-    if heading:
-        parts.append(heading)
-    parts.extend(_flatten_metadata(value))
-    return ". ".join(part for part in parts if part).strip()
-
-
-def _legacy_flatten_metadata(value: object, *, prefix: str | None = None, depth: int = 0) -> list[str]:
-    if depth > 4 or value is None:
-        return []
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return []
-        return [f"{_labelize(prefix)}: {stripped}" if prefix else stripped]
-    if isinstance(value, bool | int | float):
-        return [f"{_labelize(prefix)}: {value}" if prefix else str(value)]
-    if isinstance(value, list):
-        return _flatten_list(value, prefix=prefix, depth=depth)
-    if isinstance(value, dict):
-        flattened = []
-        for key in _ordered_keys(value):
-            if key in {"embedding"}:
-                continue
-            nested_prefix = key if prefix is None else f"{prefix} {key}"
-            flattened.extend(_flatten_metadata(value.get(key), prefix=nested_prefix, depth=depth + 1))
-        return flattened
-    return [f"{_labelize(prefix)}: {value}" if prefix else str(value)]
-
-
-def _legacy_flatten_list(value: Iterable, *, prefix: str | None, depth: int) -> list[str]:
-    flattened = []
-    scalar_values = [str(item).strip() for item in value if isinstance(item, str | bool | int | float) and str(item).strip()]
-    if scalar_values:
-        flattened.append(f"{_labelize(prefix)}: {_join_values(scalar_values)}" if prefix else _join_values(scalar_values))
-    for index, item in enumerate(value):
-        if isinstance(item, dict):
-            nested_prefix = f"{prefix} {index + 1}" if prefix else f"item {index + 1}"
-            flattened.extend(_flatten_metadata(item, prefix=nested_prefix, depth=depth + 1))
-    return flattened
-
-
-def _legacy_ordered_keys(value: dict) -> list[str]:
-    preferred = [
-        "id",
-        "type",
-        "title",
-        "displayName",
-        "normalizedName",
-        "label",
-        "speakerLabel",
-        "speakerLabels",
-        "role",
-        "organization",
-        "subject",
-        "predicate",
-        "value",
-        "unit",
-        "task",
-        "ownerParticipantId",
-        "ownerName",
-        "status",
-        "priority",
-        "dueAt",
-        "occurredAt",
-        "startMs",
-        "endMs",
-        "confidence",
-        "description",
-        "summary",
-        "text",
-        "quote",
-        "citationIds",
-        "segmentIds",
-        "participantIds",
-        "entityIds",
-        "factIds",
-        "eventIds",
-        "topicIds",
-    ]
-    keys = [key for key in preferred if key in value]
-    keys.extend(key for key in value.keys() if key not in keys)
-    return keys
-
-
-def _legacy_labelize(value: str | None) -> str:
-    if not value:
-        return ""
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value).replace("_", " ").replace("-", " ")
-
-
-def _legacy_join_values(value: object) -> str:
-    if not isinstance(value, list):
-        return str(value)
-    return ", ".join(str(item) for item in value if item is not None)
-
-
-def _legacy_format_ms(value: object) -> str:
-    if not isinstance(value, int | float) or value < 0:
-        return "unknown time"
-    total_seconds = int(value / 1000)
-    minutes = total_seconds // 60
-    seconds = total_seconds % 60
-    return f"{minutes}:{seconds:02d}"
-
-
-def _legacy_is_signal_text(text: str, *, min_tokens: int = 3) -> bool:
-    return len(_tokens(text)) >= min_tokens
-
-
-def _legacy_tokens(text: str) -> list[str]:
-    return re.findall(r"[\wÀ-ỹ]+", text, flags=re.UNICODE)
-
-
-def _legacy_elapsed_ms(started: float) -> int:
-    return int((time.perf_counter() - started) * 1000)

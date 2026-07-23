@@ -6,7 +6,11 @@ from pathlib import Path
 from backend.configs.settings import Settings
 from backend.models.meeting_models import Meeting, MeetingAsset
 from backend.providers.transcript_types import TranscriptSegment
-from backend.providers.transcription_provider import LocalTranscriptionProvider, TranscriptionProviderError
+from backend.providers.transcription_provider import (
+    LocalTranscriptionProvider,
+    NoRecognizableSpeechError,
+    TranscriptionProviderError,
+)
 from backend.providers.voice import AudioPreprocessingResult, LocalASRProvider, LocalCommandDiarizationProvider, SpeechRegion
 
 
@@ -83,6 +87,15 @@ class BrokenASRProvider:
         raise RuntimeError("asr crashed")
 
 
+class EmptyASRProvider:
+    provider_name = "empty-asr"
+    provider_model = "empty-asr-model"
+    last_detected_language = None
+
+    def transcribe_audio(self, *, audio, speech_regions) -> list[TranscriptSegment]:
+        return []
+
+
 class FakeDiarizationProvider:
     provider_name = "fake-diarization"
     provider_model = "fake-diarization-model"
@@ -140,6 +153,17 @@ class TranscriptionProviderTestCase(unittest.TestCase):
         self.assertEqual(provider.last_voice_metadata["asrProvider"], "broken-asr")
         self.assertNotEqual(provider.last_voice_metadata["sourceKind"], "audio-placeholder")
         self.assertIn("ASR error type: RuntimeError.", provider.last_voice_metadata["warnings"])
+
+    def test_empty_asr_result_is_classified_as_no_recognizable_speech(self) -> None:
+        provider = LocalTranscriptionProvider(
+            audio_preprocessor=FakeAudioPreprocessor(),
+            vad_provider=FakeVADProvider(),
+            asr_provider=EmptyASRProvider(),
+            diarization_provider=FakeDiarizationProvider(),
+        )
+
+        with self.assertRaisesRegex(NoRecognizableSpeechError, "No recognizable speech"):
+            provider.transcribe(_meeting(), _asset())
 
     def test_local_asr_command_voice_input_returns_real_transcript_not_placeholder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

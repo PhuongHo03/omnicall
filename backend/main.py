@@ -1,8 +1,11 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.configs.settings import get_settings
+from backend.configs.settings import get_settings, simple_rag_runtime_summary
 from backend.controllers.admin_controller import router as admin_router
 from backend.controllers.auth_controller import router as auth_router
 from backend.controllers.health_controller import router as health_router
@@ -19,7 +22,18 @@ from backend.utils.exceptions import ApplicationError
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.app_name)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        # Uvicorn configures logging before entering the application lifespan,
+        # so this diagnostic is visible at runtime without exposing secrets.
+        logging.getLogger("uvicorn.error").info(
+            "simple_rag.runtime_config effective=%s",
+            simple_rag_runtime_summary(settings),
+        )
+        yield
+
+    app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(MetricsMiddleware)

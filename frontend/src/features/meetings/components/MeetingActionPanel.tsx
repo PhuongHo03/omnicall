@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { IconButton } from "../../../shared/components/IconButton";
 import { IconOnlyButton } from "../../../shared/components/IconOnlyButton";
-import type { Meeting } from "../types/meetingTypes";
+import type { Meeting, RecordingPhase } from "../types/meetingTypes";
 import { StatusPill } from "./StatusPill";
 
 type MeetingActionPanelProps = {
@@ -16,12 +16,13 @@ type MeetingActionPanelProps = {
   isRefreshingStatus?: boolean;
   isUploading?: boolean;
   isRecording: boolean;
+  isOperationLocked: boolean;
+  recordingPhase: RecordingPhase;
   selectedMeeting: Meeting;
   onDeleteMeeting: () => void;
   onFileUpload: (file: File) => void;
   onProcess: () => void;
   onRefreshStatus: () => void;
-  onRefreshHistory: () => void;
   onRenameMeeting: (title: string) => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
@@ -38,11 +39,12 @@ export function MeetingActionPanel({
   isRefreshingStatus,
   isUploading,
   isRecording,
+  isOperationLocked,
+  recordingPhase,
   onFileUpload,
   onDeleteMeeting,
   onProcess,
   onRefreshStatus,
-  onRefreshHistory,
   onRenameMeeting,
   onStartRecording,
   onStopRecording,
@@ -76,7 +78,7 @@ export function MeetingActionPanel({
               autoFocus
               maxLength={240}
               value={draftTitle}
-              disabled={isUploading || Boolean(isProcessing)}
+              disabled={isUploading || Boolean(isProcessing) || isOperationLocked}
               aria-label="Meeting title"
               onChange={(event) => setDraftTitle(event.target.value)}
               onKeyDown={(event) => {
@@ -90,14 +92,14 @@ export function MeetingActionPanel({
                 }
               }}
             />
-            <IconOnlyButton icon={<Check size={16} />} disabled={!canSaveTitle || isUploading || Boolean(isProcessing)} label="Save name" onClick={() => { onRenameMeeting(draftTitle); setIsRenaming(false); }} />
-            <IconOnlyButton icon={<X size={16} />} disabled={isUploading || Boolean(isProcessing)} label="Cancel rename" onClick={() => { setIsRenaming(false); setDraftTitle(selectedMeeting.title); }} />
+            <IconOnlyButton icon={<Check size={16} />} disabled={!canSaveTitle || isUploading || Boolean(isProcessing) || isOperationLocked} label="Save name" onClick={() => { onRenameMeeting(draftTitle); setIsRenaming(false); }} />
+            <IconOnlyButton icon={<X size={16} />} disabled={isUploading || Boolean(isProcessing) || isOperationLocked} label="Cancel rename" onClick={() => { setIsRenaming(false); setDraftTitle(selectedMeeting.title); }} />
           </div>
         ) : (
           <div className="action-bar__title-row">
             <h2 className="action-bar__title">{selectedMeeting.title}</h2>
             {selectedMeeting && (
-              <IconOnlyButton icon={<Pencil size={16} />} disabled={isUploading || Boolean(isProcessing)} label="Rename meeting" onClick={() => { setDraftTitle(selectedMeeting.title); setIsRenaming(true); }} />
+              <IconOnlyButton icon={<Pencil size={16} />} disabled={isUploading || Boolean(isProcessing) || isOperationLocked} label="Rename meeting" onClick={() => { setDraftTitle(selectedMeeting.title); setIsRenaming(true); }} />
             )}
             {selectedMeeting && <StatusPill status={selectedMeeting.status} />}
           </div>
@@ -109,9 +111,9 @@ export function MeetingActionPanel({
         <div className="action-bar__right">
           {isDraft ? (
             <>
-              <IconButton icon={<Upload size={16} />} label="Upload" disabled={!canUpload} variant="primary" onClick={() => fileInputRef.current?.click()} />
+              <IconButton icon={<Upload size={16} />} label="Upload" disabled={!canUpload || isOperationLocked} title={isOperationLocked ? "Resolve the current recording or upload first" : "Upload a file"} variant="primary" onClick={() => fileInputRef.current?.click()} />
               <input ref={fileInputRef} type="file" hidden accept="audio/*,video/mp4,video/webm" onChange={(event) => { const file = event.target.files?.[0]; if (file) { onFileUpload(file); event.target.value = ""; } }} />
-              <IconButton icon={isRecording ? <Pause size={16} /> : <Mic size={16} />} label={isRecording ? "Stop" : "Record"} disabled={!canUpload && !isRecording} onClick={isRecording ? onStopRecording : onStartRecording} variant={isRecording ? "danger" : "primary"} />
+              <IconButton icon={isRecording ? <Pause size={16} /> : <Mic size={16} />} label={isRecording ? "Stop" : recordingPhase === "idle" ? "Record" : "Recording busy"} disabled={isRecording ? false : !canUpload || isOperationLocked} onClick={isRecording ? onStopRecording : onStartRecording} variant={isRecording ? "danger" : "primary"} />
             </>
           ) : canViewResult ? (
             <IconButton icon={<Braces size={16} />} label="Result" disabled={!canAct} onClick={onViewResult} variant="primary" />
@@ -119,7 +121,7 @@ export function MeetingActionPanel({
             <IconButton
               icon={isRetryAction ? <RotateCcw size={16} /> : <Play size={16} />}
               label={isProcessingLocked ? "Processing" : isRetryAction ? "Retry" : "Process"}
-              disabled={!canAct || !canProcess || isProcessingLocked || Boolean(isProcessing)}
+              disabled={!canAct || !canProcess || isProcessingLocked || Boolean(isProcessing) || isOperationLocked}
               title={
                 isProcessingLocked
                   ? "Meeting is currently being processed"
@@ -139,12 +141,12 @@ export function MeetingActionPanel({
           <IconButton
             icon={<Trash2 size={16} />}
             label="Delete"
-            disabled={!canAct || isProcessingLocked || isUploading}
+            disabled={!canAct || isProcessingLocked || isUploading || isOperationLocked}
             title={isProcessingLocked ? "Cannot delete while meeting is being processed" : "Delete"}
             onClick={() => setIsDeleteDialogOpen(true)}
             variant="danger"
           />
-          <IconButton icon={<RefreshCw size={16} />} label="Refresh" disabled={!canAct || Boolean(isRefreshingStatus)} onClick={() => { onRefreshStatus(); onRefreshHistory(); }} variant="secondary" />
+          <IconButton icon={<RefreshCw size={16} />} label="Refresh" disabled={!canAct || Boolean(isRefreshingStatus) || isOperationLocked} onClick={onRefreshStatus} variant="secondary" />
         </div>
       )}
 

@@ -77,11 +77,96 @@ class TranscriptWindowRepository:
 
     def mark_succeeded(self, window: MeetingTranscriptWindow, local_result: dict) -> None:
         window.status = "succeeded"
-        window.local_result_json = local_result
+        checkpoint = (window.local_result_json or {}).get("_checkpoint")
+        window.local_result_json = {
+            **local_result,
+            **({"_checkpoint": checkpoint} if isinstance(checkpoint, dict) else {}),
+        }
         window.completed_at = datetime.now(UTC)
         window.updated_at = datetime.now(UTC)
         window.error_message = None
         self.session.flush()
+
+    def store_transcript_checkpoints(
+        self,
+        *,
+        records: list[MeetingTranscriptWindow],
+        windows: list,
+        asset_id: str,
+        detected_language: str | None,
+        transcription_provider: str | None,
+        transcription_model: str | None,
+        voice_metadata: dict | None,
+    ) -> None:
+        for record, window in zip(records, windows, strict=True):
+            record.local_result_json = {
+                "_checkpoint": {
+                    "schemaVersion": "transcript-checkpoint.v1",
+                    "assetId": asset_id,
+                    "detectedLanguage": detected_language,
+                    "transcriptionProvider": transcription_provider,
+                    "transcriptionModel": transcription_model,
+                    "voiceMetadata": voice_metadata or {},
+                    "segments": [
+                        {
+                            "id": segment.id,
+                            "speaker": segment.speaker,
+                            "startMs": segment.start_ms,
+                            "endMs": segment.end_ms,
+                            "text": segment.text,
+                            "confidence": segment.confidence,
+                        }
+                        for segment in window.segments
+                    ],
+                }
+            }
+            record.updated_at = datetime.now(UTC)
+        self.session.flush()
+
+    def latest_transcript_checkpoint(self, *, meeting_id: str, asset_id: str) -> dict | None:
+        statement = (
+            select(MeetingTranscriptWindow)
+            .where(MeetingTranscriptWindow.meeting_id == meeting_id)
+            .order_by(MeetingTranscriptWindow.created_at.desc(), MeetingTranscriptWindow.sequence_no)
+        )
+        records = list(self.session.scalars(statement).all())
+        if not records:
+            return None
+        generation = records[0].generation
+        generation_records = sorted(
+            (record for record in records if record.generation == generation),
+            key=lambda record: record.sequence_no,
+        )
+        checkpoints = [
+            (record.local_result_json or {}).get("_checkpoint")
+            for record in generation_records
+        ]
+        if not checkpoints or any(
+            not isinstance(checkpoint, dict)
+            or checkpoint.get("schemaVersion") != "transcript-checkpoint.v1"
+            or checkpoint.get("assetId") != asset_id
+            for checkpoint in checkpoints
+        ):
+            return None
+        segments: list[dict] = []
+        seen_segment_ids: set[str] = set()
+        for checkpoint in checkpoints:
+            for segment in checkpoint.get("segments", []):
+                segment_id = segment.get("id") if isinstance(segment, dict) else None
+                if segment_id and segment_id not in seen_segment_ids:
+                    segments.append(segment)
+                    seen_segment_ids.add(segment_id)
+        if not segments:
+            return None
+        metadata = checkpoints[0]
+        return {
+            "generation": generation,
+            "segments": segments,
+            "detectedLanguage": metadata.get("detectedLanguage"),
+            "transcriptionProvider": metadata.get("transcriptionProvider"),
+            "transcriptionModel": metadata.get("transcriptionModel"),
+            "voiceMetadata": metadata.get("voiceMetadata") or {},
+        }
 
     def mark_failed(self, window: MeetingTranscriptWindow, error: str) -> None:
         window.status = "failed"

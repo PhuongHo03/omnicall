@@ -1,5 +1,13 @@
 # Infrastructure Explanation
 
+> **Phase 47 authority:** Compose exposes one Simple RAG runtime. There is no legacy/shadow/canary pipeline mode, answer cache, Semantic Cache, or Agent Memory wiring. Older phase text later in this document is historical where it conflicts with this section.
+
+## Simple RAG Runtime And Cutover Safety
+
+Backend and worker receive `DEFAULT_CHAT_LANGUAGE=en`, `RAG_QUERY_INTERPRETATION_TIMEOUT_SECONDS=15`, `RAG_EVIDENCE_RETRIEVAL_TIMEOUT_SECONDS=20`, `RAG_SYNTHESIS_PRIMARY_TIMEOUT_SECONDS=60`, `RAG_SYNTHESIS_FALLBACK_TIMEOUT_SECONDS=40`, `RAG_FINALIZATION_RESERVE_SECONDS=15`, `RAG_CHAT_TURN_TIMEOUT_SECONDS=150`, `RAG_SYNTHESIS_CONTRACT_RETRIES=1`, `LLM_REASONING_MODE=disabled`, and `CHAT_TURN_LEASE_SECONDS=300`. `DEFAULT_CHAT_LANGUAGE` is the fallback BCP 47 locale for clients that do not supply a chat `language`; it accepts `en` or `vi`. `.env`, `.env.example`, typed settings, and both Compose services use the same keys. Contract versions are source constants.
+
+Direct cutover safety is artifact-based: timestamped PostgreSQL dump, asset metadata/MinIO inventory, intelligence fixtures, previous git revision/image IDs, and a successful isolated restore rehearsal. `backend/scripts/direct_cutover_reset.py` is dry-run by default, requires a non-empty backup directory, accepts only the two approved meeting IDs, preserves meeting/asset/source-audio records, and needs explicit `--execute` before removing derived state and queuing reprocessing. Rollback uses previous images and the restore-tested dump, not a runtime feature flag.
+
 ## Structure
 
 ```text
@@ -40,10 +48,10 @@ The local runtime is managed through Docker Compose.
 | `nginx` | Public edge gateway | `${APP_BIND_IP}:${NGINX_PORT}:80` |
 | `frontend` | Vite React UI | Internal only, `expose: 5173` |
 | `backend` | FastAPI API server | Internal only, `expose: 8000` |
-| `worker` | Celery meeting processing worker | Internal only, no host ports |
+| `worker` | Celery meeting, chat, memory, repair, and maintenance worker | Internal only, no host ports |
 | `beat` | Celery periodic reconciliation scheduler | Internal only, no host ports |
 | `postgres` | Durable relational state | Internal only, `expose: 5432` |
-| `redis` | Cache, locks, idempotency, short-lived snapshots, bounded operational event stream | Internal only, `expose: 6379` |
+| `redis` | Disposable RAG/admin cache, locks, singleflight/idempotency keys, transient SSE Pub/Sub, and bounded operational event stream | Internal only, `expose: 6379` |
 | `rabbitmq` | Celery broker | AMQP internal, management UI on `${LOCAL_BIND_IP}:${RABBITMQ_MANAGEMENT_PORT}` |
 | `minio` | Object storage for meeting assets and Milvus objects | API internal, console on `${LOCAL_BIND_IP}:${MINIO_CONSOLE_PORT}` |
 | `etcd` | Milvus metadata dependency | Internal only, `expose: 2379` |
@@ -150,12 +158,12 @@ The Docker stats exporter replaces the initial cAdvisor attempt for this local m
 The `worker` service uses the backend image and starts Celery with:
 
 ```bash
-celery -A backend.configs.celery_app.celery_app worker --queues=meeting-processing,processing-maintenance --concurrency=1 --without-gossip --without-mingle
+celery -A backend.configs.celery_app.celery_app worker --loglevel=INFO --queues=meeting-processing,processing-maintenance,chat-processing --concurrency=1 --hostname=worker@%h --without-gossip --without-mingle
 ```
 
-The worker consumes processing and maintenance tasks, loads authoritative meeting/job/asset state from PostgreSQL, uses Redis locks for meeting-level idempotency, writes processed JSON back to PostgreSQL, and updates job/meeting status. The separate `beat` service publishes reconciliation every 60 seconds. Jobs still `PENDING` with meetings still `QUEUED` after 120 seconds are republished with their original IDs.
+The Compose command also includes the durable `chat-processing` queue. The worker consumes meeting processing, chat/memory, and maintenance tasks; it reloads authoritative business/job/turn/snapshot/feedback state from PostgreSQL and uses Redis only for temporary locks, cache, and operational events. Long processing/repair locks use token-checked heartbeat renewal. The separate `beat` service publishes reconciliation every 60 seconds. In addition to stale queued meetings, reconciliation recovers expired chat turns, stuck feedback-memory sync, stale memory revalidation, and pending/expired vector-repair claims.
 
-The `meeting-processing` and `processing-maintenance` queues use separate durable direct exchanges/routing keys, and messages use persistent delivery. Meeting-processing tasks use late acknowledgment and reject-on-worker-loss, allowing RabbitMQ to redeliver interrupted work. Celery remote control is enabled in the app config so backend admin deletion can revoke queued meeting-processing tasks by job ID. RabbitMQ 4 explicitly permits the deprecated transient non-exclusive pidbox queues still used by Celery 5.6 remote control. The Compose command still avoids gossip/mingle, and the worker healthcheck uses a targeted `celery inspect ping` so a live container with a stopped consumer is reported unhealthy.
+`meeting-processing`, `processing-maintenance`, and `chat-processing` use separate durable direct exchanges/routing keys, and messages use persistent delivery. Meeting, chat, feedback-memory, and revalidation tasks use late acknowledgment/reject-on-worker-loss as appropriate, allowing RabbitMQ to redeliver interrupted work while PostgreSQL leases/revisions make execution idempotent. Celery remote control is enabled in the app config so backend admin deletion can revoke queued meeting-processing tasks by job ID. RabbitMQ 4 explicitly permits the deprecated transient non-exclusive pidbox queues still used by Celery 5.6 remote control. The Compose command still avoids gossip/mingle, and the worker healthcheck uses a targeted `celery inspect ping` so a live container with a stopped consumer is reported unhealthy.
 
 ## Runtime Configuration
 
@@ -167,9 +175,9 @@ bind IPs -> ports -> service credentials -> app config -> global
 
 Docker Compose uses the root `.env` automatically when no explicit env file override is passed. If a stack was recreated with the template env file by mistake, the running containers keep those example values until they are recreated again with the intended root `.env`.
 
-Backend and worker receive the application resilience settings and Agentic RAG budgets explicitly through Compose. This keeps changes to `RATE_LIMIT_*`, `CONCURRENCY_LIMIT_*`, `TASK_LIMIT_*`, `CIRCUIT_BREAKER_*`, and `AGENTIC_RAG_*` effective after the affected containers are recreated. Port-only variables such as `FRONTEND_PORT` and `BACKEND_PORT` remain template metadata because the local stack exposes the application through Nginx.
+Backend and worker receive application resilience, Simple RAG stage budgets, LLM reasoning mode, and chat-turn lease configuration explicitly through Compose, in addition to `RATE_LIMIT_*`, `CONCURRENCY_LIMIT_*`, `TASK_LIMIT_*`, and `CIRCUIT_BREAKER_*`. Port-only variables such as `FRONTEND_PORT` and `BACKEND_PORT` remain template metadata because the local stack exposes the application through Nginx.
 
-The key sets in `.env` and `.env.example` are kept identical. The root `.env` may override template values for a local endpoint, while `.env.example` contains safe development placeholders. Retrieval fallback thresholds, Agentic RAG budgets, and extraction-window limits are explicit in both files so direct backend runs and Compose runs use the same configuration surface.
+The key sets in `.env` and `.env.example` are kept identical. The root `.env` may override template values for a local endpoint, while `.env.example` contains safe development placeholders. Simple RAG deadlines and extraction-window limits are explicit in both files so direct backend runs and Compose runs use the same configuration surface. Settings validation rejects invalid reasoning/prompt modes, out-of-range limits, or a chat lease shorter than the longest guarded stage plus margin. Backend and Celery startup logs print only a non-secret effective summary.
 
 Notable local defaults:
 
@@ -184,6 +192,15 @@ Notable local defaults:
 | `PROCESSING_RECONCILIATION_INTERVAL_SECONDS` | `60` | Celery Beat interval for pending-job recovery |
 | `PROCESSING_RECONCILIATION_STALE_SECONDS` | `120` | Minimum pending age before automatic republish |
 | `PROCESSING_RECONCILIATION_BATCH_SIZE` | `100` | Maximum stale jobs recovered per cycle |
+| `CHAT_TURN_LEASE_SECONDS` | `300` | Durable chat worker lease and stale-takeover fence |
+| `RAG_QUERY_INTERPRETATION_TIMEOUT_SECONDS` | `15` | QuerySpec budget |
+| `DEFAULT_CHAT_LANGUAGE` | `en` | Fallback chat locale when a client omits `language` |
+| `RAG_EVIDENCE_RETRIEVAL_TIMEOUT_SECONDS` | `20` | Retrieval/EvidenceBundle budget |
+| `RAG_SYNTHESIS_PRIMARY_TIMEOUT_SECONDS` / `FALLBACK_TIMEOUT_SECONDS` | `60` / `40` | Explicit provider budgets |
+| `RAG_FINALIZATION_RESERVE_SECONDS` / `RAG_CHAT_TURN_TIMEOUT_SECONDS` | `15` / `150` | Finalization reserve and total deadline |
+| `RAG_SYNTHESIS_CONTRACT_RETRIES` | `1` | Exactly one contract-only retry |
+| `LLM_REASONING_MODE` | `disabled` | Disable Qwen hidden thinking |
+| `LLM_PROMPT_DATA_POLICY` | `trusted` | `trusted` or request-scoped `redact` outbound prompt data |
 | `PROMETHEUS_PORT` | `8086` | Prometheus UI port |
 | `PROMETHEUS_URL` | `http://prometheus:9090` | Internal URL used by backend admin metrics |
 | `ADMIN_METRICS_CACHE_KEY` | `admin:metrics:snapshot` | Redis key for the normalized admin dashboard payload |
@@ -199,6 +216,8 @@ Notable local defaults:
 | `VAD_ENERGY_THRESHOLD` | `0.012` | RMS threshold for local energy VAD |
 | `ASR_TIMEOUT_SECONDS` | `120` | Minimum local ASR command timeout |
 | `ASR_TIMEOUT_REALTIME_FACTOR` | `1.0` | Multiplies normalized audio duration to extend ASR/diarization subprocess timeouts for longer voice files |
+| `ASR_MIN_SEGMENT_CONFIDENCE` | `0.1` | Minimum confidence for worker-retained ASR segments |
+| `ASR_MAX_NO_SPEECH_PROBABILITY` | `0.6` | No-speech probability threshold for rejecting ASR segments |
 | `LLM_PROVIDER` | `endpoint` | Selects API/private endpoint/Ollama provider path |
 | `LLM_ENDPOINT_COMPATIBILITY` | `openai` | Selects OpenAI-compatible or custom JSON endpoint behavior |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama text embedding model |
@@ -227,6 +246,7 @@ Notable local defaults:
 | `LLM_RETRY_BACKOFF_SECONDS` | `0.2` | Linear retry backoff base for LLM provider calls |
 | `OLLAMA_LLM_TIMEOUT_SECONDS` | `600` | Longer timeout for CPU-based local fallback analysis |
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Ollama context window used by local LLM analysis |
+| `OLLAMA_MAX_OUTPUT_TOKENS` | `1024` | Maximum tokens generated by one local fallback analysis call |
 | `AUTH_SESSION_TTL_HOURS` | `168` | Local bearer-session lifetime used by backend auth |
 | `UPLOAD_MAX_BYTES` | `524288000` | Backend upload size limit |
 | `UPLOAD_ALLOWED_EXTENSIONS` | audio/video extensions | Backend upload extension allowlist |
@@ -498,4 +518,22 @@ The final Docker/Compose cleanup audit found no unused service or volume declara
 
 Phase 25 adds the `meeting_transcript_windows` PostgreSQL table. It stores window references and local extraction state; it does not replace the full transcript and is not written directly to Milvus. Retrieval chunks remain authoritative in PostgreSQL and their derived vectors remain generation-validated in Milvus.
 
-*Document reflects project state during **Phase 27 Citation Playback Links**. Compose infrastructure remains intentionally unchanged; PostgreSQL stores full transcript/result/window/retrieval state, while Milvus stores rebuildable vector embeddings.*
+The durable PostgreSQL orchestration schema is now bootstrapped from the single `0001_initial_schema` baseline. It creates the core business tables for users, sessions, audit events, meetings, assets, transcript windows, intelligence results, retrieval chunks, chat messages, chat turns, retrieval snapshots, and feedback, plus the `pg_trgm` extension for retrieval fallback. Chat broker publication can fail without losing the queued turn; turnaround leases and vector-repair claims retain retry intent for reconciliation.
+
+Redis holds only disposable Cache v2 artifacts and coordination state. Embedding, retrieval-ID, and verified-answer entries are isolated by owner, meeting, index generation, canonical/context signature, and pipeline fingerprint. Retrieval/answer hits rehydrate PostgreSQL chunks/citations and validate integrity/generation before serving. Exact lookup does not depend on embeddings; Redis failure is fail-open. Answer entries use a 24-hour base TTL, thumbs-up promotion uses seven days, and the meeting-local index is atomically bounded to 100 entries. Semantic scans keep valid entries for different context fingerprints side by side: an incompatible context is skipped without removing the other entry, while stale generation/pipeline or corrupt-integrity entries are pruned. Reindex/reprocess/delete/feedback lifecycle changes establish logical invalidation in PostgreSQL or generation state first; physical Redis cleanup happens best-effort after commit.
+
+Semantic cache is deliberately configured as `shadow` with threshold `0.94` and canary `0%`. Direct serving requires a verified entry, compatible operation/target/shape/branch/entity/relation/filter/negation/time/locale/context features, observed precision of at least `0.99`, and deterministic canary membership. Operators can switch `canary -> shadow -> off` through environment configuration without changing durable data.
+
+Redis also owns token-checked processing locks, answer singleflight keys, transient SSE Pub/Sub, and bounded operational logs; none are business truth. RabbitMQ delivers durable work but PostgreSQL rows/revisions/leases provide idempotency and recovery. Milvus continues to store rebuildable vectors only, and every vector result is fenced by the PostgreSQL retrieval snapshot generation.
+
+Phase 46 adds no durable table or migration. Validated Semantic Query IR frames and exact-adjacent clarification-repair frames use the existing `chat_messages.metadata_json` JSONB boundary. PostgreSQL therefore remains authoritative for continuation and repair; Redis is not their source of truth. The backend accepts only closed internal metadata contracts, anchors inherited frames to durable message IDs, and omits `semanticQuery`, `semanticQueryGraph`, `clarificationRepair`, and semantic grounding details from the public chat metadata allowlist. The same surface follow-up under different validated semantic frames receives a different context fingerprint and cannot share contextual cache identity. A fully covered digit-bound participant collection remains standalone and cannot be rebound to a historical entity; meeting-global participant lists use exact aggregate plus complete-roster evidence, while scoped/unsupported aggregate contracts fail closed.
+
+Phase 47 also adds no durable table or migration. Eligible completed assistant messages persist the validated internal `semanticQueryGraph` in the same `chat_messages.metadata_json`; each request rebuilds bounded `DiscourseState` focus from those graphs and exact durable user/assistant message anchors. There is no discourse row, Redis session object, new queue, service, or volume. Assistant prose remains untrusted and is excluded from focus/evidence. PostgreSQL continues to own completed turns, graph metadata, retrieval snapshots, and meeting evidence; Redis remains disposable cache/coordination, RabbitMQ remains delivery, and Milvus remains a generation-validated derived vector index.
+
+The QueryGraph cache payload canonicalizes answer-affecting goal order/topology, Query IR, detail, concepts, proposition, and reference semantics while excluding provider-generated IDs, confidence, historical focus IDs, and provenance-only source spans. Historical focus remains isolated through the separate context fingerprint and exact message anchors. The current pipeline uses `meeting-tools.v7-evidence-facets`, `conversation-resolver.v14-role-bound-history-context`, `semantic-query.v7-open-contact-facets`, `meeting-query-graph.v11-trusted-history-focus-materialization`, `capability-query-plan.v7-graph-branches`, `hybrid-rrf.v3-branch-coverage-facets`, `claim-synthesis.v21-proposition-schema-example`, `claim-evidence.v11-scoped-semantic-fallback-sensitive-fields`, and output guardrail prompt `v6-typed-contact-verification-mode`. Cache and Agent Memory compatibility also includes canonical graph/branch semantics, entities, relations, typed filters, negation, time, and trusted context, so contract changes invalidate old derived identities without converting Redis into business state.
+
+The S7 output-policy exception is evidence-aware rather than a blanket PII bypass. It requires an owner-authorized meeting request, the exact typed requested phone/email/address field, grounded state, citations, passed claim verification, and verified current-snapshot evidence refs. Credentials, payment-card data, government identifiers, unrequested contact types, cross-field disclosure, and unverified answers remain blocked. Generated and cached answers use the same recheck metadata.
+
+Milvus and PostgreSQL candidates are merged with reciprocal-rank fusion; PostgreSQL remains the source rehydrated for final chunks and citations. Validated Query IR requests apply authoritative source pins and do not block on a per-request local crossencoder. Legacy surface-only requests may still rerank, but subprocess timeout is converted to a typed provider error and falls back to fused order. Parallel batches receive only the remaining total Agent deadline, and timeout/failure paths return bounded partial or not-enough-evidence results through the same claim gate rather than retrying every failed tool without a bound.
+
+*Document reflects project state at **Phase 47 Query Graph Discourse and Evidence Branch Architecture (In Progress)**. Phase 46 remains the completed semantic/cardinality baseline. PostgreSQL is authoritative for meeting evidence, completed-turn graph lineage, retrieval snapshots, and clarification repair; Redis is fail-open context-safe cache/coordination, RabbitMQ is delivery, and Milvus is a generation-validated derived index. The RAG pipeline contract is `v4` (retrieval remains `v3`) so answer-cache and memory entries created before mandatory LLM-origin synthesis are incompatible; no durable schema is added.*

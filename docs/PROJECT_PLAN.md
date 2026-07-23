@@ -29,3 +29,5 @@ Project documentation rules:
 - `docs/plans/15 - guardrail simplification and threshold control.md` - simplify actions to allowed/blocked, remove redaction strategy, regex pre-check, few-shot Vietnamese prompt, post-verdict category validation, input→output trust boost, text length guard, stale env cleanup.
 
 - `docs/plans/17 - typewriter-expansion.md` - expand typewriter effect to all evidence states (grounded, partial, not_enough_evidence, fast_path, blocked, error).
+- `docs/plans/46 - semantic query intelligence and grounded answer reliability.md` - completed typed Semantic Query IR, continuation, cardinality, retrieval, and grounded-answer reliability baseline.
+- `docs/plans/47 - query graph discourse and evidence branch architecture.md` - in-progress typed QueryGraph/DiscourseState lineage, per-goal evidence branches, canonical cache identity, and grounded contact-output safety.

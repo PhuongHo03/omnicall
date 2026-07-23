@@ -1,5 +1,29 @@
 # Backend Explanation
 
+> **Phase 47 authority:** the only current chat runtime is `backend/services/simple_rag/`. Older Agentic RAG, QueryGraph, cache, and Agent Memory sections retained later in this document describe removed historical phases and are not runtime behavior.
+
+## Simple Evidence-First Chat Boundary
+
+`MeetingChatService` owns authorization, durable turn/lease lifecycle, request/output policy, and persistence orchestration. It delegates query interpretation, retrieval, synthesis, and verification to `QueryInterpretationService`, `EvidenceRetrievalService`, `AnswerSynthesisService`, and `AnswerVerificationService`. Repositories perform data access only; LLM providers perform protocol/transport only.
+
+Chat language is an explicit request locale (`language`, normally browser `navigator.language`), resolved by `ChatLanguageService`; an older or non-browser client that omits it uses `DEFAULT_CHAT_LANGUAGE`. The service never infers language from the question text. `QueryIntentClassifier` maps normalized tokens to reusable product concepts rather than matching whole question strings. Thus both meeting-subject phrasings are standalone `summarize/meeting` intents and cannot inherit a previous direct-intent target or fall through to generic fact search. Summary retrieval accepts only a verified executive/topic summary; when none exists it falls back to transcript windows, never an individual extracted fact, action, decision, or risk disguised as the whole-meeting subject. A deterministic fallback made from opening transcript snippets is `context_only`, not factual summary evidence. A synthesis provider failure produces one terminal fixed error/control response with provider provenance in `pipelineTrace`; it is not retried as a new chat turn.
+
+```text
+request gate -> QuerySpec -> retrieval plan -> EvidenceBundle
+-> evidence validation -> SynthesisContract/LLM -> mandatory verification
+-> output policy -> durable message/turn persistence
+```
+
+`QuerySpec` and `EvidenceBundle` are immutable contracts. Evidence refs without transcript segment lineage, refs from another goal, and stale snapshot generations fail closed. The LLM claim contract carries only `goalId` and selected `factIds`; it never owns citation IDs. `AnswerVerificationService` derives every UI citation from the immutable fact-to-ref mapping in the matching bundle, then checks goal isolation, snapshot lineage, and the configured Latin-script profile shared by the currently supported locales. Broad summaries instruct the LLM not to disclose profile/contact details unless the request supplied an explicit disclosure permission. Exact scalar/contact/list values are locked in the synthesis contract. A contract-invalid LLM response is retried once; transport failure is not a contract retry. Successful direct/grounded/partial responses always use `answerOriginKind=llm_synthesis`. Control responses are fixed only for clarification, insufficient evidence, policy blocks, and errors; a policy block replaces the `output_policy` trace stage with its actual provider/category.
+
+Input is credential-redacted before PostgreSQL persistence. Owner-visible metadata contains bounded `pipelineTrace v1`, citations, evidence state, and effective provider/model; it excludes prompts, hidden reasoning, arbitrary tool metadata, answer-cache state, and Agent Memory. The migration tree has been collapsed to the single baseline `0001_initial_schema`; the old phase-44/phase-47 revision files were removed during the clean cutover.
+
+### Turn-Scoped Chat Progress SSE
+
+`POST /meetings/{meetingId}/chat` returns a durable `turn_id`. The frontend opens `GET /meetings/{meetingId}/chat/stream?turn_id=...`; every progress and terminal event carries that same `turnId`. The latest status event is stored in the user message's private metadata, so a newly connected or reconnected stream receives a durable snapshot after subscription instead of depending only on transient Redis Pub/Sub delivery. Terminal snapshots include the persisted assistant message.
+
+For a successful LLM answer the UI receives, in order, `queued`, `request_gate`, `query_interpretation`, `retrieval`, `evidence_validation`, `synthesis`, `answer_verification`, `output_policy`, and `persistence`. Clarification, insufficient-evidence, blocked, and error paths emit only stages they actually execute. Redis Pub/Sub remains the low-latency live transport; history polling is recovery only. The client rejects events from another turn and handles terminal `error` immediately.
+
 ## Structure
 
 ```text
@@ -48,7 +72,7 @@ backend/
 │   ├── __init__.py
 │   ├── core_models.py             <- User, session, and audit models
 │   ├── enums.py                   <- Meeting and processing status enums
-│   └── meeting_models.py          <- Meeting, asset, result, chunk, and chat-message models
+│   └── meeting_models.py          <- Meeting/result/chunk plus chat-turn, snapshot, feedback, and memory models
 ├── providers/
 │   ├── __init__.py
 │   ├── analysis/                  <- Processed JSON provider adapters
@@ -57,7 +81,7 @@ backend/
 │   ├── cache_provider.py          <- Redis JSON cache adapter
 │   ├── embedding_provider.py      <- Ollama text embedding provider
 │   ├── llm/                       <- HTTP, Ollama, fallback, factory, and transport adapters
-│   ├── lock_provider.py           <- Redis lock provider for worker idempotency
+│   ├── lock_provider.py           <- Token-owned Redis locks with compare-and-expire heartbeat renewal
 │   ├── operational_log_provider.py <- Temporary bounded Redis Stream adapter
 │   ├── prometheus_provider.py     <- Internal Prometheus HTTP query adapter
 │   ├── queue_provider.py          <- Celery task publishing adapter
@@ -71,23 +95,33 @@ backend/
 ├── repositories/
 │   ├── __init__.py
 │   ├── auth_repository.py         <- User/session/audit persistence
-│   ├── chat_repository.py         <- Meeting-scoped chat message persistence
+│   ├── chat_repository.py         <- Chat messages, feedback, and durable turn persistence
 │   ├── file_repository.py         <- Account file-library persistence backed by standalone meeting_assets rows
 │   ├── meeting_repository.py      <- Meeting, asset, and result persistence
-│   └── retrieval_repository.py    <- Retrieval chunk persistence
+│   └── retrieval_repository.py    <- Retrieval chunks, authoritative snapshots, and repair claims
 ├── services/
 │   ├── __init__.py
 │   ├── admin_account_service.py   <- Admin-only account role and account deletion use cases
 │   ├── admin_meeting_service.py   <- Meeting deletion and cascading cleanup use case for admin/global and owner-scoped flows
 │   ├── admin_metrics_service.py   <- Admin metrics aggregation and Redis cache use case
+│   ├── admin_operational_log_service.py <- Batch-hydrates Redis events from durable chat turns/messages
 │   ├── agent/                     <- Agentic RAG bounded context
+│   │   ├── clarification_repair.py <- Exact-adjacent, user-only typed clarification completion
+│   │   ├── conversation.py        <- Paired history plus trusted internal semantic-frame extraction
 │   │   ├── context_manager.py     <- Agent context accumulation with chunk deduplication and tool call tracking
 │   │   ├── context_coordinator.py <- Chunk limits, token budget, tool history, and answer metadata
+│   │   ├── evidence_verifier.py   <- Retrieval sufficiency and claim-to-evidence verification
 │   │   ├── agent_loop.py          <- LLM think step and parallel tool execution boundary
 │   │   ├── answer_synthesizer.py <- LLM synthesis, local summary, and retrieval fallback
-│   │   ├── fast_path.py           <- Fast path handler for common queries without retrieval
+│   │   ├── fast_path.py           <- Fail-closed gate for safe non-meeting direct responses
 │   │   ├── parallel_executor.py   <- Parallel tool execution with timeout and partial-failure handling
+│   │   ├── prompt_data_policy.py  <- Request-scoped trusted/redacted outbound prompt policy
 │   │   ├── prompt_builder.py      <- Agent and synthesis prompts plus stable retrieval status copy
+│   │   ├── query_graph.py         <- Typed multi-goal graph, discourse focus, lineage validation, and canonical fingerprint
+│   │   ├── query_planner.py       <- Per-goal capability, branch, facet, and answer-shape planning
+│   │   ├── query_resolver.py      <- Canonical reference resolution and typed semantic-frame merge
+│   │   ├── request_context.py     <- Immutable canonical, semantic, cache, memory, and Agent context
+│   │   ├── semantic_query.py      <- Closed semantic Query IR interpretation and entity extraction
 │   │   ├── response_utils.py      <- Chunk normalization, evidence, confidence, and fallback helpers
 │   │   ├── result_models.py       <- Agent response DTOs
 │   │   ├── service.py             <- Main Agentic RAG orchestration loop
@@ -97,7 +131,9 @@ backend/
 │   │   ├── tool_executor.py       <- Retrieval and synthesis tool implementations
 │   │   └── tool_registry.py       <- Tool lookup, schema formatting, and dispatch
 │   ├── auth_service.py            <- Registration, login, logout, and current account use cases
-│   ├── chat_service.py            <- Meeting-grounded chat use case
+│   ├── agent_memory_service.py    <- Revision-fenced verified retrieval-strategy memory lifecycle
+│   ├── answer_cache_service.py    <- Versioned embedding, retrieval, and verified-answer Redis cache
+│   ├── chat_service.py            <- Durable context-aware meeting chat orchestration
 │   ├── file_service.py            <- Account file library use cases
 │   ├── health_service.py          <- Health use case
 │   ├── intelligence_service.py    <- Processed JSON read use cases
@@ -112,10 +148,11 @@ backend/
 │   │   └── result_validation.py   <- RAG-first result schema and evidence reference validation
 │   │   └── retrieval_index_stage.py <- Chunk, embedding, and vector indexing stage
 │   │   └── transcription_stage.py <- Voice transcription stage and stage events
-│   ├── processing_reconciliation_service.py <- Stale pending-job recovery use case
+│   ├── processing_reconciliation_service.py <- Stale processing/chat/feedback/memory/repair recovery
 │   └── retrieval/                <- Chunking, indexing, candidate, and search boundaries
 ├── tasks/
 │   ├── __init__.py
+│   ├── chat_tasks.py              <- Chat answer, feedback-memory sync, and memory revalidation tasks
 │   ├── maintenance_tasks.py       <- Celery reconciliation task registration
 │   └── processing_tasks.py        <- Celery meeting-processing task registration
 ├── utils/
@@ -170,8 +207,10 @@ Current public backend route:
 | `POST` | `/api/meetings/{meetingId}/process` | Processing job queued or visible queue failure |
 | `GET` | `/api/meetings/{meetingId}/processing-status` | Meeting status plus latest processing job and latest uploaded asset |
 | `GET` | `/api/meetings/{meetingId}/intelligence-result` | Complete `meeting_intelligence_result` JSON |
-| `POST` | `/api/meetings/{meetingId}/chat` | Ask a question grounded in one processed meeting |
+| `POST` | `/api/meetings/{meetingId}/chat` | Persist and queue one durable meeting-grounded chat turn; returns `409 chat_busy` while another turn is active |
 | `GET` | `/api/meetings/{meetingId}/chat` | Reload the meeting-scoped chat thread; returns an empty message list before the first question |
+| `PUT` | `/api/meetings/{meetingId}/chat/messages/{messageId}/feedback` | Upsert revisioned `up`, `down`, or `neutral` feedback for an eligible assistant answer |
+| `GET` | `/api/meetings/{meetingId}/chat/stream` | Meeting-scoped SSE progress and persisted terminal answer events |
 | `GET` | `/api/admin/metrics` | Admin-only normalized operations metrics, cached in Redis |
 | `GET` | `/api/admin/accounts` | Admin-only local account list with role metadata |
 | `PATCH` | `/api/admin/accounts/{userId}/role` | Admin-only role update for another account |
@@ -263,6 +302,8 @@ The normalized admin response includes:
 
 Backend request rate is grouped by HTTP method, normalized path, and response status. Backend p95 latency is grouped by HTTP method and normalized path so separate operations sharing a route pattern remain distinguishable without fragmenting latency histograms by status code.
 
+Phase 44 adds Prometheus series for conversation-context load, resolver outcome/duration/confidence, answer-cache result/invalidation/latency/semantic similarity/hard negatives/fail-open operations, claim-verification outcome/unsupported-claim count, memory lifecycle and candidates/matched/injected/applied stages, feedback/memory retries, and durable chat-turn lifecycle events. These labels are bounded result/stage/reason values; meeting IDs are not Prometheus labels. Sanitized operational events carry per-request counts, decision codes, stable chat IDs, and a bounded question preview for investigation without publishing full chat content, reasoning, memory IDs, physical cache keys, or provider errors through the chat API.
+
 ## Admin Operational Logs
 
 Operational logs are separate from durable `audit_events`. `OperationalLogService` emits sanitized `info` or `error` events to a capped Redis Stream. It never writes these high-volume events to PostgreSQL and fails open if Redis is temporarily unavailable.
@@ -272,20 +313,25 @@ meeting API / worker / RAG service
 -> OperationalLogService
 -> Redis Stream admin:logs:operational
 -> GET /api/admin/logs
+-> AdminOperationalLogService hydrates linked chat_turn/chat_message rows
 -> /admin/logs
 ```
 
 Processing events cover file upload, queue delivery, worker receive/lock, transcription, audio preprocessing, VAD, ASR, diarization, LLM analysis, validation, persistence, embedding, Milvus upsert, and final result/failure. RAG events cover question receipt, guardrails, query embedding, retrieval source and chunk counts, rerank, LLM answer/fallback, and answer persistence.
 
-Events include meeting/session name and IDs, uploaded file metadata, job/chat IDs, provider/model, duration, counts, and safe error type/message when available. Full prompts, raw transcripts, API keys, passwords, bearer tokens, and secrets are redacted. Primary LLM endpoint failure and the effective Ollama fallback are emitted as separate error/success events.
+Events include meeting/session name and IDs, uploaded file metadata, job/chat IDs, duration, counts, and safe error type/message when available. RAG events store a normalized `questionPreview` capped at 240 characters plus `turnId`/`userMessageId`; the capped Redis Stream does not duplicate the durable full conversation. On the admin read path, `AdminOperationalLogService` batch-loads linked `chat_turns` and `chat_messages` from PostgreSQL. Every linked event may receive the durable Question, but `assistantMessageId` and Answer are added only to a terminal RAG `answer` event whose status is `succeeded`, `failed`, or `blocked`. Hydration therefore preserves event-time semantics even after the turn later completes. Events without a durable turn, and retained events written before the linkage contract, remain preview-only; legacy IDs are never guessed from timestamps or text.
 
-The LLM analysis start event reports the configured primary model so the log does not look like two models are running at once. The completion event and persisted `source.analysisModel` report the effective model that actually generated the processed JSON. If the primary endpoint fails, a separate `analysis_llm_primary` error event records the primary provider/model and the later analysis completion records the fallback provider/model.
+Executor provenance is typed instead of treating every integration as an LLM: `executorType` distinguishes LLM, embedding, vector store, guardrail/rule, cache, worker, ASR, diarization, audio processing, pipeline, and local execution; `resource`, `operation`, and `version` carry collections, rules, operations, and implementation versions. `configuredProvider`/`configuredModel`, `effectiveProvider`/`effectiveModel`, `originProvider`/`originModel`, and `fallbackUsed` distinguish attempted configuration, the runtime producer, cached-answer origin, and fallback. The legacy `provider`/`model` fields remain for compatible readers, while retained legacy vector/rule events are normalized at read time so collections and rules are no longer presented as models. A local executor such as `local-direct-intent` is an implementation identifier with component `closed-direct-intent-router`, not an LLM provider or model. Full prompts, raw transcripts, API keys, passwords, bearer tokens, and secrets are redacted.
+
+The LLM analysis start event reports the configured primary provider/model. Completion and persisted source metadata report the effective provider/model that actually generated the processed JSON; hierarchical extraction also aggregates provider/model/fallback execution counts across its windows. Fallback execution state is thread-local, so concurrent windows cannot overwrite one another's effective provider or primary-error provenance. The `llm-analysis` service wrapper remains `source.analysisProvider` but is not reported as the effective LLM provider. If the primary endpoint fails, a separate `analysis_llm_primary` error event records the failed attempt and the later completion records the fallback execution.
+
+RAG query resolution records configured and effective LLM provenance internally when provider interpretation runs, while the terminal answer records the actual producer from the `AgentResult`/guard output. `Agent started` is a pipeline lifecycle event: no provider has produced an answer yet, so it carries neither configured nor effective Provider/Model. Answer-cache hits identify Redis as the serving executor while retaining the original answer provider/model as origin provenance. The Admin UI renders only effective runtime provenance and cache-answer origin; configured/default values remain diagnostic event fields rather than being presented as answer producers.
 
 The transcription start event reports the voice routing boundary before ASR begins. Audio/video uploads then report the effective ASR provider/model and include the voice preprocessing, VAD, and diarization provider details in event metadata. Meeting asset uploads are intentionally voice-only; text transcript and notes files are rejected by the meeting upload allowlist instead of entering processing.
 
 ## Persistence
 
-Alembic migration `0001_initial_schema` is the consolidated local-dev baseline. It creates 8 business tables plus Alembic's own `alembic_version` table.
+Alembic migration `0001_initial_schema` is the consolidated local-dev baseline. It creates the full current business schema plus Alembic's own `alembic_version` table and the `pg_trgm` extension used by retrieval fallback.
 
 | Table | Purpose |
 |---|---|
@@ -295,8 +341,12 @@ Alembic migration `0001_initial_schema` is the consolidated local-dev baseline. 
 | `meetings` | Main meeting aggregate, owner, title, status, and safe failure reason |
 | `meeting_assets` | MinIO object metadata for both meeting-linked uploads and standalone account file-library uploads |
 | `meeting_intelligence_results` | Versioned processed transcript JSON stored as PostgreSQL JSONB; this is the authoritative product artifact |
+| `meeting_transcript_windows` | Bounded transcript windows and their local extraction state |
 | `meeting_chunks` | Rebuildable retrieval chunks derived from processed JSON sections and transcript fallback entries |
 | `chat_messages` | Saved user/assistant messages, retrieved chunk IDs, citations, evidence metadata, and timestamps for one meeting thread |
+| `chat_turns` | Durable leased work units pairing user messages with terminal assistant messages |
+| `meeting_retrieval_snapshots` | Authoritative retrieval generations, embedding identities, and repair claim state |
+| `chat_message_feedback` | Revisioned feedback rows attached to owned assistant messages |
 
 Removed tables from the earlier local design:
 
@@ -426,7 +476,7 @@ Evidence provenance is defined in `backend/services/knowledge/evidence.py`. It m
 
 The agent planner exposes both legacy retrieval sections and generic `recordTypes`/`recordSubtypes` selectors. `search_records` queries indexed chunks by canonical record metadata and optional subtype; specialized tools remain convenience wrappers. The verifier accepts matching record types and payload fields, so a new subtype does not require a new planner branch, tool, or UI component.
 
-Chunk text is contextualized from canonical record fields, including IDs, types, normalized values, owners, statuses, due dates, participant/entity references, confidence, citation IDs, and time ranges. Fact, participant, event, action, decision, risk, and relationship records have higher retrieval priority than broader summaries. Deterministic `participant_count` facts derived from speaker labels receive transcript citation IDs during reduction; the legacy analysis path does the same before persistence, and the indexer also resolves old records through `sourceWindowIds` and the speaker-derived fallback. JSON-only metadata chunks use stable `json-*` citation IDs and their JSON pointer/serialized chunk text as the citation target, without inventing transcript timestamps. Structured-section retrieval preserves the requested section order before the bounded context limit is applied, so high-value facts are not displaced by participant profiles. Transcript windows are still indexed as fallback evidence, but product truth remains the JSON document and low-signal transcript text can be skipped from retrieval without deleting it from `result_json`.
+Chunk text is contextualized from canonical record fields, including IDs, types, normalized values, owners, statuses, due dates, participant/entity references, confidence, citation IDs, and time ranges. Fact, participant, event, action, decision, risk, and relationship records have higher retrieval priority than broader summaries. Deterministic `participant_count` facts derived from speaker labels receive transcript citation IDs during reduction; the legacy analysis path does the same before persistence, and the indexer also resolves old records through `sourceWindowIds` and the speaker-derived fallback. Participant overview cardinality follows the same deterministic diarization aggregate when it is exact: incomplete provider `isAttendee` flags may supply names only when their count matches, but cannot emit a competing exact zero. With ignored/unreliable segments the overview omits an exact speaker-derived count rather than upgrading a lower bound. JSON-only metadata chunks use stable `json-*` citation IDs and their JSON pointer/serialized chunk text as the citation target, without inventing transcript timestamps. Structured-section retrieval preserves the requested section order before the bounded context limit is applied, so high-value facts are not displaced by participant profiles. Transcript windows are still indexed as fallback evidence, but product truth remains the JSON document and low-signal transcript text can be skipped from retrieval without deleting it from `result_json`. Executive summaries now carry `lineageStatus`: direct citations or explicitly referenced cited topics produce `verified`; otherwise the text remains searchable with `context_only` and `evidenceEligible=false`. The reducer never assigns every window citation to an uncited summary.
 
 When `VECTOR_PROVIDER=milvus`, `RetrievalIndexService` also upserts derived vectors to the Milvus REST API after `meeting_chunks` are persisted. The upsert payload includes stable derived references: meeting ID, result ID, chunk ID, JSON pointer, source type, section type, time range, and an index generation. Search reloads the authoritative PostgreSQL chunk and rejects vector hits whose generation does not match. Milvus failures are recorded in retrieval metadata and schedule bounded vector repair without making the derived index authoritative.
 
@@ -440,39 +490,70 @@ Question flow:
 POST /api/meetings/{meetingId}/chat
 -> auth context
 -> meeting owner and READY-state check
--> guardrail check the user question
--> save user chat_message
--> embed question with local Ollama text embedding model
--> vector search in Milvus when available
--> reload authoritative meeting_chunks from PostgreSQL
--> PostgreSQL fallback ranking if Milvus is unavailable or empty
--> rerank candidates with configured local rerank model command when available
--> call LLMProvider with retrieved context
--> fallback to local retrieval summary if the provider fails
--> guardrail check assistant answer
--> save assistant chat_message with retrieved chunk IDs and verified citations
--> return answer, evidence state, and citation-level evidence
+-> lock the meeting row and reject with 409 chat_busy if a queued/started turn exists
+-> persist the user chat_message and queued chat_turn in one transaction
+-> publish only turn_id to the durable chat-processing queue
+-> worker reloads and validates persisted meeting/message state, then claims a token-owned lease
+-> input guardrail on the raw question
+-> load eligible completed turns and validate their internal semantic graphs
+-> rebuild bounded typed DiscourseState from user-authored focus plus durable message anchors
+-> interpret a QueryGraph of goals, dependencies, propositions, detail/concepts, and typed references
+-> bind only compatible missing subject/focus slots; explicit current scope remains authoritative
+-> resolve references to a backend-owned canonical question or clarify ambiguity
+-> input guardrail the canonical question when it changed
+-> bind the authoritative meeting_retrieval_snapshot
+-> build graph-aware request/pipeline/context identity and per-goal capability branches
+-> exact answer-cache lookup before embedding under canonical graph semantics
+-> optional embedding/retrieval-cache and semantic-shadow lookup
+-> retrieve verified strategy-memory hints compatible with the current snapshot
+-> bounded branch/facet retrieval with context coverage for every semantic goal
+-> branch-isolated sufficiency/cardinality verification and one bounded replan
+-> per-goal evidence-bundle synthesis and at most one unsupported-claim/coverage repair
+-> claim-level verification against current-snapshot evidence
+-> evidence-aware output guardrail
+-> lease- and generation-fenced terminal assistant message/turn persistence
+-> admit only grounded, cited, claim-verified answers to answer cache
 ```
+
+Completed agent turns persist two flow projections inside the existing assistant `chat_messages.metadata_json`. `agentFlow` remains a bounded summary with iteration number, exact code-level tool names, retrieval counts, and evidence sufficiency. `agentRawFlow` is explicitly owner-visible and retains the returned QueryGraph/resolver/semantic-classifier JSON, executable plan, each agent LLM response, exact tool parameters/results/errors, evidence verification, synthesis/repair responses, bounded synthesis metadata (`synthesisMode`, claim-repair outcome, deterministic fallback kind), claim verification, and goal coverage. `_public_metadata` returns both contracts through owner-scoped history and terminal SSE responses. Raw provider prompts and hidden reasoning tokens are not captured. This adds no table, but raw tool results can materially increase assistant metadata and history-response size and can repeat sensitive meeting content.
+
+`chat_turns` is the durable unit of chat work. A partial unique index permits only one `queued` or `started` row per meeting, while sequence numbers preserve ordering. Workers receive `turn_id`, never trust task-supplied question text, and no-op when a turn is already terminal or already has an assistant response. A started turn carries a lease token and expiry; lease refresh and terminal writes compare the originally claimed token so a stale worker cannot overwrite a reconciler takeover. A broker publish failure leaves the queued row intact for periodic reconciliation instead of losing the question.
+
+Normal conversation loading uses only completed prior `chat_turns`, filters pending/error/blocked/clarification/orphan rows before applying limits, preserves user/assistant pairs, and keeps at most six complete turns and 1,200 estimated tokens by default. Each assistant item carries at most six complete citation IDs. User and assistant text in the JSON wrapper remains untrusted data: it may help dependency interpretation, but it is never factual evidence or planner instruction. A separate trusted internal path validates backend-authored `semanticQueryGraph` (with legacy `semanticQuery` fallback) on eligible grounded, partial, or not-enough-evidence assistant messages. `ConversationContext.discourse_state` projects those typed goals into bounded `DiscourseFocus` values anchored to the durable user/assistant message IDs; assistant prose is excluded from focus construction and evidence.
+
+`QueryGraphInterpreter` represents a turn as a bounded DAG of typed `QueryGoal` values plus current-turn, history, or current-meeting references. Goals retain Query IR, source span, dependencies, requested concepts, detail depth, optional proposition, and subject/focus links. Source spans, ID uniqueness, dependency acyclicity, reference use, exact historical anchors, and target compatibility are validated before resolution. Provider-known concepts must agree with grounded typed fields/source ontology, and conflicting concept/target hints fail closed. When a subject or answer focus is genuinely omitted, only a compatible trusted focus may bind it; named current entities, filters, explicit targets, and complete collections remain authoritative. Before invoking the legacy open-vocabulary resolver, the backend accepts a current-turn clause as standalone only when a compositional closed-query contract covers its operation, typed target or requested field, current-meeting scope, and every remaining token. This is not an exact-sentence route: participant and typed contact counts share the same contract, while history wording, named entities, temporal scope, filters, or any unmodeled residual stay with discourse resolution and fail closed if unresolved. Unresolved or invalid references, low confidence, timeout, or unavailable classification persist `clarification_needed` before cache, memory, or retrieval.
+
+Bounded query interpreters carry a request-scoped, thread-safe LLM execution snapshot across their executor boundary. The fallback adapter publishes that snapshot when Ollama takes over, before waiting for its serialized inference slot or final response. A resolver/query-graph timeout can therefore log the configured primary separately from the effective provider/model, `fallbackUsed`, and the primary error; it no longer reads stale primary provenance from the caller thread merely because the local generation finished after the orchestration deadline.
+
+Clarification repair is deliberately outside normal history loading. Only the immediately preceding `clarification_needed` turn is eligible, and its closed `clarificationRepair` metadata is re-grounded from the recorded user question plus the new user fragment. The assistant's clarification sentence is never a source question, retrieval query, or evidence. A non-adjacent message or a self-contained new question cancels this repair path, so stale clarification state cannot revive later.
+
+`RAGRequestContext` freezes the raw/canonical questions, effective Query IR and `QueryGraph`, rebuilt `DiscourseState`, whether the IR is already context-grounded, semantic grounding text, inherited slots, semantic anchor message IDs, retrieval requirement, dependency mode, referent bindings, context fingerprint, intent, answer shape, selectors, negation/time constraints, snapshot identity, pipeline fingerprint, and structured conversation for one request. The request cache payload includes canonical graph goal semantics and topology, while trusted historical identity remains in the conversation context fingerprint. The planner preserves already grounded inherited scope instead of trying to prove it appears in the elliptical surface phrase. The default `LLM_PROMPT_DATA_POLICY=trusted` sends authorized request data as-is; `redact` creates stable request-scoped email/phone placeholders across question/history/evidence and restores only placeholders generated in that request's allowlist.
 
 Retrieval search prefers Milvus when available, then reloads returned `chunk_id` values from PostgreSQL within the authorized meeting and validates the vector generation. If Milvus is unavailable, empty, returns stale hits, or returns an error, the service falls back to PostgreSQL ranking over persisted `meeting_chunks`. The fallback combines exact lexical overlap, PostgreSQL trigram similarity, and high-priority structured/metadata candidates before rerank. PostgreSQL records are always the authoritative chunks returned to chat. Structured questions are selected through the generic record contract: participant/count questions use participant profiles and participant-count facts; actor/target and location questions use participant, action, entity, event, and fact records plus relation capabilities; timeline questions use temporal fields on event/action/fact records; and all other domains use their canonical record type/subtype and relationship fields. Keyword retrieval first attempts a phrase match, then token-level matching so normalized planner queries such as `price OR cost OR dollar` can find English canonical JSON chunks.
 
 Meeting deletion removes the meeting's operational-log events from Redis after the database deletion commits. Log cleanup is best effort because operational logs are diagnostic data, not the source of truth for meeting deletion. Account deletion applies the same cleanup to every meeting removed with the account, preventing deleted or test-only meetings from remaining as cards in the admin log view.
 
-If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. Verified citation IDs from answer synthesis are mapped back to authoritative chunks, deduplicated, and persisted separately from retrieved chunk IDs. Retrieval chunk metadata stores `citationQuotes` and `citationLocations` per citation ID; chat response mapping uses the per-citation segment IDs and timestamps instead of the chunk-level aggregate location. Derived JSON records without direct transcript citations receive stable `json-record-*` citation IDs and retain structured provenance; they do not inherit every transcript citation from their source window. Legacy chunk-level citation JSON is normalized when chat history is read. Guardrails now use the simplified `allowed`/`blocked` contract only. If input guardrails block the user question, the service stores a safe assistant refusal without calling the agent. Provider errors fail open as `allowed` with `provider_error` metadata. If output guardrails block an answer, the assistant response is replaced with a safe message and citations are removed. The chat flow no longer expects redacted text, warning actions, or a context guardrail stage. If query embedding fails, retrieval skips Milvus and uses hybrid lexical/trigram/structured PostgreSQL ranking, recording `postgres-fallback-embedding` in search metadata. If a worker exception escapes normal answer generation, it resets `pending_chat_status`, persists one idempotent safe error response keyed by the user message, and publishes an error event. Provider prompts and raw provider responses are not saved in chat history.
+If no chunks meet the evidence threshold, chat returns a `not_enough_evidence` answer and saves it without citations. Tool execution attaches branch IDs and requested evidence facets to its results; context coordination reserves the best available chunk for every represented branch before filling the remaining token/chunk budget by score. Deduplication keeps the union of branch provenance, and later context trimming applies the same coverage rule. The evidence verifier then filters chunks by each active subplan, preventing one branch's participant, topic, contact, or proposition evidence from silently satisfying another branch.
 
-Answer prompts live in the Agentic RAG service rather than `MeetingChatService`. Phase 18 removed the unused linear-RAG helper path from `MeetingChatService`, leaving that service focused on permission checks, user/assistant message persistence, guardrail orchestration, agent delegation, SSE status publishing, and operational logs. Assistant message metadata includes agent iterations, tool calls, thoughts, duration, token usage, and guardrail action/categories/provider/model/confidence/latency/promptVersion/textLength/decisionId metadata so answer generation, retrieval ordering, and guardrail decisions can be observed without storing LLM prompts, rerank prompts, guardrail prompts, or raw provider responses. `GET /api/meetings/{meetingId}/chat` returns the authorized meeting thread and messages, allowing the frontend to recover persisted chat after reloads, route changes, or lost browser state.
+Exact participant cardinality remains deterministic during degraded Agent execution. If the bounded Agent path raises after retrieval, the retrieval fallback first applies the same typed structured projection used by the normal synthesizer; an exact participant-count record/overview becomes a short grounded count with bounded citations instead of concatenated record text. Lower-bound or conflicting counts continue to fail closed. COUNT no longer discards an explicitly requested contact projection: phone/email/address fields survive Query IR and planning, and distinct values from cited typed records can be rendered deterministically as the number “được ghi nhận”. With no typed value or authoritative zero-count aggregate, the evidence path still fails closed rather than claiming that absence from a bounded retrieval result proves zero.
+
+Synthesis receives one bounded evidence bundle per semantic goal: operation/target/answer shape, detail/concept/proposition extensions, required and missing fields, branch evidence status, and only eligible current-snapshot chunks. A chunk must have non-empty evidence refs and must not be marked `evidenceEligible=false`; context-only summaries can influence retrieval ranking but cannot enter a verifier evidence bundle. Synthesis returns claims with evidence references; deterministic verification accepts only supplied refs and requires meaningful lexical, entity, predicate, negation, and numeric anchors. Directional relation claims additionally compare actor/target roles: authoritative `recordFields` are preferred, while a bounded English/Vietnamese active/passive parser protects text-only evidence from role reversal such as `Alice assigned Bob` versus `Bob assigned Alice`. When initial synthesis leaves unsupported claims or required goals uncovered, one bounded repair call receives the same evidence bundles, an explicit `allowedEvidenceRefs` set, and verifier feedback; an unchanged repair is recorded in flow metadata. No deterministic cited-summary or retrieval text fallback may become a final `grounded`/`partial` answer: a recovery path either calls final synthesis again or returns a terminal control state. History and Agent Memory never count as evidence. Verified citation IDs are mapped back to authoritative chunks, deduplicated, and persisted separately from retrieved chunk IDs. Retrieval chunk metadata stores `citationQuotes` and `citationLocations` per citation ID; chat response mapping uses the per-citation segment IDs and timestamps instead of the chunk-level aggregate location. Derived JSON records without direct transcript citations receive stable `json-record-*` citation IDs and retain structured provenance; they do not inherit every transcript citation from their source window. Legacy chunk-level citation JSON is normalized when chat history is read.
+
+Guardrails use the simplified `allowed`/`blocked` contract. If the raw or resolved canonical input is blocked, the service stores a safe assistant refusal without calling the Agent. Provider errors follow strict/fail-open settings but a fail-open output verdict is not cache-admissible. Output policy `v6-typed-contact-verification-mode` can adjudicate an S7 contact-detail classification only when the already-authorized meeting request explicitly asked for that typed contact field and the candidate is `grounded`, cited, claim-verified, and backed by at least one verified current-snapshot evidence ref. It permits only the requested phone/email/address group; passwords, secrets, private/API keys, PIN/CVV, payment-card data, government identifiers, unrequested fields, or unverified disclosure remain blocked. The same metadata contract is used for generated answers and cache safety rechecks. Any blocked answer is replaced with a safe message and citations are removed. A cached candidate with invalid integrity, stale citations, incompatible safety policy, or a blocked recheck is quarantined/evicted and falls back to the Agent rather than returning a cache-caused blocked answer. If query embedding fails, exact cache still works and retrieval skips Milvus in favor of hybrid lexical/trigram/structured PostgreSQL ranking. If a worker exception escapes normal generation, retries requeue only the lease owned by that worker; after exhaustion one idempotent safe error response is persisted. Provider prompts and raw provider responses are not saved in chat history.
+
+Answer prompts live in the Agentic RAG service rather than `MeetingChatService`. The chat service owns authorization, durable turn/message persistence, resolver/cache/memory/guardrail orchestration, snapshot fencing, SSE status, and sanitized operational logs. Internal message metadata retains strategy and verification lineage needed for feedback/cache lifecycle; migration `0005_phase44_rag` still removes the obsolete free-form `agentThoughts` public key. Public history keeps the compact allowlist and now additionally exposes the explicit versioned `agentRawFlow` debug payload to the meeting owner. Internal cache/memory IDs, token internals, Redis keys, provider prompts, and hidden reasoning tokens remain excluded, while returned provider JSON and raw tool execution data are intentionally included. `GET /api/meetings/{meetingId}/chat` returns this owner-scoped thread plus top-level feedback state so Flow survives reloads.
 
 For local development after changing chunk formats, run `python -m backend.scripts.rebuild_retrieval_index --clear-chat` inside the backend environment to rebuild all PostgreSQL chunks and Milvus vectors from stored `meeting_intelligence_results` and remove chat history that may cite stale chunk IDs. Phase 22 intentionally rejects obsolete pre-RAG-first JSON documents during rebuild; old local meetings must be reprocessed or removed. Use `--meeting-id <id>` to target one meeting. A full disposable reset is still possible with Compose volume deletion, migrations, and reprocessing when old local data is not worth preserving.
 
 The v2 reducer also persists an `identity_resolution` relationship only when the transcript contains explicit self-identification (for example, “this is Andrew”). Being addressed by a name is retained as a participant mention and is not treated as proof of speaker identity. `backend.scripts.verify_v2_cutover` validates v2 status, result presence, relationship endpoints, identity-relationship counts, and orphan retrieval chunks. Runtime reprocessing remains an operational prerequisite: a meeting whose transcription pipeline fails before persistence cannot be reported as migrated until its worker/provider failure is resolved.
 
-## Agentic RAG (Phase 26)
+## Historical Agentic RAG (Phase 26, Removed In Phase 47)
 
-The chat service uses `backend.services.agent.AgenticRAGService` for all chat requests after input guardrails pass. The bounded flow is fast path -> JSON-v2 query plan -> deterministic/parallel retrieval -> evidence verification -> bounded replan -> final synthesis. `query_planner.py` emits canonical `recordTypes`, `recordSubtypes`, and required fields; sections remain only for v2 top-level projections. `search_records` is the generic record boundary and specialized retrieval tools are selector presets over it. `evidence_verifier.py` checks canonical record relevance, payload fields, and evidence refs; `context_coordinator.py` carries record/provenance metadata through token-limited context; and `answer_synthesizer.py` accepts only context-supplied v2 evidence refs before mapping them to UI citations. Runtime defaults are two iterations, one replan, four tool calls per iteration, five chunks per tool, twelve total chunks, 4,000 context tokens, 30 seconds per iteration, and 60 seconds total.
+After guardrails, typed graph resolution, and cache lookup, chat misses delegate to `backend.services.agent.AgenticRAGService`. Its bounded flow is fail-closed fast-path gating -> per-goal QueryGraph planning -> deterministic/parallel branch-facet retrieval -> coverage-preserving context -> isolated evidence verification -> bounded replan -> evidence-bundle synthesis -> one optional repair. `query_planner.py` emits branch IDs, dependencies, canonical `recordTypes`, `recordSubtypes`, required fields, and evidence facets; sections remain only for v2 top-level projections. `search_records` is the generic record boundary and specialized retrieval tools are selector presets over it. `evidence_verifier.py` checks canonical record relevance, payload fields, and refs within each branch; `context_coordinator.py`/`context_manager.py` carry branch provenance and preserve coverage through token limits; and `answer_synthesizer.py` accepts only current-snapshot bundle evidence before mapping verified refs to UI citations. Source/template runtime defaults are two iterations, one replan, eight tool calls per iteration, five chunks per tool, twelve total chunks, 4,000 context tokens, 30 seconds per iteration, and 60 seconds total; the local root `.env` can override those template values.
 
 Record searches keep type/subtype selection authoritative: when a planner supplies `recordTypes`, the natural-language question is not required to occur verbatim in the record text. Participant chunks include `recordId` and provenance metadata, so participant and speaker questions resolve through the same generic `search_records` path as every other record type.
 
-Retrieval indexing is v2-only: it requires `schemaVersion=meeting-intelligence-result.v2`, `knowledge.records`, and `evidence.items`. Removed v1 `evidence.citations` data is not silently read. The cutover verifier confirms the current database has three processable v2 meetings, 196 indexed chunks, and no orphan chunks.
+Retrieval indexing is v2-only: it requires `schemaVersion=meeting-intelligence-result.v2`, `knowledge.records`, and `evidence.items`. Removed v1 `evidence.citations` data is not silently read. `backend.scripts.verify_v2_cutover` reports processable/v2 result/chunk/identity counts and fails on orphan chunks or contract violations.
 
 The direct analysis adapter uses the explicitly internal `meeting-intelligence-candidate.v2` envelope while extracting window candidates. The hierarchical reducer normalizes those candidates into the only persisted/public contract, `meeting-intelligence-result.v2`; the old v1 result identifier is no longer an active provider constant or fixture.
 
@@ -481,19 +562,30 @@ The direct analysis adapter uses the explicitly internal `meeting-intelligence-c
 ```
 user question
 -> input guardrail check
--> fast path detection
-   -> if fast path: return direct response with evidenceState="fast_path"
--> query planner: intent, record selectors, required fields
--> record/evidence-first retrieval from JSON-v2 PostgreSQL chunks
--> evidence verifier
-   -> sufficient: synthesize
+-> if the immediately previous turn requested clarification: user-only typed repair
+-> completed-turn graph load -> trusted DiscourseState -> typed QueryGraph interpretation
+-> exact-span canonical reference resolution; explicit current scope overrides compatible history
+   -> ambiguous: persist clarification_needed plus bounded internal repair metadata
+-> per-goal capability plan + canonical graph/context cache identity under current snapshot
+-> exact/contextual cache lookup
+-> closed direct-intent router before conversation/query resolution
+   -> exact full-utterance greeting/farewell/thanks/wellbeing/assistant-meta/acknowledgement: local response with evidenceState="fast_path"
+-> fail-closed open fast path gate
+   -> only unknown non-meeting direct scope: bounded LLM `{needsRag, answer}` decision
+   -> meeting, contextual, ambiguous, or retrieval-required IR: continue to planner
+-> compatible verified retrieval-strategy hints (optional)
+-> branch/facet record/evidence-first retrieval from JSON-v2 PostgreSQL chunks
+-> coverage-preserving context + branch-isolated evidence verifier
+   -> every branch sufficient: build per-goal evidence bundles and synthesize
    -> missing fields and quota available: replan once and retrieve again
--> AnswerSynthesizer: final answer with verified evidence refs and mapped citations
--> output guardrail check
--> save answer with plan, verification, iteration, replan, and tool metadata
+-> AnswerSynthesizer: claims plus current-snapshot evidence refs; repair at most once
+-> claim verifier: remove/downgrade unsupported claims and map verified citations
+-> evidence-aware output guardrail check
+-> lease/generation-fenced terminal persistence
+-> cache only grounded, cited, claim-verified answers
 ```
 
-LLM JSON generation remains deterministic by default with `temperature=0` for analysis, planning, synthesis, and guardrail-like structured flows. Fast-path detection is the exception: `FastPathHandler` passes `temperature=0.5` for direct greeting, thanks, guidance, and small-talk answers so repeated non-RAG prompts can be less robotic while the response still follows the `{needsRag, answer}` JSON contract.
+LLM JSON generation remains deterministic by default with `temperature=0` for analysis, planning, synthesis, and guardrail-like structured flows. Closed direct intents are now model-independent: `deterministic_fast_path()` performs accent-insensitive exact full-utterance matching before conversation loading, clarification repair, QueryGraph, Query Resolver, snapshot/cache, or Agent work, then persists a localized response through the ordinary output guardrail. Exact matching means a polite prefix such as `Xin chào, cuộc gọi này bàn về gì?` cannot bypass meeting retrieval. `FastPathHandler` still uses `temperature=0.5` only for open, non-meeting direct questions after typed scope checks, retaining the `{needsRag, answer}` JSON contract. Missing `answer`, invalid JSON, provider errors, and typed meeting/context dependencies are explicit rejection reasons rather than silent direct answers.
 
 ### Tools
 
@@ -510,31 +602,36 @@ The agent can invoke these retrieval tools:
 The agentic flow emits additional SSE events:
 - `connected`: initial stream handshake with `{"type":"connected","status":"connected"}`
 - `agent_think`: iteration number and message
-- `agent_plan`: intent, planned sections, and sub-query count
+- `agent_plan`: sanitized intent and answer shape
 - `agent_search`: iteration, tool names, and message
 - `observation`: iteration, new chunks found, success/failure counts
 - `agent_verify`: evidence sufficiency, missing fields, and evidence count
 - `agent_replan`: bounded replan number, reason, and missing fields
 - `agent_synthesize`: iteration and whether forced
 - `fast_path`: for immediate responses
+- `clarification` / `clarification_needed`: persisted ambiguous-reference terminal answer
 
 ### Agent Metadata
 
-Assistant chat messages include additional metadata when using agentic RAG:
-- `agentIterations`: number of agent loop iterations used
-- `agentReplans`: number of replans used
-- `agentToolCalls`: list of tools called with arguments and result counts
-- `agentThoughts`: agent reasoning for each iteration (optional)
-- `agentQueryPlan`: sanitized intent, sections, and required fields
-- `agent.durationMs`, `agent.tokenUsage`, and optional `agent.error` diagnostics
+Internal assistant-message metadata keeps the canonical/snapshot contract, sanitized tool summaries, verified strategy lineage, claim-verification result, guardrail decisions, and cache/memory lifecycle fields required by backend/worker coordination. The public response is narrower:
+
+- `agentIterations` and `agentReplans`
+- `agentToolCalls` with allowlisted tool name and result count only
+- sanitized `agentIntent` and `agentAnswerShape`
+- conversation turn/usage/truncation plus dependency-mode/resolution-confidence fields
+- evidence state/confidence, cache hit/mode/similarity, and feedback eligibility
+
+Free-form legacy thoughts, hidden reasoning tokens, provider prompts, memory IDs, token internals, and physical cache keys are not public API fields. The explicit `agentRawFlow` exception returns executable plans plus provider/tool/verification JSON to the authorized meeting owner, including tool arguments, result content, and tool error strings.
 
 ### Feature Flag and Rollback
 
-The system uses Agentic RAG exclusively. If the agent loop fails before a final answer, the service falls back to the existing retrieval search and stores a partial/error-marked local evidence summary instead of letting the Celery task crash.
+Cache misses that require meeting facts use Agentic RAG exclusively. If the agent loop fails before a final answer, the service falls back to existing retrieval context and stores a claim-verified partial/not-enough-evidence response instead of letting the Celery task crash.
 
 Voice provider metadata is persisted under `source.voiceMetadata`. Warnings from preprocessing, VAD, ASR, diarization, or missing speech regions are also copied into `quality.warnings` so chat/review surfaces can explain transcript confidence without exposing internal stack traces.
 
-The Ollama guardrail provider uses the simplified safety prompt (`PROMPT_VERSION=v3-simplified`) to help the small model (`llama-guard3:1b`) distinguish business meeting content from real threats. A regex pre-check catches obvious prompt injection patterns before calling the model. Transient Ollama failures can be retried with `GUARDRAIL_MAX_RETRIES` (default `1` across Settings, Compose, and `.env.example`); transport failures and model parse failures remain distinct categories but follow the same strict/non-strict policy. PII redaction is controlled by `GUARDRAIL_PII_REDACTION_ENABLED` and applies to the copy sent to the guardrail model. Trusted grounded answers with citations can receive a conservative false-positive override only when the reported category has no matching content signal. If the provider fails, the fail-open metadata records the measured latency instead of a zero-duration placeholder.
+Successful ASR command output is quality-gated before it becomes transcript data. Segments below `ASR_MIN_SEGMENT_CONFIDENCE` or at/above `ASR_MAX_NO_SPEECH_PROBABILITY` are discarded, which prevents low-confidence Whisper hallucinations from turning noise into a successful transcript. When the ASR command succeeds but no reliable segment remains, processing stores the safe English reason `No clear speech was detected in this recording.` and the meeting API derives `failure_code: NO_RECOGNIZABLE_SPEECH`. Operational/Admin logs remain technical English; the public code lets the Meetings frontend choose its own localized copy without exposing `failure_reason` directly.
+
+The Ollama guardrail provider uses the simplified safety prompt (`PROMPT_VERSION=v4-typed-factual-override`) to help the small model (`llama-guard3:1b`) distinguish business meeting content from real threats. A regex pre-check catches obvious prompt injection patterns before calling the model. Transient Ollama failures can be retried with `GUARDRAIL_MAX_RETRIES` (default `0` across Settings, Compose, and `.env.example`); transport failures and model parse failures remain distinct categories but follow the same strict/non-strict policy. PII redaction is controlled by `GUARDRAIL_PII_REDACTION_ENABLED` and applies to the copy sent to the guardrail model. Trusted grounded answers with citations can receive a conservative false-positive override only when the reported category has no matching content signal. Input overrides are narrower: only a high-confidence deterministic Query IR for an allowlisted factual operation/target can adjudicate known `S4` age and `S6` price-model confusions, while prompt injection, unsafe lexical evidence, advice requests, ambiguity, and low-confidence targets remain blocked. If the provider fails, the fail-open metadata records the measured latency instead of a zero-duration placeholder.
 
 ## Configuration
 
@@ -552,6 +649,7 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `PROCESSING_RECONCILIATION_INTERVAL_SECONDS` | `60` | Periodic stale queued-meeting scan interval |
 | `PROCESSING_RECONCILIATION_STALE_SECONDS` | `120` | Queued age required before automatic republish |
 | `PROCESSING_RECONCILIATION_BATCH_SIZE` | `100` | Maximum meetings republished in one cycle |
+| `CHAT_TURN_LEASE_SECONDS` | `300` | Token-owned chat worker lease; validated to cover the longest guarded RAG stage plus margin |
 | `REDIS_*` | local Compose values | Redis connection and processing lock TTL |
 | `MINIO_*` | local Compose values | Object storage settings |
 | `PROMETHEUS_URL` | `http://prometheus:9090` | Internal Prometheus URL used only by the backend admin metrics service |
@@ -569,6 +667,8 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `VAD_ENERGY_THRESHOLD` | `0.012` | RMS energy threshold used by local VAD |
 | `ASR_TIMEOUT_SECONDS` | `120` | Minimum local ASR command timeout |
 | `ASR_TIMEOUT_REALTIME_FACTOR` | `1.0` | Multiplies normalized audio duration to extend ASR/diarization subprocess timeouts for longer voice files |
+| `ASR_MIN_SEGMENT_CONFIDENCE` | `0.1` | Minimum computed confidence required to retain an ASR segment |
+| `ASR_MAX_NO_SPEECH_PROBABILITY` | `0.6` | Reject ASR segments whose no-speech probability reaches this threshold |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Local Ollama text embedding model |
 | `EMBEDDING_DIMENSIONS` | `768` | Expected local text embedding vector size |
 | `EMBEDDING_TIMEOUT_SECONDS` | `30` | Ollama embedding request timeout |
@@ -603,13 +703,14 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | Small local fallback model |
 | `OLLAMA_LLM_TIMEOUT_SECONDS` | `600` | Local fallback generation timeout, separate from the primary endpoint timeout |
 | `OLLAMA_CONTEXT_LENGTH` | `8192` | Context window used for local fallback meeting analysis |
-| `AGENTIC_RAG_MAX_ITERATIONS` | `2` | Maximum planner/retrieval/verification iterations |
-| `AGENTIC_RAG_MAX_REPLANS` | `1` | Maximum bounded replans after missing evidence |
-| `AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION` | `4` | Maximum retrieval tool calls in one iteration |
-| `AGENTIC_RAG_MAX_CHUNKS_PER_TOOL` / `AGENTIC_RAG_MAX_TOTAL_CHUNKS` | `5` / `12` | Per-tool and total accumulated chunk limits |
-| `AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS` | `30` | Per-iteration agent timeout |
-| `AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS` | `60` | Total agent request timeout |
-| `AGENTIC_RAG_MAX_CONTEXT_TOKENS` | `4000` | Maximum retrieved context tokens supplied to the agent |
+| `OLLAMA_MAX_OUTPUT_TOKENS` | `1024` | Per-call output cap for local fallback meeting analysis |
+| `RAG_QUERY_INTERPRETATION_TIMEOUT_SECONDS` | `15` | QuerySpec stage budget |
+| `RAG_EVIDENCE_RETRIEVAL_TIMEOUT_SECONDS` | `20` | Retrieval/EvidenceBundle stage budget |
+| `RAG_SYNTHESIS_PRIMARY_TIMEOUT_SECONDS` / `FALLBACK_TIMEOUT_SECONDS` | `60` / `40` | Primary and fallback synthesis budgets |
+| `RAG_FINALIZATION_RESERVE_SECONDS` / `RAG_CHAT_TURN_TIMEOUT_SECONDS` | `15` / `150` | Reserved finalization and total turn deadline |
+| `RAG_SYNTHESIS_CONTRACT_RETRIES` | `1` | Exactly one output-contract retry |
+| `LLM_REASONING_MODE` | `disabled` | Disable hidden Qwen thinking |
+| `LLM_PROMPT_DATA_POLICY` | `trusted` | Outbound prompt data policy: authorized raw data or request-scoped `redact` placeholders |
 | `RETRIEVAL_FALLBACK_CANDIDATE_LIMIT` | `48` | Maximum degraded PostgreSQL fallback candidate pool |
 | `RETRIEVAL_TRIGRAM_THRESHOLD` | `0.12` | Minimum PostgreSQL trigram similarity for degraded retrieval candidates |
 | `RATE_LIMIT_ENABLED` | `true` | Enable request rate limiting |
@@ -620,7 +721,7 @@ Settings are loaded by `backend/configs/settings.py` using `pydantic-settings`.
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures required to open a breaker |
 | `CIRCUIT_BREAKER_RECOVERY_SECONDS` | `30` | Recovery window before a half-open probe |
 
-The settings loader reads a root `.env` file when present. Compose passes application settings to both backend and worker containers, including rate/concurrency/task guards, circuit-breaker thresholds, and Agentic RAG budgets. PostgreSQL, Milvus, and MinIO breakers now read those settings instead of using provider-local constants. The environment exposes deployment addresses, credentials, feature toggles, timeouts, VAD thresholds, retrieval limits, and Ollama model selection. `ollama-init` pulls the configured `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL` directly, so no duplicate bootstrap-list variable is needed. Repository-owned local runner details live in `backend/configs/model_runtime.py`: ASR/diarization/rerank model names and commands, CPU/`int8` runtime choices, `/models`, ffmpeg, and the temporary voice directory. Specialized Hugging Face repositories and revisions live in `infras/model-init/model_init.py`.
+The settings loader reads a root `.env` file when present. Compose passes application settings to both backend and worker containers, including rate/concurrency/task guards, circuit-breaker thresholds, Agentic RAG budgets, and Phase 44 resolver/cache/memory/lease contracts. Bounds are validated at startup, including a chat-turn lease long enough to cover the longest configured resolver, embedding-retry, guardrail, or Agent stage plus safety margin. Backend lifespan and Celery logger startup emit a non-secret effective Phase 44 summary (history, resolver, cache rollout, memory, lease, and contract values) without credentials. PostgreSQL, Milvus, and MinIO breakers read settings instead of provider-local constants. The environment also exposes deployment addresses, timeouts, VAD thresholds, retrieval limits, and Ollama model selection. `ollama-init` pulls the configured `OLLAMA_MODEL`, `EMBEDDING_MODEL`, and `GUARDRAIL_MODEL` directly, so no duplicate bootstrap-list variable is needed. Repository-owned local runner details live in `backend/configs/model_runtime.py`: ASR/diarization/rerank model names and commands, CPU/`int8` runtime choices, `/models`, ffmpeg, and the temporary voice directory. Specialized Hugging Face repositories and revisions live in `infras/model-init/model_init.py`.
 
 ## Dependencies
 
@@ -744,13 +845,13 @@ Phase 8 operational-log verification on 2026-06-19 confirmed:
 
 ### Phase 25 Hierarchical Intelligence Model
 
-Meeting processing keeps the complete transcript as the authoritative evidence document, then creates deterministic token-bounded transcript windows. Each window is persisted in `meeting_transcript_windows` with ordered segment references, status, retry metadata, and local extraction JSON. The worker fans out bounded LLM extraction across windows and reduces results into `meeting-intelligence-result.v2` with `transcript.windows`, `evidence.items`, `knowledge.records`, and `knowledge.relationships`. Records use canonical types, subtype payloads, evidence references, source references, and derivation metadata.
+Meeting processing keeps the complete transcript as the authoritative evidence document, then creates deterministic token-bounded transcript windows. Each window is persisted in `meeting_transcript_windows` with ordered segment references, status, retry metadata, and local extraction JSON. Before analysis calls, the repository commits an asset-bound `transcript-checkpoint.v1` inside the existing local-result JSON; failed analysis can therefore resume from the complete deduplicated transcript without repeating ASR or diarization. The worker fans out bounded LLM extraction across windows and reduces results into `meeting-intelligence-result.v2` with `transcript.windows`, `evidence.items`, `knowledge.records`, and `knowledge.relationships`. Records use canonical types, subtype payloads, evidence references, source references, and derivation metadata.
 
 PostgreSQL remains authoritative for transcript windows, the result JSON, and retrieval chunks. Milvus receives only derived embeddings. Retrieval exposes a compatibility view of unified records to the existing chunk builders, so global records, summaries, relationships, and transcript windows remain searchable without sending the complete transcript to any one LLM request. Failed windows can be retried independently through `omnicall.processing.extract_transcript_window`.
 
 *Document reflects project state during **Phase 39 Agentic RAG v2 Alignment**. Backend owns canonical record planning, retrieval orchestration, evidence verification, bounded replanning, synthesis, and verified evidence-to-citation mapping; provider candidates are normalized into the hierarchical v2 knowledge boundary before persistence.*
 
-## Agentic RAG Runtime Details (Phase 26)
+## Historical Agentic RAG Runtime Details (Removed In Phase 47)
 
 The Agentic RAG system replaces the linear RAG pipeline with an agent-driven approach that can dynamically select tools and perform multi-hop reasoning.
 
@@ -818,7 +919,7 @@ User Question
 ```env
 AGENTIC_RAG_MAX_ITERATIONS=2
 AGENTIC_RAG_MAX_REPLANS=1
-AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION=4
+AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION=8
 AGENTIC_RAG_MAX_CHUNKS_PER_TOOL=5
 AGENTIC_RAG_MAX_TOTAL_CHUNKS=12
 AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS=30.0
@@ -840,6 +941,56 @@ AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS=60.0
 
 ## Generic Query Graph (Phase 40)
 
-JSON-v2 Agentic RAG uses five tools: `search_semantic`, `search_keyword`, `search_records`, `search_section`, and `get_summary`. `search_records` accepts record type/subtype selectors, relation capabilities, and an answer shape. The planner emits `recordTypes`, `recordSubtypes`, `relationTypes`, `requiredFields`, and `answerShape`; replans preserve those selectors. The verifier checks both fields and requested relations. Common projections (`count`, `participant_list`, `actor_target`, `location`, and `timeline`) are synthesized deterministically from record fields and evidence before the general LLM synthesis path. Transcript speaker labels remain source data; speaker profiles/counts are participant/fact records.
+JSON-v2 Agentic RAG uses five tools: `search_semantic`, `search_keyword`, `search_records`, `search_section`, and `get_summary`. `search_records` accepts record type/subtype selectors, relation capabilities, and an answer shape. A type-selected query never filters canonical records by literal sentence match; it relevance-ranks the retained set with normalized Vietnamese/English terms, then prefers directly evidenced records before the context limit is applied. The planner emits `recordTypes`, `recordSubtypes`, `relationTypes`, `requiredFields`, and `answerShape`; replans preserve those selectors. The verifier checks both fields and requested relations. Tool-catalog and claim-verifier versions participate in the pipeline fingerprint so derived retrieval/answer cache entries become logically stale when either contract changes. Common projections (`count`, `participant_list`, `actor_target`, `location`, and `timeline`) are synthesized deterministically from record fields and evidence before the general LLM synthesis path. Transcript speaker labels remain source data; speaker profiles/counts are participant/fact records.
 
-*Document reflects project state during **Phase 40 Generic Query Graph and Answer Projections**. Backend owns identity-aware v2 records, relationship-aware retrieval, evidence verification, and generic answer projection; remaining work is runtime identity-resolution migration.*
+## Context-aware cache and verified strategy memory
+
+`meeting_retrieval_snapshots` is the authoritative generation boundary for a meeting's derived retrieval data. It records index generation, embedding identity, retrieval contract, status, chunk count, and durable vector-repair claim state. Every rebuild with a prior snapshot moves active strategy memory to `stale`, including a contract-only rebuild whose content generation remains unchanged; reconciliation then queues evidence revalidation. A reindex changes the logical boundary before best-effort Redis/Milvus cleanup, so stale cache/memory cannot become valid merely because cleanup failed. Terminal chat persistence and cache store both recheck the generation/contract under a database lock.
+
+Redis Cache v2 has three meeting-local disposable layers:
+
+- Embedding cache keyed by owner, meeting, canonical/context signature, generation, pipeline, and embedding identity.
+- Retrieval cache containing chunk IDs/scores only; hits are rehydrated from authoritative PostgreSQL rows.
+- Answer cache containing grounded, cited, claim-verified answers, citation/chunk digests, integrity hashes, safety-policy fingerprints, and source lineage.
+
+Standalone exact keys use the canonical question and query/graph features; contextual exact keys also include the context fingerprint, inherited semantic slots, and referent/entity bindings. `QueryGraph.fingerprint_payload()` canonicalizes answer-affecting goal order/topology, Query IR, detail, concepts, proposition, and reference semantics, but excludes provider-generated IDs, confidence, and provenance-only spans. Consequently equivalent provider encodings reuse an identity, while the separate trusted context fingerprint and message anchors keep the same elliptical surface under participant and customer focuses isolated. When dependency cannot be established safely, the turn asks for clarification before cache or memory lookup. Exact lookup runs before embedding and can serve repeated questions anywhere in the thread. Every hit validates owner/meeting, generation, full pipeline fingerprint, context, answer/integrity hashes, source lifecycle, and rehydrated citations. Output safety is rechecked when the policy fingerprint changed; rejected candidates are quarantined and fall back to generation. Redis errors are fail-open. Base TTL is 24 hours, thumbs-up promotion creates a verified tier with a seven-day TTL, and each meeting is atomically bounded to 100 answer entries. A short token-owned singleflight key reduces duplicate work: a contender waits for the owner briefly, rechecks exact cache, and only then falls back to Agent execution. It remains an optimization and does not replace PostgreSQL turn serialization.
+
+Semantic cache defaults to `shadow`: compatible candidates at cosine `>=0.94` are observed but not served. Compatibility gates reject differences in operation, target, requested fields, semantic branch signatures, selectors, entities, relations, typed filters, negation, time constraints, locale, or context fingerprint and record hard negatives. A valid entry belonging to another context fingerprint is skipped but remains in the meeting-local semantic index for its own future paraphrases; only entries with stale generation/pipeline contracts or failed integrity are pruned. Direct serving requires `canary`, a verified entry, observed precision at or above `0.99`, and deterministic canary selection; the default canary percentage is `0`. `off`, `shadow`, and `canary` provide the runtime kill switch.
+
+Agent Memory v2 stores only an allowlisted retrieval strategy derived from a grounded, cited, claim-verified answer with contributing tools. It excludes answer/chunk text, full plans/subqueries, raw tool arguments, and reasoning. Retrieval considers at most 100 active memories from the same meeting and requires matching snapshot generation, embedding identity, retrieval/pipeline contract, strategy schema, context fingerprint, intent, answer shape, and entities before cosine `>=0.92`; at most three hints are injected. Caller-supplied query vectors carry the snapshot embedding identity, and fallback embedding is generated only with that expected identity, so vectors from another model cannot enter cosine matching even when dimensions happen to agree. Hints may add selectors or prioritize successful tools but cannot skip base retrieval, claim verification, guardrails, or citations. Reindex marks active memories stale; worker revalidation reruns only allowlisted retrieval actions against current evidence before reactivation.
+
+`PUT /api/meetings/{meetingId}/chat/messages/{messageId}/feedback` persists `up`, `down`, or `neutral` with a monotonically increasing revision and optional compare-and-set `expected_revision`. Thumbs-up promotes its cache source and queues memory sync only for eligible non-cache source answers; cache hits never create an empty strategy memory. Down/neutral logically invalidate source lineage in PostgreSQL before best-effort Redis eviction and deactivate related memory; on an exact hit this includes the source answer's strategy memory, while a semantic-hit down quarantines only that semantic mapping. Neutral remains a durable feedback row but is exposed as `feedback_rating: null`. Worker tasks carry `feedback_id + revision`, so an older task cannot overwrite the latest choice; reconciliation republishes stuck `pending/processing` sync work.
+
+## Semantic query intelligence and grounded answers (Phase 46)
+
+After conversation dependency resolution and canonical-input guardrails, `SemanticQueryInterpreter` maps the authorized canonical question into a closed Query IR. The IR keeps `operation`, `target`, `answerShape`, entities, relations, typed filters, temporal constraints, requested fields, and preferred source sections independent. A bare count request therefore cannot silently become a participant count; unsafe ambiguity ends as `clarification_needed` before cache, memory, or Agent execution. Deterministic interpretation covers stable cases, while bounded provider output is schema-validated and may not introduce values that are absent from the current source clause. Generic business roles such as customer/khách hàng/agent/nhân viên are retained only as target context and are removed from entity/filter identity. A high-confidence, non-ambiguous typed factual lookup/count/list can overturn narrow S4-age or S6-price guardrail false positives, but never injection signals or unsafe/advice terms.
+
+Elliptical follow-ups use a typed continuation contract rather than a list of grammar patterns. Eligible prior assistant messages contribute only their validated internal Semantic Query IR and message ID; their answer text remains untrusted and never becomes evidence. `infer_query_ir_patch` identifies slots expressed by the current question, and `merge_contextual_query_ir` inherits only compatible missing slots. Current explicit scope wins and clears incompatible inherited entities, filters, fields, relations, and time. The merge records inherited slots and semantic anchors, produces a frame-specific fingerprint, and marks concrete meeting IR as retrieval-required so fast-path cannot answer it as assistant identity or small-talk. Exact collection premises are extracted only from decimal digits bound to the current typed collection noun; word numerals remain non-exact until a source-span numeral parser can preserve locale/diacritic distinctions safely.
+
+An ambiguous request persists a closed `clarification-repair.v1` frame in internal message metadata. Only the next user turn may repair it; source IR is re-grounded from user-authored questions, while assistant clarification text is excluded from canonical grounding and evidence. Normal completed-history loading continues to exclude clarification turns. Both semantic and repair metadata are validated before use and omitted from the public chat metadata allowlist.
+
+Mixed questions are decomposed into clause-local semantic branches. `query_planner.py` compiles each branch through declared target/operation capabilities, preserves its bounded subquery and constraints, and allocates at least one primary retrieval call per branch before optional secondary calls. Full semantic signatures prevent two same-target clauses with different scope or expected counts from collapsing. A meeting-global participant list compiles into coupled COUNT and LIST branches, and replanning keeps that evidence contract together. Scoped participant counts and expected cardinality for unsupported targets fail closed instead of consuming the global meeting aggregate. Typed tool schemas and the executor apply the same allowlisted fields, nested-field lookup, entity, relation, and time constraints.
+
+Evidence sufficiency and final claim verification run against the active subplans. Structured fields are checked before bounded multilingual lexical aliases, while numbers, negation, entity identity, direction, and temporal claims remain strict. Structured projections now compile typed facts, allowed evidence references, and locked values into `synthesisConstraints`; they never publish user-facing prose. Every terminal `grounded` or `partial` result must originate from the final LLM synthesis (`answerOriginKind=llm_synthesis`), then pass citations, goal coverage, and claim verification. Typed contact/count facts have a narrow constraint validator for JSON records whose display text is intentionally generic: it accepts only an LLM answer that preserves locked values and uses the allowed evidence references. Participant count/list branches still require one non-conflicting exact aggregate and, for a roster, one complete unique identity set. Lower-bound-only counts, incomplete/mentioned-only identities, conflicting aggregates, unknown evidence, and unavailable synthesis fail closed as a terminal control result rather than being upgraded by a deterministic template. A multi-intent answer cannot remain `grounded` when any required branch is incomplete.
+
+Retrieval combines generation-valid Milvus candidates with authoritative PostgreSQL lexical/structured candidates through reciprocal-rank fusion. Validated Query IR paths apply authoritative source-section pins and consume the fused order without a blocking per-request crossencoder; surface-only legacy paths may still rerank, but a model timeout returns the fused order through a typed fallback. Tool batches share the remaining Agent deadline, token accounting counts existing evidence once, and there is no unbounded all-tools retry. Retrieval-cache admission is limited to grounded, cited, claim-verified chunks that actually contributed to verified evidence.
+
+The completed Phase 46 baseline versioned the affected identities as `meeting-tools.v6-attendee-overview`, `conversation-resolver.v10-exact-collection-precedence`, `semantic-query.v5-bound-collection-cardinality`, `capability-query-plan.v6-complete-participant-sets`, `claim-synthesis.v10-cardinality-scope-guard`, and `claim-evidence.v7-complete-participant-sets`. Phase 47 supersedes these current runtime identities without changing the historical Phase 46 acceptance record.
+
+## Query graph discourse and evidence branches (Phase 47)
+
+Phase 47 carries the closed Phase 46 Query IR into a bounded, validated `meeting-query-graph.v1` contract. Runtime graph lineage uses `meeting-query-graph.v13-corroborated-provider-enrichment`; its canonical cache payload excludes provider IDs, confidence, and provenance-only spans. The request rebuilds `meeting-discourse-state.v1` from eligible completed graphs and exact durable message anchors instead of persisting mutable conversational state in Redis. Current-turn/history/current-meeting reference scopes, subject versus answer-focus compatibility, exact anchor equality, source grounding, unique bounded IDs, and DAG edges are all validated before a graph becomes authoritative. Trusted historical focus selectors are materialized server-side, while unknown or invented focus IDs fail closed. Provider schema drift that writes the scope enum `current_meeting` directly into a reference slot is materialized only when the current clause names a deterministic semantic domain or a separate exact history focus already supplies the entity; elliptical clauses still require validated history lineage. A graph slightly below the general resolver confidence threshold is retained only when its normalized semantic concepts are locally corroborated and every goal agrees with deterministic current-clause operation and target.
+
+Every goal compiles into a branch whose detail, concepts, proposition, dependencies, references, required fields, and evidence facets remain attached through tool execution. Context coordination preserves at least one eligible chunk per branch; verification filters evidence back to each branch; and synthesis receives independent goal bundles. Participant role classification reserves a bounded exact `transcript.window` read alongside participant identity records and omits the redundant broad semantic search for that branch. Deterministic count/roster/contact projections can constrain and validate final LLM synthesis but cannot bypass it. The first candidate may receive one repair pass for unsupported claims or missing goal coverage, but the final claim/cardinality verifier still decides grounded status and citations. When verification fails, the terminal output boundary may retain a partial answer only from supported claims whose `goalId` belongs to the current QueryGraph and whose origin remains `llm_synthesis`. Goal-unbound snippets, stale cache entries without that origin, and claims bound to another graph fail closed; retrieval fallback re-enters final synthesis and synthesis failure is an explicit `error`, not generated fallback prose.
+
+An explicit current-meeting summary/topic question (for example, `cuộc họp này bàn về gì?` or `cuộc họp bàn về vấn đề gì?`) is a self-contained retrieval request even when a conversation history exists. It bypasses open-vocabulary history resolution so a small fallback resolver cannot convert that current-turn intent into `clarification_needed`. Likewise, timeout from planning or a tool step is recoverable: the agent retrieves a bounded evidence set and attempts final synthesis with the remaining original Agent deadline. Only exhaustion of that remaining budget returns synthesis-unavailable.
+
+Closed deterministic Semantic Query IR is also a provider-independent execution boundary. With no entity, filter, temporal, or history-reference binding, chat builds the deterministic one-goal graph locally and the Agent executes its validated plan tools immediately; it does not call an LLM to plan retrieval. This applies equally to a local model, an OpenAI-compatible server, or a fallback provider. LLM use is reserved for open semantic enrichment and the final evidence-constrained synthesis, while explicit history references remain on the resolver path.
+
+History-reference detection is span/token based, not substring based. A pronoun such as `họ` is recognized only as its own lexical token, so it cannot accidentally match the unrelated word `họp` in a current-meeting question and suppress deterministic retrieval.
+
+Final synthesis has a task profile rather than a provider-specific prompt policy. `scalar_evidence_answer` (count/lookup with one goal) caps output at 192 tokens and skips repair; standard and complex profiles use progressively larger output caps and bounded repair only when justified. Each synthesis call carries one remaining stage deadline through the provider chain. A primary provider receives a short five-second probe and, on failure, the fallback receives only the remaining shared deadline; no provider can create a fresh independent timeout. Native adapters honor request-specific timeout/output overrides, while legacy-compatible adapters remain callable without them.
+
+The current pipeline fingerprint uses `meeting-tools.v7-evidence-facets`, `conversation-resolver.v14-role-bound-history-context`, `semantic-query.v7-open-contact-facets`, `meeting-query-graph.v13-corroborated-provider-enrichment`, `capability-query-plan.v7-graph-branches`, `hybrid-rrf.v3-branch-coverage-facets`, `claim-synthesis.v21-proposition-schema-example`, `claim-evidence.v11-scoped-semantic-fallback-sensitive-fields`, and guardrail prompt `v6-typed-contact-verification-mode`. Claim verification first checks deterministic anchors, then may batch exact-ref multilingual entailment reviews; sensitive values stay under typed projections, and proposition premises cannot cover a goal without a typed verdict. This logically invalidates incompatible cache/memory artifacts while retaining PostgreSQL as durable truth. Phase 47 adds no table or migration.
+
+*Document reflects project state at **Phase 47 Query Graph Discourse and Evidence Branch Architecture (In Progress)**. Phase 46 remains the completed semantic/cardinality baseline; Phase 47 documents typed discourse lineage, canonical graph identity, branch/facet coverage, context/evidence separation, LLM-origin final synthesis, evidence-bundle repair, and grounded contact-output safety pending final runtime acceptance.*

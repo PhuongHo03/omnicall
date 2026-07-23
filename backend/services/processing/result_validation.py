@@ -133,6 +133,33 @@ def _validate_unified_result(result_json: dict) -> None:
     executive = result_json.get("summaries", {}).get("executive", {})
     if not isinstance(executive, dict) or not executive.get("text"):
         raise ValueError("Unified result must include an executive summary.")
+    summary_refs = executive.get("evidenceRefs", [])
+    if not isinstance(summary_refs, list) or any(
+        not isinstance(reference, str) or not reference
+        for reference in summary_refs
+    ):
+        raise ValueError("Executive summary evidenceRefs must be a list of non-empty IDs.")
+    unknown_summary_refs = set(summary_refs) - citation_ids
+    if unknown_summary_refs:
+        raise ValueError(
+            "Executive summary references unknown evidence: "
+            + ", ".join(sorted(unknown_summary_refs))
+        )
+    lineage_status = executive.get("lineageStatus")
+    if lineage_status not in {None, "verified", "context_only"}:
+        raise ValueError("Executive summary lineageStatus is not supported.")
+    if lineage_status == "verified" and not summary_refs:
+        raise ValueError("Verified executive summary requires evidenceRefs.")
+    if lineage_status == "context_only" and summary_refs:
+        raise ValueError("Context-only executive summary cannot carry evidenceRefs.")
+    covered_window_ids = executive.get("coveredWindowIds", [])
+    coverage_ratio = executive.get("coverageRatio", 0.0)
+    if not isinstance(covered_window_ids, list) or set(covered_window_ids) - window_ids:
+        raise ValueError("Executive summary coveredWindowIds must reference transcript windows.")
+    if not isinstance(coverage_ratio, (int, float)) or not 0 <= float(coverage_ratio) <= 1:
+        raise ValueError("Executive summary coverageRatio must be between 0 and 1.")
+    if lineage_status == "verified" and (set(covered_window_ids) != window_ids or float(coverage_ratio) != 1.0):
+        raise ValueError("Verified executive summary must cover every transcript window.")
 
 
 def append_voice_quality_warnings(result_json: dict, voice_metadata: dict) -> None:

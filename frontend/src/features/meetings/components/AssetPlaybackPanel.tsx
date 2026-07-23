@@ -105,6 +105,7 @@ export function AssetPlaybackPanel({
         <div className="apb__loading">Loading media…</div>
       ) : (
         <>
+          {engine.mediaError && <div className="apb__loading" role="alert">{engine.mediaError}</div>}
           {/* Waveform — audio only */}
           {!isVideo && (
             <WaveformDisplay
@@ -117,6 +118,7 @@ export function AssetPlaybackPanel({
 
           <PlayerControls
             isPlaying={engine.isPlaying}
+            disabled={!engine.isMediaReady || Boolean(engine.mediaError)}
             currentTime={engine.currentTime}
             duration={engine.duration}
             volume={engine.volume}

@@ -39,7 +39,7 @@ export function AdminMeetingLogsScreen({ token }: { token: string }) {
         onFlowChange={logs.setFlow}
         onLevelChange={logs.setLevel}
         onLimitChange={logs.setLimit}
-        onRefresh={() => void logs.refreshLogs()}
+        onRefresh={() => void logs.refreshLogs(false, true)}
         onSearchChange={logs.setSearch}
       />
 

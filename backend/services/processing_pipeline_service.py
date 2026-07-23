@@ -6,8 +6,14 @@ from sqlalchemy.orm import Session
 from backend.models.enums import MeetingStatus
 from backend.configs.settings import Settings, get_settings
 from backend.providers.analysis import AnalysisProvider
-from backend.providers.lock_provider import RedisLockProvider
+from backend.providers.llm import FallbackLLMProviderError
+from backend.providers.lock_provider import (
+    LockHeartbeat,
+    ProcessingLockLostError,
+    RedisLockProvider,
+)
 from backend.providers.transcription_provider import LocalTranscriptionProvider
+from backend.providers.transcript_types import TranscriptSegment
 from backend.repositories.meeting_repository import (
     MeetingAssetRepository,
     MeetingIntelligenceResultRepository,
@@ -22,6 +28,7 @@ from backend.services.processing.persistence_stage import PersistenceStage
 from backend.services.processing.retrieval_index_stage import RetrievalIndexStage
 from backend.services.processing.transcription_stage import TranscriptionStage
 from backend.services.processing.hierarchical_extraction_service import HierarchicalExtractionService
+from backend.services.processing.failure_policy import safe_processing_failure
 from backend.repositories.transcript_window_repository import TranscriptWindowRepository
 
 
@@ -90,12 +97,47 @@ class ProcessingPipelineService:
             )
             return {"meeting_id": meeting_id, "status": "locked"}
 
+        heartbeat = LockHeartbeat(
+            self.lock_provider,
+            key=lock_key,
+            token=lock_token,
+            ttl_seconds=self.settings.redis_processing_lock_ttl_seconds,
+        )
         try:
-            return self._process_with_lock(meeting_id=meeting_id)
+            heartbeat.start()
+            return self._process_with_lock(meeting_id=meeting_id, lock_heartbeat=heartbeat)
+        except ProcessingLockLostError:
+            self.session.rollback()
+            self._emit(
+                level="error",
+                flow="processing",
+                stage="worker_lock",
+                status="aborted",
+                message="Processing stopped because lock ownership could no longer be verified.",
+                meeting_id=meeting_id,
+                provider="redis-lock",
+                error_type="ProcessingLockLost",
+            )
+            return {"meeting_id": meeting_id, "status": "lock_lost"}
         finally:
-            self.lock_provider.release(lock_key, lock_token)
+            heartbeat.stop()
+            try:
+                self.lock_provider.release(lock_key, lock_token)
+            except Exception:
+                # The token expires naturally. A release outage must not turn
+                # an already committed processing result into a failed task.
+                logger.warning(
+                    "Processing lock release failed",
+                    extra={"meeting_id": meeting_id},
+                )
 
-    def _process_with_lock(self, *, meeting_id: str) -> dict[str, str]:
+    def _process_with_lock(
+        self,
+        *,
+        meeting_id: str,
+        lock_heartbeat: LockHeartbeat | None = None,
+    ) -> dict[str, str]:
+        self._assert_lock_owned(lock_heartbeat)
         meeting = self.meetings.get(meeting_id)
         if meeting is None:
             self._emit(
@@ -126,11 +168,13 @@ class ProcessingPipelineService:
 
         if meeting.status == MeetingStatus.FAILED:
             self.meetings.update_status(meeting, MeetingStatus.QUEUED)
+            self._assert_lock_owned(lock_heartbeat, refresh=True)
             self.session.commit()
 
         asset = self.assets.get_latest_for_meeting(meeting_id)
         if asset is None:
             self.meetings.update_status(meeting, MeetingStatus.FAILED, "Meeting or uploaded asset was not found.")
+            self._assert_lock_owned(lock_heartbeat, refresh=True)
             self.session.commit()
             self._emit(
                 level="error",
@@ -162,6 +206,7 @@ class ProcessingPipelineService:
         )
         self.meetings.update_status(meeting, MeetingStatus.PROCESSING)
         self.meetings.increment_attempts(meeting)
+        self._assert_lock_owned(lock_heartbeat, refresh=True)
         self.session.commit()
         self._emit(
             level="info",
@@ -179,9 +224,56 @@ class ProcessingPipelineService:
         current_stage = "transcription"
         stage_started = time.perf_counter()
         try:
-            transcription_result = self.transcription_stage.run(meeting=meeting, asset=asset)
-            transcript_segments = transcription_result.segments
-            detected_language = transcription_result.detected_language
+            transcript_checkpoint = self.transcript_windows.latest_transcript_checkpoint(
+                meeting_id=meeting.id,
+                asset_id=asset.id,
+            )
+            if transcript_checkpoint is not None:
+                transcript_segments = [
+                    TranscriptSegment(
+                        id=item["id"],
+                        speaker=item.get("speaker") or "Unknown",
+                        start_ms=int(item.get("startMs") or 0),
+                        end_ms=int(item.get("endMs") or 0),
+                        text=item.get("text") or "",
+                        confidence=float(item.get("confidence") or 0),
+                    )
+                    for item in transcript_checkpoint["segments"]
+                ]
+                detected_language = transcript_checkpoint.get("detectedLanguage")
+                self.transcription_provider.last_provider_name = (
+                    transcript_checkpoint.get("transcriptionProvider")
+                    or getattr(self.transcription_provider, "last_provider_name", self.transcription_provider.provider_name)
+                )
+                self.transcription_provider.last_provider_model = (
+                    transcript_checkpoint.get("transcriptionModel")
+                    or getattr(self.transcription_provider, "last_provider_model", self.transcription_provider.provider_model)
+                )
+                self.transcription_provider.last_voice_metadata = transcript_checkpoint.get("voiceMetadata") or {}
+                self._emit(
+                    level="info",
+                    flow="processing",
+                    stage="transcription_checkpoint",
+                    status="succeeded",
+                    message="Transcript restored from the durable analysis checkpoint.",
+                    workspace_id=meeting.owner_user_id,
+                    meeting_id=meeting.id,
+                    meeting_name=meeting.title,
+                    file=asset_log_context(asset),
+                    provider=self.transcription_provider.last_provider_name,
+                    model=self.transcription_provider.last_provider_model,
+                    executor_type="asr",
+                    details={
+                        "generation": transcript_checkpoint.get("generation"),
+                        "segmentCount": len(transcript_segments),
+                        "checkpointHit": True,
+                    },
+                )
+            else:
+                transcription_result = self.transcription_stage.run(meeting=meeting, asset=asset)
+                self._assert_lock_owned(lock_heartbeat, refresh=True)
+                transcript_segments = transcription_result.segments
+                detected_language = transcription_result.detected_language
 
             current_stage = "analysis"
             stage_started = time.perf_counter()
@@ -192,6 +284,7 @@ class ProcessingPipelineService:
                 detected_language=detected_language,
                 transcription_provider=self.transcription_provider,
             )
+            self._assert_lock_owned(lock_heartbeat, refresh=True)
             result_json = analysis_result.result_json
             current_stage = "result_validation"
             stage_started = time.perf_counter()
@@ -212,6 +305,7 @@ class ProcessingPipelineService:
 
             current_stage = "result_persistence"
             stage_started = time.perf_counter()
+            self._assert_lock_owned(lock_heartbeat)
             persistence_result = self.persistence_stage.run(
                 meeting=meeting,
                 asset=asset,
@@ -230,6 +324,7 @@ class ProcessingPipelineService:
 
             current_stage = "retrieval_index"
             stage_started = time.perf_counter()
+            self._assert_lock_owned(lock_heartbeat, refresh=True)
             retrieval_result = self.retrieval_index_stage.run(
                 meeting=meeting,
                 asset=asset,
@@ -238,7 +333,44 @@ class ProcessingPipelineService:
             retrieval_chunks = retrieval_result.chunks
 
             self.meetings.update_status(meeting, MeetingStatus.READY)
+            # A synchronous compare-and-expire is the final ownership fence
+            # before authoritative DB state becomes visible.
+            self._assert_lock_owned(lock_heartbeat, refresh=True)
             self.session.commit()
+            if retrieval_result.metadata.get("vector", {}).get("status") == "failed":
+                repair_claim = None
+                try:
+                    repair_claim = self.retrieval_index.chunks.claim_repair_for_publish(
+                        meeting_id=meeting.id,
+                        lease_seconds=self._retrieval_repair_lease_seconds(),
+                    )
+                    self.session.commit()
+                    from backend.providers.queue_provider import get_processing_queue_provider
+
+                    if repair_claim is not None:
+                        get_processing_queue_provider().enqueue_retrieval_repair(
+                            meeting_id=repair_claim.meeting_id,
+                            repair_token=repair_claim.token,
+                        )
+                except Exception as exc:
+                    self.session.rollback()
+                    if repair_claim is not None:
+                        self.retrieval_index.chunks.restore_repair_pending_if_owned(
+                            meeting_id=repair_claim.meeting_id,
+                            token=repair_claim.token,
+                        )
+                        self.session.commit()
+                    self._emit(
+                        level="error",
+                        flow="processing",
+                        stage="vector_repair_queue",
+                        status="warned",
+                        message="Vector repair publish deferred to reconciliation.",
+                        workspace_id=meeting.owner_user_id,
+                        meeting_id=meeting.id,
+                        meeting_name=meeting.title,
+                        error_type=type(exc).__name__,
+                    )
             self._emit(
                 level="info",
                 flow="processing",
@@ -258,17 +390,22 @@ class ProcessingPipelineService:
                 },
             )
             return {"meeting_id": meeting.id, "status": "succeeded"}
+        except ProcessingLockLostError:
+            self.session.rollback()
+            raise
         except Exception as exc:
             self.session.rollback()
             logger.exception("Meeting processing failed", extra={"meeting_id": meeting_id, "stage": current_stage})
             meeting = self.meetings.get(meeting_id)
             if meeting is None:
                 return {"meeting_id": meeting_id, "status": "missing"}
-            safe_reason = "Meeting processing failed. Please retry later."
+            failure_code, safe_reason = safe_processing_failure(exc)
             self.meetings.update_status(meeting, MeetingStatus.FAILED, safe_reason)
             self.session.commit()
             failed_stage = self._transcription_failure_stage() if current_stage == "transcription" else current_stage
             provider, model = self._stage_model(failed_stage)
+            if isinstance(exc, FallbackLLMProviderError):
+                provider, model = exc.fallback_provider, exc.fallback_model
             self._emit(
                 level="error",
                 flow="processing",
@@ -282,11 +419,27 @@ class ProcessingPipelineService:
                 provider=provider,
                 model=model,
                 duration_ms=elapsed_ms(stage_started),
-                details={"safeReason": safe_reason},
+                details={"failureCode": failure_code, "safeReason": safe_reason},
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
             return {"meeting_id": meeting.id, "status": "failed"}
+
+    @staticmethod
+    def _assert_lock_owned(
+        lock_heartbeat: LockHeartbeat | None,
+        *,
+        refresh: bool = False,
+    ) -> None:
+        if lock_heartbeat is not None:
+            lock_heartbeat.assert_owned(refresh=refresh)
+
+    def _retrieval_repair_lease_seconds(self) -> int:
+        return max(
+            60,
+            int(self.settings.redis_processing_lock_ttl_seconds),
+            int(self.settings.processing_reconciliation_stale_seconds) * 2,
+        )
 
     def _emit_stage_started(
         self,
@@ -299,6 +452,7 @@ class ProcessingPipelineService:
         model: str,
         details: dict | None = None,
     ) -> None:
+        is_router = stage == "transcription" and "router" in (provider or "")
         self._emit(
             level="info",
             flow="processing",
@@ -309,8 +463,11 @@ class ProcessingPipelineService:
             meeting_id=meeting.id,
             meeting_name=meeting.title,
             file=asset_log_context(asset),
-            provider=provider,
-            model=model,
+            executor_type="llm" if stage == "analysis" else "pipeline",
+            configured_provider=provider,
+            configured_model=None if is_router else model,
+            version=model if is_router else None,
+            operation=stage,
             details=details or {},
         )
 

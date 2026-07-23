@@ -1,6 +1,7 @@
 import math
 import re
 import time
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -51,6 +52,7 @@ class RetrievalSearchService:
         meeting_id: str,
         query: str,
         limit: int = 6,
+        preferred_section_types: list[str] | None = None,
     ) -> list[RetrievedChunk]:
         self._sync_candidates()
         search_started = time.perf_counter()
@@ -66,26 +68,32 @@ class RetrievalSearchService:
         output_limit = min(limit, self.settings.rerank_output_k)
         retrieval_started = time.perf_counter()
         self.candidates.last_postgres_metadata = {}
+        vector_candidates: list[RetrievedChunk] = []
         if embedding_error:
-            candidates = None
             retrieval_source = "postgres-fallback-embedding"
         else:
-            candidates = self.candidates.vector_candidates(
+            vector_result = self.candidates.vector_candidates(
                 meeting_id=meeting_id,
                 query=query,
                 query_embedding=query_embedding,
                 limit=candidate_limit,
             )
-            retrieval_source = self.vector_provider.provider_name
-        if candidates is None:
-            if not embedding_error:
+            if vector_result is not None:
+                vector_candidates = vector_result
+                retrieval_source = f"hybrid:{self.vector_provider.provider_name}+postgres"
+            else:
                 retrieval_source = "postgres-fallback"
-            candidates = self.candidates.postgres_candidates(
-                meeting_id=meeting_id,
-                query=query,
-                query_embedding=query_embedding,
-                limit=candidate_limit,
-            )
+        postgres_candidates = self.candidates.postgres_candidates(
+            meeting_id=meeting_id,
+            query=query,
+            query_embedding=query_embedding,
+            limit=candidate_limit,
+        )
+        candidates = _merge_candidate_pools(
+            vector_candidates,
+            postgres_candidates,
+            limit=candidate_limit,
+        )
         candidates, stale_chunk_count, legacy_chunk_count = _filter_embedding_generation(
             candidates,
             expected_identity=_embedding_identity(self.embedding_provider),
@@ -95,6 +103,7 @@ class RetrievalSearchService:
             meeting_id=meeting_id,
             query=query,
             limit=output_limit,
+            section_types=preferred_section_types,
         )
         pinned, pinned_stale_count, pinned_legacy_count = _filter_embedding_generation(
             pinned,
@@ -103,15 +112,44 @@ class RetrievalSearchService:
         stale_chunk_count += pinned_stale_count
         legacy_chunk_count += pinned_legacy_count
         rerank_started = time.perf_counter()
-        reranked = self.candidates.rerank(query=query, candidates=candidates, output_limit=output_limit)
+        if preferred_section_types:
+            # A validated Query IR already supplies authoritative section pins.
+            # Keep semantic/vector + PostgreSQL fusion deterministic here so a
+            # per-request local cross-encoder model load cannot consume the
+            # Agent deadline. Legacy surface-only searches may still use the
+            # optional model reranker below.
+            reranked = candidates[:output_limit]
+            self.candidates.last_rerank_metadata = {
+                "provider": self.rerank_provider.provider_name,
+                "model": self.rerank_provider.model_name,
+                "status": "skipped_query_ir",
+                "inputCount": len(candidates),
+                "outputCount": len(reranked),
+            }
+        else:
+            reranked = self.candidates.rerank(
+                query=query,
+                candidates=candidates,
+                output_limit=output_limit,
+            )
         self.last_rerank_metadata = self.candidates.last_rerank_metadata
         rerank_duration_ms = _elapsed_ms(rerank_started)
         if pinned:
             self.last_rerank_metadata = {
                 **self.last_rerank_metadata,
                 "intentPinnedCount": len(pinned),
+                "intentPinSource": (
+                    "query-ir"
+                    if preferred_section_types
+                    else "surface-fallback"
+                ),
             }
-        result = _merge_unique_chunks(pinned, reranked, output_limit)
+        # Intent pins guarantee that authoritative structured evidence remains
+        # visible, but they must not consume the entire result window. Reserve
+        # at least half of the output for query-ranked candidates.
+        pinned_limit = min(len(pinned), max(1, output_limit // 2))
+        selected_pins = pinned[:pinned_limit]
+        result = _merge_unique_chunks(selected_pins, reranked, output_limit)
         self.last_search_metadata = {
             "embedding": {
                 "provider": self.embedding_provider.provider_name,
@@ -129,6 +167,8 @@ class RetrievalSearchService:
                 "durationMs": retrieval_duration_ms,
                 "candidateCount": len(candidates),
                 "candidateLimit": candidate_limit,
+                "vectorCandidateCount": len(vector_candidates),
+                "postgresCandidateCount": len(postgres_candidates),
                 "staleEmbeddingCount": stale_chunk_count,
                 "legacyEmbeddingCount": legacy_chunk_count,
                 **self.candidates.last_postgres_metadata,
@@ -297,6 +337,40 @@ def _merge_unique_chunks(left: list[RetrievedChunk], right: list[RetrievedChunk]
     return merged
 
 
+def _merge_candidate_pools(
+    vector_candidates: list[RetrievedChunk],
+    postgres_candidates: list[RetrievedChunk],
+    *,
+    limit: int,
+) -> list[RetrievedChunk]:
+    """Fuse semantic and lexical ranks without letting one pool crowd out the other."""
+    by_chunk_id: dict[str, dict[str, Any]] = {}
+    for source, pool in (("vector", vector_candidates), ("postgres", postgres_candidates)):
+        for rank, item in enumerate(pool, start=1):
+            state = by_chunk_id.setdefault(
+                item.record.chunk_id,
+                {
+                    "item": item,
+                    "fusion": 0.0,
+                    "sources": set(),
+                },
+            )
+            state["fusion"] += 1.0 / (60.0 + rank)
+            state["sources"].add(source)
+            if item.score > state["item"].score:
+                state["item"] = item
+    ranked = sorted(
+        by_chunk_id.values(),
+        key=lambda state: (
+            -float(state["fusion"]),
+            -len(state["sources"]),
+            -float(state["item"].score),
+            _priority(state["item"].record),
+        ),
+    )
+    return [state["item"] for state in ranked[:limit]]
+
+
 def _embedding_identity(provider) -> str:
     dimensions = getattr(provider, "expected_dimensions", None)
     if not isinstance(dimensions, int):
@@ -336,9 +410,9 @@ def _intent_section_types(query: str) -> list[str]:
         return ["fact.record", "participant.profile", "entity.profile", "transcript.window"]
 
     if tokens.intersection({"participant", "participants", "attendee", "attendees", "speaker", "speakers", "people", "person", "role", "roles"}):
-        return ["fact.participant_count", "fact.record", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
+        return ["fact.participant_count", "speaker.stats", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
     if _contains_any(normalized, ["tham gia", "nguoi tham gia", "người tham gia", "bao nhieu nguoi", "bao nhiêu người", "co bao nhieu nguoi", "có bao nhiêu người", "ai tham gia", "vai tro", "vai trò", "nguoi noi", "người nói"]):
-        return ["fact.participant_count", "fact.record", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
+        return ["fact.participant_count", "speaker.stats", "participant.overview", "participant.profile", "entity.profile", "transcript.window"]
 
     if tokens.intersection({"quality", "confidence", "warning", "warnings", "coverage", "audio", "asr", "diarization", "transcription"}):
         return ["quality.overview", "quality.warning", "extraction.overview", "extraction.warning", "transcript.coverage", "fact.record", "participant.profile"]

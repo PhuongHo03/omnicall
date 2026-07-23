@@ -1,8 +1,10 @@
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from backend.configs.settings import Settings
 from backend.providers.rerank_provider import LocalModelRerankProvider, RerankProviderError
@@ -45,6 +47,20 @@ class RerankProviderTestCase(unittest.TestCase):
                 chunks=[_item("analysis.risks-001", "risk owner", priority=50, score=0.91)],
                 output_k=1,
             )
+
+    def test_local_model_reranker_converts_timeout_to_fallback_error(self) -> None:
+        provider = LocalModelRerankProvider(Settings())
+
+        with patch(
+            "backend.providers.rerank_provider.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("rerank", timeout=30),
+        ):
+            with self.assertRaisesRegex(RerankProviderError, "timed out"):
+                provider.rerank(
+                    query="price",
+                    chunks=[_item("fact-price", "monthly cost is $83", priority=30, score=0.9)],
+                    output_k=1,
+                )
 
 
 def _item(chunk_id: str, text: str, *, priority: int, score: float):

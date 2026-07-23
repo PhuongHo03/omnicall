@@ -55,14 +55,12 @@ class RetrievalIndexStage:
             meeting_name=meeting.title,
             file=asset_log_context(asset),
             provider=metadata.get("vectorProvider"),
-            model=self.settings.milvus_collection,
+            executor_type="vector_store",
+            resource=self.settings.milvus_collection,
+            operation="upsert",
             duration_ms=metadata.get("vectorDurationMs"),
             details=vector_metadata,
             error_type="VectorProviderError" if vector_failed else None,
             error_message=vector_metadata.get("error") if vector_failed else None,
         )
-        if vector_failed:
-            from backend.tasks.processing_tasks import repair_retrieval_index
-
-            repair_retrieval_index.delay(meeting.id)
         return RetrievalIndexStageResult(chunks=chunks, metadata=metadata, duration_ms=elapsed_ms(started))

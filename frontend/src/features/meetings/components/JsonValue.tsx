@@ -47,14 +47,22 @@ export function JsonValue({ value, depth }: { value: unknown; depth: number }) {
     }
     return (
       <dl className={depth > 0 ? "json-map json-map--nested" : "json-map"}>
-        {entries.map(([key, entryValue]) => (
-          <div key={key} className="json-map__row">
-            <dt>{labelize(key)}</dt>
-            <dd>
-              <JsonValue value={entryValue} depth={depth + 1} />
-            </dd>
-          </div>
-        ))}
+        {entries.map(([key, entryValue]) => {
+          const containsStructuredValue = isRecord(entryValue)
+            || (Array.isArray(entryValue) && entryValue.some((item) => isRecord(item)));
+
+          return (
+            <div
+              key={key}
+              className={`json-map__row${containsStructuredValue ? " json-map__row--structured" : ""}`}
+            >
+              <dt>{labelize(key)}</dt>
+              <dd>
+                <JsonValue value={entryValue} depth={depth + 1} />
+              </dd>
+            </div>
+          );
+        })}
       </dl>
     );
   }

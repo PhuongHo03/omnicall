@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePollingEffect } from "../../../shared/hooks/usePollingEffect";
 import { clearAdminOperationalLogs, getAdminOperationalLogs } from "../api/adminApi";
 import type { AdminLogFlow, AdminLogLevel, AdminOperationalLog } from "../types/adminTypes";
+import { useToast } from "../../../shared/layouts/ToastContext";
 
 export function useAdminLogs(token: string, meetingId?: string) {
+  const { showToast } = useToast();
   const [logs, setLogs] = useState<AdminOperationalLog[]>([]);
   const [flow, setFlow] = useState<AdminLogFlow>("processing");
   const [level, setLevel] = useState<AdminLogLevel | "all">("all");
@@ -19,7 +21,7 @@ export function useAdminLogs(token: string, meetingId?: string) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const refreshLogs = useCallback(
-    async (silent = false) => {
+    async (silent = false, announce = false) => {
       if (!silent) setIsLoading(true);
       setError(null);
       try {
@@ -39,15 +41,19 @@ export function useAdminLogs(token: string, meetingId?: string) {
           return response.items[0]?.id ?? null;
         });
         if (!silent) {
-          setNotice(`Loaded ${response.items.length} ${flow === "rag" ? "RAG" : "processing"} events.`);
+          const message = `Loaded ${response.items.length} ${flow === "rag" ? "RAG" : "processing"} events.`;
+          setNotice(message);
+          if (announce) showToast({ message, tone: "success" });
         }
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Operational logs request failed.");
+        const message = caught instanceof Error ? caught.message : "Operational logs request failed.";
+        setError(message);
+        if (announce) showToast({ message, tone: "error" });
       } finally {
         if (!silent) setIsLoading(false);
       }
     },
-    [flow, level, limit, search, token, meetingId]
+    [flow, level, limit, search, showToast, token, meetingId]
   );
 
   useEffect(() => {

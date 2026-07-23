@@ -2,7 +2,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from backend.services.agent.token_management import TokenManager
+
+
+class TokenManager:
+    """Small deterministic estimator used only for transcript window sizing."""
+
+    def count_tokens(self, text: str) -> int:
+        return max(1, int(len(text) * 0.25)) if text else 0
 
 
 @dataclass(frozen=True)

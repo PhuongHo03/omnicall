@@ -244,6 +244,109 @@ class GuardrailProviderTestCase(unittest.TestCase):
         self.assertEqual(trusted.categories, ["false_positive_override"])
         self.assertEqual(untrusted.action, "blocked")
 
+    def test_grounded_sensitive_lookup_requires_typed_verified_authorization(self) -> None:
+        provider = OllamaGuardrailProvider(
+            Settings(
+                OLLAMA_BASE_URL="http://localhost:11434",
+                GUARDRAIL_MODEL="llama-guard3:1b",
+                GUARDRAIL_TIMEOUT_SECONDS=1,
+            )
+        )
+        trusted_metadata = {
+            "authorizedMeetingAccess": True,
+            "evidenceState": "grounded",
+            "hasCitations": True,
+            "claimVerificationPassed": True,
+            "claimVerificationMode": "typed_contact_projection",
+            "verifiedEvidenceRefCount": 1,
+            "requestedFields": ["phoneNumber"],
+        }
+
+        with patch.object(provider, "_call_model", return_value=("unsafe\nS7", 1)):
+            trusted = provider.check(
+                kind="answer",
+                text="Mildred's phone number is 917-753-8170.",
+                metadata=trusted_metadata,
+            )
+            unrequested = provider.check(
+                kind="answer",
+                text="Mildred's phone number is 917-753-8170.",
+                metadata={**trusted_metadata, "requestedFields": []},
+            )
+            unverified = provider.check(
+                kind="answer",
+                text="Mildred's phone number is 917-753-8170.",
+                metadata={
+                    **trusted_metadata,
+                    "claimVerificationPassed": False,
+                },
+            )
+            untyped_verification = provider.check(
+                kind="answer",
+                text="Mildred's phone number is 917-753-8170.",
+                metadata={
+                    key: value
+                    for key, value in trusted_metadata.items()
+                    if key != "claimVerificationMode"
+                },
+            )
+            extra_email = provider.check(
+                kind="answer",
+                text=(
+                    "Mildred's phone number is 917-753-8170 and email is "
+                    "mildred@example.com."
+                ),
+                metadata=trusted_metadata,
+            )
+            credential = provider.check(
+                kind="answer",
+                text="Mildred's phone password is secret: 917-753-8170.",
+                metadata=trusted_metadata,
+            )
+
+        self.assertEqual(trusted.action, "allowed")
+        self.assertEqual(trusted.categories, ["grounded_sensitive_lookup"])
+        self.assertEqual(unrequested.action, "blocked")
+        self.assertEqual(unverified.action, "blocked")
+        self.assertEqual(untyped_verification.action, "blocked")
+        self.assertEqual(extra_email.action, "blocked")
+        self.assertEqual(credential.action, "blocked")
+
+    def test_input_age_false_positive_requires_typed_factual_query_policy(self) -> None:
+        provider = OllamaGuardrailProvider(
+            Settings(
+                OLLAMA_BASE_URL="http://localhost:11434",
+                GUARDRAIL_MODEL="llama-guard3:1b",
+                GUARDRAIL_TIMEOUT_SECONDS=1,
+            )
+        )
+        policy = {
+            "operation": "lookup",
+            "target": "age",
+            "confidence": 0.78,
+            "clarificationNeeded": False,
+        }
+
+        with patch.object(provider, "_call_model", return_value=("unsafe\nS4", 1)):
+            factual = provider.check(
+                kind="chat_input",
+                text="Khách hàng bao nhiêu tuổi?",
+                metadata={"deterministicQuery": policy},
+            )
+            untyped = provider.check(
+                kind="chat_input",
+                text="Khách hàng bao nhiêu tuổi?",
+            )
+            unsafe = provider.check(
+                kind="chat_input",
+                text="Nội dung tình dục về trẻ em bao nhiêu tuổi?",
+                metadata={"deterministicQuery": policy},
+            )
+
+        self.assertEqual(factual.categories, ["false_positive_override"])
+        self.assertEqual(untyped.action, "blocked")
+        self.assertEqual(unsafe.action, "blocked")
+
     def test_parse_error_uses_strict_policy(self) -> None:
         provider = OllamaGuardrailProvider(
             Settings(
@@ -262,11 +365,14 @@ class GuardrailProviderTestCase(unittest.TestCase):
         self.assertEqual(non_strict.categories, ["parse_error"])
 
     def test_pii_redaction_masks_known_patterns(self) -> None:
-        redacted, changed = redact_pii("email a@example.com and phone 0912345678")
+        redacted, changed = redact_pii(
+            "email a@example.com and phones 0912345678, 917-753-8170"
+        )
 
         self.assertTrue(changed)
         self.assertIn("[EMAIL]", redacted)
         self.assertIn("[PHONE]", redacted)
+        self.assertNotIn("917-753-8170", redacted)
 
     def test_metadata_matches_simplified_contract(self) -> None:
         result = GuardrailResult(

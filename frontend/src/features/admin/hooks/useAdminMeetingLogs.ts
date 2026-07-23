@@ -4,8 +4,10 @@ import { usePollingEffect } from "../../../shared/hooks/usePollingEffect";
 import { listMeetings } from "../../meetings/api/meetingApi";
 import { clearAdminOperationalLogs, getAdminMeetingLogs } from "../api/adminApi";
 import type { AdminMeetingLogSummary } from "../types/adminTypes";
+import { useToast } from "../../../shared/layouts/ToastContext";
 
 export function useAdminMeetingLogs(token: string) {
+  const { showToast } = useToast();
   const [meetings, setMeetings] = useState<AdminMeetingLogSummary[]>([]);
   const [meetingNameMap, setMeetingNameMap] = useState<Map<string, string>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
@@ -16,7 +18,7 @@ export function useAdminMeetingLogs(token: string) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const refreshMeetings = useCallback(
-    async (silent = false) => {
+    async (silent = false, announce = false) => {
       if (!silent) setIsLoading(true);
       setError(null);
       try {
@@ -34,14 +36,20 @@ export function useAdminMeetingLogs(token: string) {
           meetingName: names.get(item.meetingId) || item.meetingName || item.meetingId.slice(0, 8),
         }));
         setMeetings(merged);
-        if (!silent) setNotice(`Loaded ${items.length} meeting log groups.`);
+        if (!silent) {
+          const message = `Loaded ${items.length} meeting log groups.`;
+          setNotice(message);
+          if (announce) showToast({ message, tone: "success" });
+        }
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Meeting logs request failed.");
+        const message = caught instanceof Error ? caught.message : "Meeting logs request failed.";
+        setError(message);
+        if (announce) showToast({ message, tone: "error" });
       } finally {
         if (!silent) setIsLoading(false);
       }
     },
-    [token]
+    [showToast, token]
   );
 
   useEffect(() => {

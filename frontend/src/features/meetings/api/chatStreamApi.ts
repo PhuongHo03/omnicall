@@ -1,30 +1,19 @@
 import { apiUrl, authHeaders } from "../../../shared/utils/httpClient";
+import { parseChatStreamEvent } from "../dtos/chatStreamDtos";
+import type { ChatStreamEvent } from "../types/meetingTypes";
 
-export type ChatStreamEvent =
-  | { type: "status"; stage: string; message: string }
-  | { type: "token"; token: string }
-  | { type: "done"; answer: string }
-  | { type: "blocked"; message: string }
-  | { type: "error"; message: string }
-  | { type: "connected"; status: string }
-  | { type: "agent_think"; iteration: number; message: string }
-  | { type: "agent_search"; iteration: number; tools: string[]; message?: string }
-  | { type: "observation"; iteration: number; resultCount?: number; successCount?: number; failureCount?: number; tool_results?: Record<string, number>; total_chunks?: number }
-  | { type: "agent_plan"; iteration: number; intent?: string; sections?: string[]; subQueryCount?: number }
-  | { type: "agent_verify"; iteration: number; sufficient: boolean; missingFields?: string[]; evidenceCount?: number }
-  | { type: "agent_replan"; iteration: number; replanCount?: number; reason?: string; missingFields?: string[] }
-  | { type: "agent_synthesize"; iteration?: number; forced?: boolean; message?: string }
-  | { type: "fast_path"; intent?: string; message: string };
+export type { ChatStreamEvent } from "../types/meetingTypes";
 
 export function streamChatEvents(
   token: string,
   meetingId: string,
+  turnId: string | undefined,
   onEvent: (event: ChatStreamEvent) => void,
   onError?: (error: Error) => void,
   onEnd?: () => void,
 ): () => void {
   const controller = new AbortController();
-  const url = apiUrl(`/meetings/${meetingId}/chat/stream`);
+  const url = apiUrl(`/meetings/${meetingId}/chat/stream${turnId ? `?turn_id=${encodeURIComponent(turnId)}` : ""}`);
 
   fetch(url, {
     headers: authHeaders(token),
@@ -56,8 +45,10 @@ export function streamChatEvents(
           if (trimmed.startsWith("data: ")) {
             const jsonStr = trimmed.slice(6);
             try {
-              const event = JSON.parse(jsonStr) as ChatStreamEvent;
-              onEvent(event);
+              const event = parseChatStreamEvent(JSON.parse(jsonStr));
+              if (event) {
+                onEvent(event);
+              }
             } catch {
               // Skip malformed events; polling will still recover persisted chat history.
             }

@@ -35,7 +35,15 @@ class HierarchicalExtractionService:
             )
         self.max_workers = max(1, min(8, getattr(settings, "extraction_window_max_workers", 4)))
 
-    def run(self, *, meeting, asset, transcript_segments: list, detected_language: str | None = None) -> HierarchicalExtractionResult:
+    def run(
+        self,
+        *,
+        meeting,
+        asset,
+        transcript_segments: list,
+        detected_language: str | None = None,
+        transcription_metadata: dict | None = None,
+    ) -> HierarchicalExtractionResult:
         generation = self._generation(transcript_segments)
         windows = self.window_service.build(transcript_segments)
         window_records = [window.as_record() for window in windows]
@@ -44,6 +52,19 @@ class HierarchicalExtractionService:
             generation=generation,
             windows=window_records,
         )
+        transcription_metadata = transcription_metadata or {}
+        self.windows.store_transcript_checkpoints(
+            records=records,
+            windows=windows,
+            asset_id=asset.id,
+            detected_language=detected_language,
+            transcription_provider=transcription_metadata.get("provider"),
+            transcription_model=transcription_metadata.get("model"),
+            voice_metadata=transcription_metadata.get("voiceMetadata"),
+        )
+        # Transcript extraction is expensive but deterministic for this asset.
+        # Persist it before LLM work so an analysis retry can resume after ASR.
+        self.session.commit()
         for record in records:
             self.windows.mark_processing(record)
 
@@ -68,6 +89,7 @@ class HierarchicalExtractionService:
             for record in records:
                 if record.status == "processing":
                     self.windows.mark_failed(record, str(exc))
+            self.session.commit()
             raise
         canonical = reduce_window_results(
             meeting=meeting,

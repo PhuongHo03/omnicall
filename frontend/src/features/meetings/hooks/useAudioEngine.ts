@@ -5,6 +5,8 @@ const SPEED_OPTIONS = [0.5, 1, 1.25, 1.5, 2] as const;
 export type AudioEngineState = {
   mediaRef: React.RefObject<HTMLAudioElement | HTMLVideoElement | null>;
   isPlaying: boolean;
+  isMediaReady: boolean;
+  mediaError: string | null;
   currentTime: number;
   duration: number;
   volume: number;
@@ -27,6 +29,8 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isMediaReady, setIsMediaReady] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState(0.8);
@@ -39,6 +43,12 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
 
   // Sync time via requestAnimationFrame for smooth progress
   useEffect(() => {
+    setIsPlaying(false);
+    setIsMediaReady(false);
+    setMediaError(null);
+    setCurrentTime(0);
+    setDuration(0);
+    setBuffered(null);
     const media = mediaRef.current;
     if (!media) return;
 
@@ -51,7 +61,9 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
     const handleLoadedMetadata = () => {
-      setDuration(media.duration);
+      if (Number.isFinite(media.duration) && media.duration >= 0) setDuration(media.duration);
+      setIsMediaReady(true);
+      setMediaError(null);
       if (pendingSeekRef.current !== null) {
         const pendingTime = pendingSeekRef.current;
         pendingSeekRef.current = null;
@@ -60,6 +72,14 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
       setCurrentTime(media.currentTime);
     };
     const handleEnded = () => setIsPlaying(false);
+    const handleDurationChange = () => {
+      if (Number.isFinite(media.duration) && media.duration >= 0) setDuration(media.duration);
+    };
+    const handleError = () => {
+      setIsPlaying(false);
+      setIsMediaReady(false);
+      setMediaError("This media file could not be played by the browser.");
+    };
     const handleVolumeChange = () => {
       setVolumeState(media.volume);
       setIsMuted(media.muted);
@@ -70,6 +90,8 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
     media.addEventListener("pause", handlePause);
     media.addEventListener("loadedmetadata", handleLoadedMetadata);
     media.addEventListener("ended", handleEnded);
+    media.addEventListener("durationchange", handleDurationChange);
+    media.addEventListener("error", handleError);
     media.addEventListener("volumechange", handleVolumeChange);
     media.addEventListener("ratechange", handleRateChange);
     if (media.readyState >= 1) {
@@ -82,6 +104,8 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
       media.removeEventListener("pause", handlePause);
       media.removeEventListener("loadedmetadata", handleLoadedMetadata);
       media.removeEventListener("ended", handleEnded);
+      media.removeEventListener("durationchange", handleDurationChange);
+      media.removeEventListener("error", handleError);
       media.removeEventListener("volumechange", handleVolumeChange);
       media.removeEventListener("ratechange", handleRateChange);
       cancelAnimationFrame(animationRef.current);
@@ -106,6 +130,9 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
         const audioContext = new AudioContext();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         if (cancelled) return;
+        if (Number.isFinite(audioBuffer.duration) && audioBuffer.duration > 0) {
+          setDuration((current) => current > 0 ? current : audioBuffer.duration);
+        }
 
         const channelData = audioBuffer.getChannelData(0);
         const sampleCount = 200;
@@ -142,7 +169,7 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
 
   const togglePlay = useCallback(() => {
     const media = mediaRef.current;
-    if (!media) return;
+    if (!media || media.readyState < 1) return;
     if (media.paused) {
       void media.play();
     } else {
@@ -154,21 +181,23 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
     const media = mediaRef.current;
     if (!media) return;
     const target = Math.max(0, time);
-    if (!Number.isFinite(media.duration) || media.duration <= 0) {
+    const seekableDuration = Number.isFinite(media.duration) && media.duration > 0 ? media.duration : duration;
+    if (!Number.isFinite(seekableDuration) || seekableDuration <= 0) {
       pendingSeekRef.current = target;
       return;
     }
-    media.currentTime = Math.min(target, media.duration);
+    media.currentTime = Math.min(target, seekableDuration);
     setCurrentTime(media.currentTime);
-  }, []);
+  }, [duration]);
 
   const seekRelative = useCallback((delta: number) => {
     const media = mediaRef.current;
     if (!media) return;
     const target = media.currentTime + delta;
-    media.currentTime = Math.max(0, Math.min(target, media.duration || 0));
+    const seekableDuration = Number.isFinite(media.duration) && media.duration > 0 ? media.duration : duration;
+    media.currentTime = Math.max(0, Math.min(target, seekableDuration || 0));
     setCurrentTime(media.currentTime);
-  }, []);
+  }, [duration]);
 
   const setVolume = useCallback((value: number) => {
     const media = mediaRef.current;
@@ -208,6 +237,8 @@ export function useAudioEngine(playbackUrl: string | null): AudioEngineState {
   return {
     mediaRef,
     isPlaying,
+    isMediaReady,
+    mediaError,
     currentTime,
     duration,
     volume,

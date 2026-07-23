@@ -208,7 +208,12 @@ class LocalASRProvider:
         if not completed.stdout.strip():
             return []
         payload = json.loads(completed.stdout)
-        segments, language = _segments_from_asr_payload(payload, speech_regions)
+        segments, language = _segments_from_asr_payload(
+            payload,
+            speech_regions,
+            min_confidence=self.settings.asr_min_segment_confidence,
+            max_no_speech_probability=self.settings.asr_max_no_speech_probability,
+        )
         self.last_detected_language = language
         return segments
 
@@ -381,7 +386,13 @@ def _merge_regions(
     ]
 
 
-def _segments_from_asr_payload(payload: dict | list, speech_regions: list[SpeechRegion]) -> tuple[list[TranscriptSegment], str | None]:
+def _segments_from_asr_payload(
+    payload: dict | list,
+    speech_regions: list[SpeechRegion],
+    *,
+    min_confidence: float = 0.1,
+    max_no_speech_probability: float = 0.6,
+) -> tuple[list[TranscriptSegment], str | None]:
     raw_segments = payload if isinstance(payload, list) else payload.get("segments", [])
     language = payload.get("language") if isinstance(payload, dict) else None
     if not isinstance(raw_segments, list):
@@ -392,6 +403,12 @@ def _segments_from_asr_payload(payload: dict | list, speech_regions: list[Speech
             continue
         text = str(raw_segment.get("text") or "").strip()
         if not text:
+            continue
+        confidence = _asr_confidence(raw_segment)
+        no_speech_probability = _asr_probability(raw_segment, "no_speech_prob")
+        if confidence < min_confidence:
+            continue
+        if no_speech_probability is not None and no_speech_probability >= max_no_speech_probability:
             continue
         fallback_region = speech_regions[min(index - 1, len(speech_regions) - 1)] if speech_regions else None
         start_ms = _asr_time_ms(raw_segment, "startMs", "start", fallback_region.start_ms if fallback_region else 0)
@@ -405,7 +422,7 @@ def _segments_from_asr_payload(payload: dict | list, speech_regions: list[Speech
                 start_ms=start_ms,
                 end_ms=end_ms,
                 text=text,
-                confidence=_asr_confidence(raw_segment),
+                confidence=confidence,
             )
         )
     return segments, language
@@ -505,6 +522,12 @@ def _asr_confidence(raw_segment: dict) -> float:
     if raw_segment.get("avg_logprob") is not None:
         return max(0.0, min(1.0, 1.0 + float(raw_segment["avg_logprob"])))
     return 0.8
+
+
+def _asr_probability(raw_segment: dict, key: str) -> float | None:
+    if raw_segment.get(key) is None:
+        return None
+    return max(0.0, min(1.0, float(raw_segment[key])))
 
 
 def _turn_time_ms(raw_turn: dict, ms_key: str, seconds_key: str) -> int:

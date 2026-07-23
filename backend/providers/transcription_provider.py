@@ -16,6 +16,10 @@ class TranscriptionProviderError(RuntimeError):
     pass
 
 
+class NoRecognizableSpeechError(TranscriptionProviderError):
+    pass
+
+
 class LocalTranscriptionProvider:
     provider_name = "local-transcription-router"
     provider_model = "routing-v1"
@@ -99,7 +103,7 @@ class LocalTranscriptionProvider:
                 detected_language=getattr(self.asr_provider, "last_detected_language", None),
                 warnings=warnings,
             )
-            raise TranscriptionProviderError("ASR did not return transcript segments.")
+            raise NoRecognizableSpeechError("No recognizable speech was detected in the recording.")
         if self.diarization_provider is not None:
             try:
                 segments = self.diarization_provider.assign_speakers(audio=audio, transcript_segments=segments)

@@ -3,7 +3,7 @@ import { EmptyState } from "../../../shared/components/EmptyState";
 import { useEffect, useRef } from "react";
 
 import { useAutoScroll } from "../hooks/useAutoScroll";
-import type { MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
+import type { ChatFeedbackSelection, MeetingChatCitation, MeetingChatMessage } from "../types/meetingTypes";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 
 type MeetingChatPanelProps = {
@@ -15,6 +15,8 @@ type MeetingChatPanelProps = {
   typewriterMessageIds: Set<string>;
   onTypewriterComplete: (id: string) => void;
   onCitationClick: (citation: MeetingChatCitation) => void;
+  onFeedback: (messageId: string, rating: ChatFeedbackSelection) => void;
+  pendingFeedbackMessageIds: ReadonlySet<string>;
 };
 
 export function MeetingChatPanel({
@@ -26,9 +28,11 @@ export function MeetingChatPanel({
   typewriterMessageIds,
   onTypewriterComplete,
   onCitationClick,
+  onFeedback,
+  pendingFeedbackMessageIds,
 }: MeetingChatPanelProps) {
   const isWaitingForAnswer = messages.length > 0 && Boolean(messages[messages.length - 1].metadata?.pending);
-  const canChat = !isWaitingForAnswer;
+  const canChat = !disabled && !isWaitingForAnswer;
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Auto-scroll when new messages arrive
@@ -52,7 +56,7 @@ export function MeetingChatPanel({
           <EmptyState message="No chat messages yet." />
         ) : (
           <>
-            {messages.map((message) => <ChatMessageBubble key={message.id} message={message} enableTypewriter={typewriterMessageIds.has(message.id)} onTypewriterComplete={onTypewriterComplete} threadRef={threadRef} onCitationClick={onCitationClick} />)}
+            {messages.map((message) => <ChatMessageBubble key={message.id} message={message} enableTypewriter={typewriterMessageIds.has(message.id)} onTypewriterComplete={onTypewriterComplete} threadRef={threadRef} onCitationClick={onCitationClick} onFeedback={onFeedback} feedbackPending={pendingFeedbackMessageIds.has(message.id)} />)}
           </>
         )}
       </div>

@@ -7,6 +7,29 @@ from collections.abc import Iterable
 from backend.services.knowledge.evidence import evidence_by_id
 
 
+_TRANSCRIPT_NOISE_ANNOTATION = re.compile(
+    r"""
+    ^\s*
+    (?:[\[(<]\s*)?
+    (?:
+        background(?:\s+noise)?
+        |crosstalk
+        |inaudible
+        |laughter
+        |music
+        |noise
+        |silence
+        |unintelligible
+        |unk
+        |unknown
+    )
+    (?:\s*[\])>])?
+    \s*[.!?…-]*\s*$
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
+
 def citations_by_id(result_json: dict) -> dict[str, dict]:
     return evidence_by_id(result_json)
 
@@ -114,6 +137,14 @@ def format_ms(value: object) -> str:
 
 def is_signal_text(text: str, *, min_tokens: int = 3) -> bool:
     return len(tokens(text)) >= min_tokens
+
+
+def is_transcript_signal_text(text: str) -> bool:
+    """Keep short spoken evidence while excluding empty/noise-only annotations."""
+    value = str(text or "").strip()
+    if not value or _TRANSCRIPT_NOISE_ANNOTATION.fullmatch(value):
+        return False
+    return bool(tokens(value))
 
 
 def tokens(text: str) -> list[str]:

@@ -17,6 +17,11 @@ _MAX_STRING_LENGTH = 1000
 _MAX_LIST_ITEMS = 30
 _MAX_DICT_ITEMS = 50
 
+_EXECUTOR_TYPES = {
+    "llm", "embedding", "vector_store", "guardrail", "rule", "worker",
+    "cache", "asr", "diarization", "audio_processing", "pipeline", "local",
+}
+
 
 class OperationalLogService:
     def __init__(
@@ -42,6 +47,17 @@ class OperationalLogService:
         chat: dict[str, Any] | None = None,
         provider: str | None = None,
         model: str | None = None,
+        executor_type: str | None = None,
+        resource: str | None = None,
+        operation: str | None = None,
+        version: str | None = None,
+        configured_provider: str | None = None,
+        configured_model: str | None = None,
+        effective_provider: str | None = None,
+        effective_model: str | None = None,
+        origin_provider: str | None = None,
+        origin_model: str | None = None,
+        fallback_used: bool | None = None,
         duration_ms: int | None = None,
         details: dict[str, Any] | None = None,
         error_type: str | None = None,
@@ -51,11 +67,28 @@ class OperationalLogService:
         normalized_flow = flow.strip().lower()
         if normalized_level not in _LEVELS or normalized_flow not in _FLOWS:
             return
+        normalized_stage = stage.strip()
+        normalized_executor = _executor_type(
+            executor_type=executor_type,
+            stage=normalized_stage,
+            provider=provider,
+        )
+        # The legacy model slot used to contain collections, rules, and local
+        # implementation versions. Normalize new events while retaining the
+        # richer, correctly typed value in the provenance contract.
+        if normalized_executor == "vector_store" and resource is None:
+            resource, model = model, None
+        elif normalized_executor == "rule" and resource is None:
+            resource, model = model, None
+        elif normalized_executor in {"audio_processing", "pipeline"} and version is None:
+            version, model = model, None
+        effective_provider = effective_provider or provider
+        effective_model = effective_model or model
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
             "level": normalized_level,
             "flow": normalized_flow,
-            "stage": stage.strip(),
+            "stage": normalized_stage,
             "status": status.strip(),
             "message": message.strip(),
             "workspaceId": workspace_id,
@@ -65,6 +98,17 @@ class OperationalLogService:
             "chat": chat or {},
             "provider": provider,
             "model": model,
+            "executorType": normalized_executor,
+            "resource": resource,
+            "operation": operation or normalized_stage,
+            "version": version,
+            "configuredProvider": configured_provider,
+            "configuredModel": configured_model,
+            "effectiveProvider": effective_provider,
+            "effectiveModel": effective_model,
+            "originProvider": origin_provider,
+            "originModel": origin_model,
+            "fallbackUsed": fallback_used,
             "durationMs": duration_ms,
             "details": details or {},
             "errorType": error_type,
@@ -74,6 +118,7 @@ class OperationalLogService:
             self.provider.append(_sanitize(event))
         except OperationalLogProviderError:
             logger.warning("Operational log event could not be written.", exc_info=True)
+
 
     def tail(
         self,
@@ -91,7 +136,8 @@ class OperationalLogService:
         search_term = search.strip().lower() if search else None
         normalized_meeting_id = meeting_id.strip() if meeting_id else None
         filtered = []
-        for event in events:
+        for stored_event in events:
+            event = _with_provenance_defaults(stored_event)
             if normalized_flow and event.get("flow") != normalized_flow:
                 continue
             if normalized_level and event.get("level") != normalized_level:
@@ -148,6 +194,59 @@ class OperationalLogService:
         if not ids_to_delete:
             return 0
         return self.provider.delete_events(ids_to_delete)
+
+
+def _executor_type(*, executor_type: str | None, stage: str, provider: str | None) -> str | None:
+    explicit = (executor_type or "").strip().lower()
+    if explicit in _EXECUTOR_TYPES:
+        return explicit
+    normalized_provider = (provider or "").strip().lower()
+    if normalized_provider == "rule-based":
+        return "rule"
+    if stage in {"query_resolution", "agent", "answer", "analysis", "analysis_llm_primary"}:
+        return "llm"
+    if stage == "embedding":
+        return "embedding"
+    if stage == "vector_upsert":
+        return "vector_store"
+    if "guardrail" in stage:
+        return "guardrail"
+    if stage in {"worker_received", "queued", "worker_lock"}:
+        return "worker"
+    if stage in {"asr", "transcription"}:
+        return "asr" if stage == "asr" or "router" not in normalized_provider else "pipeline"
+    if stage == "diarization":
+        return "diarization"
+    if stage in {"audio_preprocessing", "vad"}:
+        return "audio_processing"
+    return "pipeline" if stage else None
+
+
+def _with_provenance_defaults(stored_event: dict[str, Any]) -> dict[str, Any]:
+    event = dict(stored_event)
+    executor_type = _executor_type(
+        executor_type=event.get("executorType"),
+        stage=str(event.get("stage") or ""),
+        provider=event.get("provider"),
+    )
+    event["executorType"] = executor_type
+    if executor_type in {"vector_store", "rule"} and not event.get("resource"):
+        event["resource"] = event.get("model")
+        event["model"] = None
+    elif executor_type in {"audio_processing", "pipeline"} and not event.get("version"):
+        event["version"] = event.get("model")
+        event["model"] = None
+    event.setdefault("operation", event.get("stage"))
+    event.setdefault("resource", None)
+    event.setdefault("version", None)
+    event.setdefault("configuredProvider", None)
+    event.setdefault("configuredModel", None)
+    event.setdefault("effectiveProvider", event.get("provider"))
+    event.setdefault("effectiveModel", event.get("model"))
+    event.setdefault("originProvider", None)
+    event.setdefault("originModel", None)
+    event.setdefault("fallbackUsed", None)
+    return event
 
 
 def get_operational_log_service() -> OperationalLogService:

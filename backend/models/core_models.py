@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,9 +14,13 @@ def utcnow() -> datetime:
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("email", name="users_email_key"),
+        Index("ix_users_email", "email"),
+    )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str] = mapped_column(String(160), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(500), nullable=True)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="User", index=True)
@@ -33,6 +37,10 @@ class User(Base):
 
 class AccountSession(Base):
     __tablename__ = "account_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="account_sessions_token_hash_key"),
+        Index("ix_account_sessions_token_hash", "token_hash"),
+    )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(
@@ -41,7 +49,7 @@ class AccountSession(Base):
         nullable=False,
         index=True,
     )
-    token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

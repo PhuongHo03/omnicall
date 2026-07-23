@@ -1,0 +1,4211 @@
+{
+    "source": {
+        "assetIds": [
+            "31a496bb-0c41-483a-ad45-0dc1694268c9"
+        ],
+        "generatedAt": "2026-07-21T05:09:12.312648+00:00",
+        "llmProvider": "ollama",
+        "fallbackUsed": true,
+        "analysisModel": "qwen2.5:1.5b",
+        "analysisProvider": "hierarchical-llm-analysis",
+        "providerExecutions": [
+            {
+                "model": "qwen2.5:1.5b",
+                "provider": "ollama",
+                "windowCount": 1,
+                "fallbackUsed": true,
+                "primaryErrorType": "LLMProviderError",
+                "primaryErrorMessage": "LLM provider request failed: <urlopen error [Errno 111] Connection refused>"
+            }
+        ]
+    },
+    "meeting": {
+        "id": "a0cbcd94-0cc1-470d-8093-d501eb382a14",
+        "title": "a0cbcd94-0cc1-470d-8093-d501eb382a14"
+    },
+    "quality": {
+        "coverage": "complete",
+        "warnings": [
+            "window-0001: LLM did not provide an executive summary; a transcript-grounded fallback was used."
+        ],
+        "confidence": 0.7551
+    },
+    "document": {
+        "title": "a0cbcd94-0cc1-470d-8093-d501eb382a14",
+        "assetIds": [
+            "31a496bb-0c41-483a-ad45-0dc1694268c9"
+        ],
+        "meetingId": "a0cbcd94-0cc1-470d-8093-d501eb382a14",
+        "generatedAt": "2026-07-21T05:09:12.312629+00:00"
+    },
+    "evidence": {
+        "items": [
+            {
+                "id": "cite-001",
+                "kind": "transcript",
+                "endMs": 6000,
+                "quote": "My name is James again, and I'm calling on behalf of education experts from the Quality Monitor line.",
+                "startMs": 0,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-001"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-002",
+                "kind": "transcript",
+                "endMs": 12000,
+                "quote": "And well, I see that you recently filled a form on the Internet expressing an interest in earning a degree, sir.",
+                "startMs": 6000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-002"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-003",
+                "kind": "transcript",
+                "endMs": 14000,
+                "quote": "Is this correct?",
+                "startMs": 12000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-003"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-004",
+                "kind": "transcript",
+                "endMs": 15000,
+                "quote": "Yes.",
+                "startMs": 14000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-004"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-005",
+                "kind": "transcript",
+                "endMs": 16000,
+                "quote": "Okay.",
+                "startMs": 15000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-005"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-006",
+                "kind": "transcript",
+                "endMs": 17000,
+                "quote": "All right.",
+                "startMs": 16000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-006"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-007",
+                "kind": "transcript",
+                "endMs": 18000,
+                "quote": "So that's great.",
+                "startMs": 17000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-007"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-008",
+                "kind": "transcript",
+                "endMs": 22000,
+                "quote": "I'll just need only a few moments of your time so I can match you with the most appropriate schools.",
+                "startMs": 18000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-008"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-009",
+                "kind": "transcript",
+                "endMs": 25000,
+                "quote": "Are you at least 18 years of age?",
+                "startMs": 22000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-009"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-010",
+                "kind": "transcript",
+                "endMs": 26000,
+                "quote": "Yes.",
+                "startMs": 25000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-010"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-011",
+                "kind": "transcript",
+                "endMs": 27000,
+                "quote": "Okay.",
+                "startMs": 26000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-011"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-012",
+                "kind": "transcript",
+                "endMs": 30000,
+                "quote": "Do you currently have a high school diploma or a GED?",
+                "startMs": 27000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-012"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-013",
+                "kind": "transcript",
+                "endMs": 32000,
+                "quote": "GED.",
+                "startMs": 30000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-013"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-014",
+                "kind": "transcript",
+                "endMs": 33000,
+                "quote": "A GED.",
+                "startMs": 32000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-014"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-015",
+                "kind": "transcript",
+                "endMs": 38000,
+                "quote": "If may I ask, if you can find a school for you that meets your needs,",
+                "startMs": 33000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-015"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-016",
+                "kind": "transcript",
+                "endMs": 42000,
+                "quote": "would you be interested in furthering your education in the next six months?",
+                "startMs": 38000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-016"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-017",
+                "kind": "transcript",
+                "endMs": 43000,
+                "quote": "Yes.",
+                "startMs": 42000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-017"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-018",
+                "kind": "transcript",
+                "endMs": 44000,
+                "quote": "Okay.",
+                "startMs": 43000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-018"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-019",
+                "kind": "transcript",
+                "endMs": 45000,
+                "quote": "So that's great.",
+                "startMs": 44000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-019"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-020",
+                "kind": "transcript",
+                "endMs": 49000,
+                "quote": "So let me first verify the information I already got for you, Mr. Paldrill.",
+                "startMs": 45000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-020"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-021",
+                "kind": "transcript",
+                "endMs": 51000,
+                "quote": "I got your first name, Mr. Marcos.",
+                "startMs": 49000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-021"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-022",
+                "kind": "transcript",
+                "endMs": 52000,
+                "quote": "The last name is Paldrill.",
+                "startMs": 51000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-022"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-023",
+                "kind": "transcript",
+                "endMs": 53000,
+                "quote": "Yes.",
+                "startMs": 52000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-023"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-024",
+                "kind": "transcript",
+                "endMs": 54000,
+                "quote": "All right.",
+                "startMs": 53000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-024"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-025",
+                "kind": "transcript",
+                "endMs": 55000,
+                "quote": "Yes.",
+                "startMs": 54000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-025"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-026",
+                "kind": "transcript",
+                "endMs": 58000,
+                "quote": "Now kindly verify for me your address, please.",
+                "startMs": 55000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-026"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-027",
+                "kind": "transcript",
+                "endMs": 61000,
+                "quote": "1331 East Randolph.",
+                "startMs": 58000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-027"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-028",
+                "kind": "transcript",
+                "endMs": 62000,
+                "quote": "All right.",
+                "startMs": 61000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-028"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-029",
+                "kind": "transcript",
+                "endMs": 68000,
+                "quote": "Now this time kindly verify for me your city, state, and your zip code, please.",
+                "startMs": 62000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-029"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-030",
+                "kind": "transcript",
+                "endMs": 70000,
+                "quote": "Oklahoma.",
+                "startMs": 68000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-030"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-031",
+                "kind": "transcript",
+                "endMs": 72000,
+                "quote": "Mm-hmm.",
+                "startMs": 70000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-031"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-032",
+                "kind": "transcript",
+                "endMs": 75000,
+                "quote": "74447.",
+                "startMs": 72000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-032"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-033",
+                "kind": "transcript",
+                "endMs": 76000,
+                "quote": "Thank you, sir.",
+                "startMs": 75000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-033"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-034",
+                "kind": "transcript",
+                "endMs": 84000,
+                "quote": "Now lastly kindly verify for me your email address, please.",
+                "startMs": 76000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-034"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-035",
+                "kind": "transcript",
+                "endMs": 85000,
+                "quote": "All right.",
+                "startMs": 84000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-035"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-036",
+                "kind": "transcript",
+                "endMs": 86000,
+                "quote": "Thank you for that, sir.",
+                "startMs": 85000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-036"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-037",
+                "kind": "transcript",
+                "endMs": 91000,
+                "quote": "Now may I ask what area of interest you're looking to further education career in",
+                "startMs": 86000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-037"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-038",
+                "kind": "transcript",
+                "endMs": 93000,
+                "quote": "or what course would you like to...",
+                "startMs": 91000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-038"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-039",
+                "kind": "transcript",
+                "endMs": 95000,
+                "quote": "Both Oklahoma.",
+                "startMs": 93000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-039"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-040",
+                "kind": "transcript",
+                "endMs": 96000,
+                "quote": "Okay.",
+                "startMs": 95000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-040"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-041",
+                "kind": "transcript",
+                "endMs": 101000,
+                "quote": "What course would you like to take up in college, sir?",
+                "startMs": 96000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-041"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-042",
+                "kind": "transcript",
+                "endMs": 103000,
+                "quote": "Really right now I'm really undecided.",
+                "startMs": 101000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-042"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-043",
+                "kind": "transcript",
+                "endMs": 112140,
+                "quote": "If I had a few options to look into right now, kind of undecided on that.",
+                "startMs": 103000,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-043"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-044",
+                "kind": "transcript",
+                "endMs": 113140,
+                "quote": "Okay.",
+                "startMs": 112140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-044"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-045",
+                "kind": "transcript",
+                "endMs": 114140,
+                "quote": "All right.",
+                "startMs": 113140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-045"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-046",
+                "kind": "transcript",
+                "endMs": 115140,
+                "quote": "No problem there.",
+                "startMs": 114140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-046"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-047",
+                "kind": "transcript",
+                "endMs": 119140,
+                "quote": "But in the future, if there's any course that you would like to take up,",
+                "startMs": 115140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-047"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-048",
+                "kind": "transcript",
+                "endMs": 124140,
+                "quote": "would you like me to match it right now so that you have information in your hand?",
+                "startMs": 119140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-048"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-049",
+                "kind": "transcript",
+                "endMs": 126140,
+                "quote": "Would that be fine with you?",
+                "startMs": 124140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-049"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-050",
+                "kind": "transcript",
+                "endMs": 127140,
+                "quote": "Yes.",
+                "startMs": 126140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-050"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-051",
+                "kind": "transcript",
+                "endMs": 128139,
+                "quote": "Okay.",
+                "startMs": 127140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-051"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-052",
+                "kind": "transcript",
+                "endMs": 130139,
+                "quote": "Electronic.",
+                "startMs": 128139,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-052"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-053",
+                "kind": "transcript",
+                "endMs": 133140,
+                "quote": "Would that be computer, under computer?",
+                "startMs": 130139,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-053"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-054",
+                "kind": "transcript",
+                "endMs": 134140,
+                "quote": "Yes.",
+                "startMs": 133140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-054"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-055",
+                "kind": "transcript",
+                "endMs": 135140,
+                "quote": "Okay.",
+                "startMs": 134140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-055"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-056",
+                "kind": "transcript",
+                "endMs": 136140,
+                "quote": "All right.",
+                "startMs": 135140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-056"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-057",
+                "kind": "transcript",
+                "endMs": 138140,
+                "quote": "And what degree type are you looking to obtain?",
+                "startMs": 136140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-057"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-058",
+                "kind": "transcript",
+                "endMs": 139140,
+                "quote": "All right.",
+                "startMs": 138140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-058"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-059",
+                "kind": "transcript",
+                "endMs": 142140,
+                "quote": "And what degree type are you looking to obtain?",
+                "startMs": 139140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-059"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-060",
+                "kind": "transcript",
+                "endMs": 145140,
+                "quote": "Would it be just simply an associate or a bachelor's degree?",
+                "startMs": 142140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-060"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-061",
+                "kind": "transcript",
+                "endMs": 147140,
+                "quote": "Associate.",
+                "startMs": 145140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-061"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-062",
+                "kind": "transcript",
+                "endMs": 148140,
+                "quote": "Associate.",
+                "startMs": 147140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-062"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-063",
+                "kind": "transcript",
+                "endMs": 149140,
+                "quote": "All right.",
+                "startMs": 148140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-063"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-064",
+                "kind": "transcript",
+                "endMs": 150140,
+                "quote": "This won't take long.",
+                "startMs": 149140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-064"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 2"
+                ]
+            },
+            {
+                "id": "cite-065",
+                "kind": "transcript",
+                "endMs": 152140,
+                "quote": "And I'm just simply going to match it with schools here.",
+                "startMs": 150140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-065"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-066",
+                "kind": "transcript",
+                "endMs": 153140,
+                "quote": "All right, sir.",
+                "startMs": 152140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-066"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-067",
+                "kind": "transcript",
+                "endMs": 157140,
+                "quote": "Now may I ask how old are you, please?",
+                "startMs": 153140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-067"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-068",
+                "kind": "transcript",
+                "endMs": 159140,
+                "quote": "Twenty-one.",
+                "startMs": 157140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-068"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-069",
+                "kind": "transcript",
+                "endMs": 160140,
+                "quote": "Okay.",
+                "startMs": 159140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-069"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-070",
+                "kind": "transcript",
+                "endMs": 163140,
+                "quote": "All right.",
+                "startMs": 160140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-070"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-071",
+                "kind": "transcript",
+                "endMs": 165140,
+                "quote": "Just one second here.",
+                "startMs": 163140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-071"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-072",
+                "kind": "transcript",
+                "endMs": 170140,
+                "quote": "Would you be interested in information system?",
+                "startMs": 165140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-072"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-073",
+                "kind": "transcript",
+                "endMs": 171140,
+                "quote": "Information system.",
+                "startMs": 170140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-073"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-074",
+                "kind": "transcript",
+                "endMs": 174140,
+                "quote": "Can you tell me what is that very early?",
+                "startMs": 171140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-074"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-075",
+                "kind": "transcript",
+                "endMs": 175140,
+                "quote": "Okay.",
+                "startMs": 174140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-075"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-076",
+                "kind": "transcript",
+                "endMs": 176140,
+                "quote": "I'm not certain.",
+                "startMs": 175140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-076"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-077",
+                "kind": "transcript",
+                "endMs": 178140,
+                "quote": "I don't have the full details here.",
+                "startMs": 176140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-077"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-078",
+                "kind": "transcript",
+                "endMs": 180140,
+                "quote": "But certainly it will be involved.",
+                "startMs": 178140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-078"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-079",
+                "kind": "transcript",
+                "endMs": 182140,
+                "quote": "It will certainly involve computers.",
+                "startMs": 180140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-079"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-080",
+                "kind": "transcript",
+                "endMs": 183140,
+                "quote": "Yes.",
+                "startMs": 182140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-080"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-081",
+                "kind": "transcript",
+                "endMs": 184140,
+                "quote": "I don't know what time it is.",
+                "startMs": 183140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-081"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-082",
+                "kind": "transcript",
+                "endMs": 188140,
+                "quote": "Every time we come, I don't know what's going on.",
+                "startMs": 184140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-082"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-083",
+                "kind": "transcript",
+                "endMs": 189140,
+                "quote": "Excuse me, sir.",
+                "startMs": 188140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-083"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-084",
+                "kind": "transcript",
+                "endMs": 191140,
+                "quote": "Go ahead, please.",
+                "startMs": 189140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-084"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-085",
+                "kind": "transcript",
+                "endMs": 193140,
+                "quote": "I think this is a feature set again.",
+                "startMs": 191140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-085"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-086",
+                "kind": "transcript",
+                "endMs": 194140,
+                "quote": "Okay.",
+                "startMs": 193140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-086"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-087",
+                "kind": "transcript",
+                "endMs": 198140,
+                "quote": "Well, I don't have the details about information system,",
+                "startMs": 194140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-087"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-088",
+                "kind": "transcript",
+                "endMs": 201140,
+                "quote": "but definitely it will involve computers.",
+                "startMs": 198140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-088"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-089",
+                "kind": "transcript",
+                "endMs": 203140,
+                "quote": "But once I match you with this,",
+                "startMs": 201140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-089"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-090",
+                "kind": "transcript",
+                "endMs": 206140,
+                "quote": "school endowment counselors will try to contact you,",
+                "startMs": 203140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-090"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-091",
+                "kind": "transcript",
+                "endMs": 209140,
+                "quote": "and they can further explain what this is all about.",
+                "startMs": 206140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-091"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-092",
+                "kind": "transcript",
+                "endMs": 210140,
+                "quote": "Would that be fine with you?",
+                "startMs": 209140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-092"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-093",
+                "kind": "transcript",
+                "endMs": 211140,
+                "quote": "Yes.",
+                "startMs": 210140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-093"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-094",
+                "kind": "transcript",
+                "endMs": 212140,
+                "quote": "Okay.",
+                "startMs": 211140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-094"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-095",
+                "kind": "transcript",
+                "endMs": 217140,
+                "quote": "May I ask, are you associated with the United States military?",
+                "startMs": 212140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-095"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-096",
+                "kind": "transcript",
+                "endMs": 218140,
+                "quote": "No.",
+                "startMs": 217140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-096"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-097",
+                "kind": "transcript",
+                "endMs": 221140,
+                "quote": "Okay.",
+                "startMs": 218140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-097"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-098",
+                "kind": "transcript",
+                "endMs": 224100,
+                "quote": "All right.",
+                "startMs": 221140,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-098"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-099",
+                "kind": "transcript",
+                "endMs": 225100,
+                "quote": "Okay.",
+                "startMs": 224100,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-099"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-100",
+                "kind": "transcript",
+                "endMs": 227600,
+                "quote": "One second here.",
+                "startMs": 225100,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-100"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "unknown"
+                ]
+            },
+            {
+                "id": "cite-101",
+                "kind": "transcript",
+                "endMs": 228600,
+                "quote": "Excuse me.",
+                "startMs": 227600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-101"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-102",
+                "kind": "transcript",
+                "endMs": 229600,
+                "quote": "Okay.",
+                "startMs": 228600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-102"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-103",
+                "kind": "transcript",
+                "endMs": 232600,
+                "quote": "Is your GED your highest level of education,",
+                "startMs": 229600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-103"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-104",
+                "kind": "transcript",
+                "endMs": 235600,
+                "quote": "or are we able to pick up some colleges?",
+                "startMs": 232600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-104"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-105",
+                "kind": "transcript",
+                "endMs": 236600,
+                "quote": "Oh, no.",
+                "startMs": 235600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-105"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-106",
+                "kind": "transcript",
+                "endMs": 239600,
+                "quote": "That's my higher education.",
+                "startMs": 236600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-106"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-107",
+                "kind": "transcript",
+                "endMs": 240600,
+                "quote": "Okay.",
+                "startMs": 239600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-107"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-108",
+                "kind": "transcript",
+                "endMs": 243040,
+                "quote": "Okay.",
+                "startMs": 240600,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-108"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-109",
+                "kind": "transcript",
+                "endMs": 246040,
+                "quote": "And what is your time zone there?",
+                "startMs": 243040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-109"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-110",
+                "kind": "transcript",
+                "endMs": 247040,
+                "quote": "My what?",
+                "startMs": 246040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-110"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-111",
+                "kind": "transcript",
+                "endMs": 248040,
+                "quote": "Your time zone.",
+                "startMs": 247040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-111"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-112",
+                "kind": "transcript",
+                "endMs": 249040,
+                "quote": "What time zone are you in?",
+                "startMs": 248040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-112"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-113",
+                "kind": "transcript",
+                "endMs": 252040,
+                "quote": "My time zone is Central.",
+                "startMs": 249040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-113"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-114",
+                "kind": "transcript",
+                "endMs": 254040,
+                "quote": "What is it again, please?",
+                "startMs": 252040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-114"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-115",
+                "kind": "transcript",
+                "endMs": 255040,
+                "quote": "Central.",
+                "startMs": 254040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-115"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-116",
+                "kind": "transcript",
+                "endMs": 256040,
+                "quote": "Central time.",
+                "startMs": 255040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-116"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-117",
+                "kind": "transcript",
+                "endMs": 261440,
+                "quote": "Is that right?",
+                "startMs": 256040,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-117"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-118",
+                "kind": "transcript",
+                "endMs": 263440,
+                "quote": "Is it Central time?",
+                "startMs": 261440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-118"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-119",
+                "kind": "transcript",
+                "endMs": 264440,
+                "quote": "Yes, sir.",
+                "startMs": 263440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-119"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-120",
+                "kind": "transcript",
+                "endMs": 265440,
+                "quote": "Oh, okay.",
+                "startMs": 264440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-120"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-121",
+                "kind": "transcript",
+                "endMs": 267440,
+                "quote": "That's good.",
+                "startMs": 265440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-121"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-122",
+                "kind": "transcript",
+                "endMs": 271440,
+                "quote": "So I was able to match with school already, and...",
+                "startMs": 267440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-122"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-123",
+                "kind": "transcript",
+                "endMs": 272440,
+                "quote": "Yes.",
+                "startMs": 271440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-123"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-124",
+                "kind": "transcript",
+                "endMs": 275580,
+                "quote": "Okay.",
+                "startMs": 272440,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-124"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-125",
+                "kind": "transcript",
+                "endMs": 276580,
+                "quote": "All right.",
+                "startMs": 275580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-125"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-126",
+                "kind": "transcript",
+                "endMs": 277580,
+                "quote": "So I would like to thank you for your time,",
+                "startMs": 276580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-126"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-127",
+                "kind": "transcript",
+                "endMs": 280580,
+                "quote": "and the school endowment counselor will contact you in the near future.",
+                "startMs": 277580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-127"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-128",
+                "kind": "transcript",
+                "endMs": 281580,
+                "quote": "All right.",
+                "startMs": 280580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-128"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-129",
+                "kind": "transcript",
+                "endMs": 282580,
+                "quote": "Okay.",
+                "startMs": 281580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-129"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-130",
+                "kind": "transcript",
+                "endMs": 284580,
+                "quote": "Thank you, Mr. Pauldrell.",
+                "startMs": 282580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-130"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-131",
+                "kind": "transcript",
+                "endMs": 286580,
+                "quote": "Have a nice day, sir.",
+                "startMs": 284580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-131"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "Speaker 1"
+                ]
+            },
+            {
+                "id": "cite-132",
+                "kind": "transcript",
+                "endMs": 293730,
+                "quote": "I'm sorry.",
+                "startMs": 286580,
+                "sourceRef": null,
+                "segmentIds": [
+                    "seg-132"
+                ],
+                "derivedFrom": [
+                ],
+                "jsonPointer": null,
+                "evidenceType": "direct_quote",
+                "speakerLabels": [
+                    "unknown"
+                ]
+            }
+        ]
+    },
+    "speakers": {
+        "items": [
+            {
+                "label": "Speaker 1",
+                "confidence": 0.6098,
+                "segmentCount": 121,
+                "totalTalkTimeMs": 268081,
+                "countsTowardParticipantCount": true
+            },
+            {
+                "label": "Speaker 2",
+                "confidence": 0.4857,
+                "segmentCount": 9,
+                "totalTalkTimeMs": 15999,
+                "countsTowardParticipantCount": true
+            },
+            {
+                "label": "unknown",
+                "confidence": 0.8711,
+                "segmentCount": 2,
+                "totalTalkTimeMs": 9650,
+                "countsTowardParticipantCount": false
+            }
+        ],
+        "speakerCount": 2,
+        "speakerCountExact": true,
+        "mentionedOnlyCount": 0,
+        "ignoredSegmentCount": 2,
+        "ignoredSpeakerLabelCount": 1,
+        "identifiedParticipantCount": 0,
+        "reconciledIgnoredSegmentCount": 2,
+        "unresolvedIgnoredSegmentCount": 0
+    },
+    "knowledge": {
+        "records": [
+            {
+                "id": "Speaker 1",
+                "data": {
+                    "name": "James",
+                    "confidence": 0.5,
+                    "isAttendee": false,
+                    "displayName": "James",
+                    "speakerLabels": [
+                    ],
+                    "normalizedName": "james",
+                    "isMentionedOnly": true
+                },
+                "type": "participant",
+                "scope": "meeting",
+                "status": "candidate",
+                "subtype": "participant",
+                "confidence": 0.5,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                ],
+                "evidenceRefs": [
+                ]
+            },
+            {
+                "id": "Speaker 2",
+                "data": {
+                    "name": "Pauldrell",
+                    "confidence": 0.5,
+                    "isAttendee": false,
+                    "displayName": "Pauldrell",
+                    "speakerLabels": [
+                    ],
+                    "normalizedName": "pauldrell",
+                    "isMentionedOnly": true
+                },
+                "type": "participant",
+                "scope": "meeting",
+                "status": "candidate",
+                "subtype": "participant",
+                "confidence": 0.5,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                ],
+                "evidenceRefs": [
+                ]
+            },
+            {
+                "id": "action1",
+                "data": {
+                    "text": "Match individuals with educational institutions based on their interests and qualifications.",
+                    "confidence": 0.95
+                },
+                "type": "action",
+                "scope": "meeting",
+                "status": "candidate",
+                "subtype": "action",
+                "confidence": 0.95,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                ],
+                "evidenceRefs": [
+                    "cite-001",
+                    "cite-042"
+                ]
+            },
+            {
+                "id": "decision1",
+                "data": {
+                    "text": "Match individuals with educational institutions based on their interests and qualifications.",
+                    "confidence": 0.95
+                },
+                "type": "decision",
+                "scope": "meeting",
+                "status": "candidate",
+                "subtype": "decision",
+                "confidence": 0.95,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                ],
+                "evidenceRefs": [
+                    "cite-001",
+                    "cite-042"
+                ]
+            },
+            {
+                "id": "question1",
+                "data": {
+                    "text": "What is the purpose of this meeting?",
+                    "confidence": 0.85
+                },
+                "type": "question",
+                "scope": "meeting",
+                "status": "candidate",
+                "subtype": "question",
+                "confidence": 0.85,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                ],
+                "evidenceRefs": [
+                    "cite-001",
+                    "cite-042"
+                ]
+            },
+            {
+                "id": "question2",
+                "data": {
+                    "text": "Who are the participants in this meeting?",
+                    "confidence": 0.95
+                },
+                "type": "question",
+                "scope": "meeting",
+                "status": "candidate",
+                "subtype": "question",
+                "confidence": 0.95,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                ],
+                "evidenceRefs": [
+                    "cite-001",
+                    "cite-042"
+                ]
+            },
+            {
+                "id": "speaker-441ce8066655",
+                "data": {
+                    "displayName": "Speaker 1",
+                    "segmentCount": 121,
+                    "totalTalkTimeMs": 268081,
+                    "averageConfidence": 0.6098
+                },
+                "type": "participant",
+                "scope": "meeting",
+                "status": "verified",
+                "subtype": "speaker_profile",
+                "confidence": 0.6098,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                    "transcript.segments"
+                ],
+                "evidenceRefs": [
+                    "cite-001",
+                    "cite-002",
+                    "cite-003",
+                    "cite-004",
+                    "cite-005",
+                    "cite-006",
+                    "cite-007",
+                    "cite-008",
+                    "cite-009",
+                    "cite-010",
+                    "cite-011",
+                    "cite-012",
+                    "cite-013",
+                    "cite-014",
+                    "cite-015",
+                    "cite-016",
+                    "cite-019",
+                    "cite-020",
+                    "cite-021",
+                    "cite-024",
+                    "cite-025",
+                    "cite-026",
+                    "cite-027",
+                    "cite-028",
+                    "cite-029",
+                    "cite-030",
+                    "cite-031",
+                    "cite-033",
+                    "cite-034",
+                    "cite-035",
+                    "cite-036",
+                    "cite-037",
+                    "cite-038",
+                    "cite-039",
+                    "cite-040",
+                    "cite-042",
+                    "cite-043",
+                    "cite-044",
+                    "cite-045",
+                    "cite-046",
+                    "cite-047",
+                    "cite-048",
+                    "cite-049",
+                    "cite-050",
+                    "cite-053",
+                    "cite-054",
+                    "cite-055",
+                    "cite-056",
+                    "cite-057",
+                    "cite-058",
+                    "cite-059",
+                    "cite-060",
+                    "cite-061",
+                    "cite-062",
+                    "cite-063",
+                    "cite-065",
+                    "cite-066",
+                    "cite-067",
+                    "cite-068",
+                    "cite-069",
+                    "cite-070",
+                    "cite-071",
+                    "cite-072",
+                    "cite-073",
+                    "cite-074",
+                    "cite-075",
+                    "cite-076",
+                    "cite-077",
+                    "cite-078",
+                    "cite-079",
+                    "cite-080",
+                    "cite-081",
+                    "cite-082",
+                    "cite-083",
+                    "cite-084",
+                    "cite-085",
+                    "cite-086",
+                    "cite-087",
+                    "cite-088",
+                    "cite-089",
+                    "cite-090",
+                    "cite-091",
+                    "cite-092",
+                    "cite-093",
+                    "cite-094",
+                    "cite-095",
+                    "cite-096",
+                    "cite-097",
+                    "cite-098",
+                    "cite-099",
+                    "cite-101",
+                    "cite-102",
+                    "cite-103",
+                    "cite-104",
+                    "cite-105",
+                    "cite-106",
+                    "cite-107",
+                    "cite-108",
+                    "cite-109",
+                    "cite-110",
+                    "cite-111",
+                    "cite-112",
+                    "cite-113",
+                    "cite-114",
+                    "cite-115",
+                    "cite-116",
+                    "cite-117",
+                    "cite-118",
+                    "cite-119",
+                    "cite-120",
+                    "cite-121",
+                    "cite-122",
+                    "cite-123",
+                    "cite-124",
+                    "cite-125",
+                    "cite-126",
+                    "cite-127",
+                    "cite-128",
+                    "cite-129",
+                    "cite-130",
+                    "cite-131"
+                ]
+            },
+            {
+                "id": "speaker-e9cd922a21fb",
+                "data": {
+                    "displayName": "Speaker 2",
+                    "segmentCount": 9,
+                    "totalTalkTimeMs": 15999,
+                    "averageConfidence": 0.4857
+                },
+                "type": "participant",
+                "scope": "meeting",
+                "status": "verified",
+                "subtype": "speaker_profile",
+                "confidence": 0.4857,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                    "transcript.segments"
+                ],
+                "evidenceRefs": [
+                    "cite-017",
+                    "cite-018",
+                    "cite-022",
+                    "cite-023",
+                    "cite-032",
+                    "cite-041",
+                    "cite-051",
+                    "cite-052",
+                    "cite-064"
+                ]
+            },
+            {
+                "id": "derived-transcript-participant-count",
+                "data": {
+                    "unit": "people",
+                    "value": 2,
+                    "subject": {
+                        "id": "meeting",
+                        "type": "meeting"
+                    },
+                    "predicate": "has_reliable_speaker_count",
+                    "countBasis": "reliable_diarization_labels",
+                    "isLowerBound": false,
+                    "countCompleteness": "exact",
+                    "ignoredSegmentCount": 2,
+                    "ignoredSpeakerLabelCount": 1,
+                    "reconciledIgnoredSegmentCount": 2,
+                    "unresolvedIgnoredSegmentCount": 0
+                },
+                "type": "fact",
+                "scope": "meeting",
+                "status": "verified",
+                "subtype": "participant_count",
+                "confidence": 1.0,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                    "speaker-441ce8066655",
+                    "speaker-e9cd922a21fb"
+                ],
+                "evidenceRefs": [
+                ]
+            }
+        ],
+        "relationships": [
+            {
+                "id": "identity-930ea41ad68f",
+                "to": {
+                    "id": "Speaker 1",
+                    "type": "participant"
+                },
+                "data": {
+                    "to": {
+                        "id": "Speaker 1",
+                        "type": "participant"
+                    },
+                    "from": {
+                        "id": "speaker-441ce8066655",
+                        "type": "participant"
+                    },
+                    "confidence": 0.95,
+                    "relationType": "identified_as"
+                },
+                "from": {
+                    "id": "speaker-441ce8066655",
+                    "type": "participant"
+                },
+                "type": "relationship",
+                "scope": "meeting",
+                "status": "verified",
+                "subtype": "identity_resolution",
+                "confidence": 0.95,
+                "sourceRefs": [
+                    "window-0001"
+                ],
+                "derivedFrom": [
+                    "seg-001"
+                ],
+                "evidenceRefs": [
+                    "cite-001"
+                ]
+            }
+        ]
+    },
+    "summaries": {
+        "topics": [
+        ],
+        "timeline": [
+        ],
+        "executive": {
+            "text": "Tóm tắt dựa trên transcript: My name is James again, and I'm calling on behalf of education experts from the Quality Monitor line. And well, I see that you recently filled a form on the Internet expressing an interest in earning a degree, sir. Is this correct?",
+            "topicIds": [
+            ],
+            "evidenceRefs": [
+                "cite-001",
+                "cite-002",
+                "cite-003"
+            ],
+            "lineageStatus": "verified"
+        }
+    },
+    "extraction": {
+        "method": "hierarchical_map_reduce",
+        "coverage": 1.0,
+        "warnings": [
+            "window-0001: LLM did not provide an executive summary; a transcript-grounded fallback was used."
+        ],
+        "generation": "98d47cd45dcecbb4b51fa1782bbea604657f6e10c7cc4ebd",
+        "windowCount": 1,
+        "overallConfidence": 0.7551,
+        "unsupportedClaims": [
+        ],
+        "processedWindowCount": 1
+    },
+    "transcript": {
+        "windows": [
+            {
+                "id": "window-0001",
+                "endMs": 293730,
+                "startMs": 0,
+                "segmentIds": [
+                    "seg-001",
+                    "seg-002",
+                    "seg-003",
+                    "seg-004",
+                    "seg-005",
+                    "seg-006",
+                    "seg-007",
+                    "seg-008",
+                    "seg-009",
+                    "seg-010",
+                    "seg-011",
+                    "seg-012",
+                    "seg-013",
+                    "seg-014",
+                    "seg-015",
+                    "seg-016",
+                    "seg-017",
+                    "seg-018",
+                    "seg-019",
+                    "seg-020",
+                    "seg-021",
+                    "seg-022",
+                    "seg-023",
+                    "seg-024",
+                    "seg-025",
+                    "seg-026",
+                    "seg-027",
+                    "seg-028",
+                    "seg-029",
+                    "seg-030",
+                    "seg-031",
+                    "seg-032",
+                    "seg-033",
+                    "seg-034",
+                    "seg-035",
+                    "seg-036",
+                    "seg-037",
+                    "seg-038",
+                    "seg-039",
+                    "seg-040",
+                    "seg-041",
+                    "seg-042",
+                    "seg-043",
+                    "seg-044",
+                    "seg-045",
+                    "seg-046",
+                    "seg-047",
+                    "seg-048",
+                    "seg-049",
+                    "seg-050",
+                    "seg-051",
+                    "seg-052",
+                    "seg-053",
+                    "seg-054",
+                    "seg-055",
+                    "seg-056",
+                    "seg-057",
+                    "seg-058",
+                    "seg-059",
+                    "seg-060",
+                    "seg-061",
+                    "seg-062",
+                    "seg-063",
+                    "seg-064",
+                    "seg-065",
+                    "seg-066",
+                    "seg-067",
+                    "seg-068",
+                    "seg-069",
+                    "seg-070",
+                    "seg-071",
+                    "seg-072",
+                    "seg-073",
+                    "seg-074",
+                    "seg-075",
+                    "seg-076",
+                    "seg-077",
+                    "seg-078",
+                    "seg-079",
+                    "seg-080",
+                    "seg-081",
+                    "seg-082",
+                    "seg-083",
+                    "seg-084",
+                    "seg-085",
+                    "seg-086",
+                    "seg-087",
+                    "seg-088",
+                    "seg-089",
+                    "seg-090",
+                    "seg-091",
+                    "seg-092",
+                    "seg-093",
+                    "seg-094",
+                    "seg-095",
+                    "seg-096",
+                    "seg-097",
+                    "seg-098",
+                    "seg-099",
+                    "seg-100",
+                    "seg-101",
+                    "seg-102",
+                    "seg-103",
+                    "seg-104",
+                    "seg-105",
+                    "seg-106",
+                    "seg-107",
+                    "seg-108",
+                    "seg-109",
+                    "seg-110",
+                    "seg-111",
+                    "seg-112",
+                    "seg-113",
+                    "seg-114",
+                    "seg-115",
+                    "seg-116",
+                    "seg-117",
+                    "seg-118",
+                    "seg-119",
+                    "seg-120",
+                    "seg-121",
+                    "seg-122",
+                    "seg-123",
+                    "seg-124",
+                    "seg-125",
+                    "seg-126",
+                    "seg-127",
+                    "seg-128",
+                    "seg-129",
+                    "seg-130",
+                    "seg-131",
+                    "seg-132"
+                ],
+                "sequenceNo": 1
+            }
+        ],
+        "coverage": {
+            "status": "complete",
+            "windowCount": 1,
+            "coveredAssetIds": [
+                "31a496bb-0c41-483a-ad45-0dc1694268c9"
+            ],
+            "processedWindowCount": 1
+        },
+        "segments": [
+            {
+                "id": "seg-001",
+                "text": "My name is James again, and I'm calling on behalf of education experts from the Quality Monitor line.",
+                "endMs": 6000,
+                "speaker": "Speaker 1",
+                "startMs": 0,
+                "confidence": 0.796875,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-002",
+                "text": "And well, I see that you recently filled a form on the Internet expressing an interest in earning a degree, sir.",
+                "endMs": 12000,
+                "speaker": "Speaker 1",
+                "startMs": 6000,
+                "confidence": 0.7827083333333332,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-003",
+                "text": "Is this correct?",
+                "endMs": 14000,
+                "speaker": "Speaker 1",
+                "startMs": 12000,
+                "confidence": 0.595,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-004",
+                "text": "Yes.",
+                "endMs": 15000,
+                "speaker": "Speaker 1",
+                "startMs": 14000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-005",
+                "text": "Okay.",
+                "endMs": 16000,
+                "speaker": "Speaker 1",
+                "startMs": 15000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-006",
+                "text": "All right.",
+                "endMs": 17000,
+                "speaker": "Speaker 1",
+                "startMs": 16000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-007",
+                "text": "So that's great.",
+                "endMs": 18000,
+                "speaker": "Speaker 1",
+                "startMs": 17000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-008",
+                "text": "I'll just need only a few moments of your time so I can match you with the most appropriate schools.",
+                "endMs": 22000,
+                "speaker": "Speaker 1",
+                "startMs": 18000,
+                "confidence": 0.3665625,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-009",
+                "text": "Are you at least 18 years of age?",
+                "endMs": 25000,
+                "speaker": "Speaker 1",
+                "startMs": 22000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-010",
+                "text": "Yes.",
+                "endMs": 26000,
+                "speaker": "Speaker 1",
+                "startMs": 25000,
+                "confidence": 0.255,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-011",
+                "text": "Okay.",
+                "endMs": 27000,
+                "speaker": "Speaker 1",
+                "startMs": 26000,
+                "confidence": 0.255,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-012",
+                "text": "Do you currently have a high school diploma or a GED?",
+                "endMs": 30000,
+                "speaker": "Speaker 1",
+                "startMs": 27000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-013",
+                "text": "GED.",
+                "endMs": 32000,
+                "speaker": "Speaker 1",
+                "startMs": 30000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-014",
+                "text": "A GED.",
+                "endMs": 33000,
+                "speaker": "Speaker 1",
+                "startMs": 32000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-015",
+                "text": "If may I ask, if you can find a school for you that meets your needs,",
+                "endMs": 38000,
+                "speaker": "Speaker 1",
+                "startMs": 33000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-016",
+                "text": "would you be interested in furthering your education in the next six months?",
+                "endMs": 42000,
+                "speaker": "Speaker 1",
+                "startMs": 38000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-017",
+                "text": "Yes.",
+                "endMs": 43000,
+                "speaker": "Speaker 2",
+                "startMs": 42000,
+                "confidence": 0.44625,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-018",
+                "text": "Okay.",
+                "endMs": 44000,
+                "speaker": "Speaker 2",
+                "startMs": 43000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-019",
+                "text": "So that's great.",
+                "endMs": 45000,
+                "speaker": "Speaker 1",
+                "startMs": 44000,
+                "confidence": 0.82875,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-020",
+                "text": "So let me first verify the information I already got for you, Mr. Paldrill.",
+                "endMs": 49000,
+                "speaker": "Speaker 1",
+                "startMs": 45000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-021",
+                "text": "I got your first name, Mr. Marcos.",
+                "endMs": 51000,
+                "speaker": "Speaker 1",
+                "startMs": 49000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-022",
+                "text": "The last name is Paldrill.",
+                "endMs": 52000,
+                "speaker": "Speaker 2",
+                "startMs": 51000,
+                "confidence": 0.425,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-023",
+                "text": "Yes.",
+                "endMs": 53000,
+                "speaker": "Speaker 2",
+                "startMs": 52000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-024",
+                "text": "All right.",
+                "endMs": 54000,
+                "speaker": "Speaker 1",
+                "startMs": 53000,
+                "confidence": 0.68,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-025",
+                "text": "Yes.",
+                "endMs": 55000,
+                "speaker": "Speaker 1",
+                "startMs": 54000,
+                "confidence": 0.51,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-026",
+                "text": "Now kindly verify for me your address, please.",
+                "endMs": 58000,
+                "speaker": "Speaker 1",
+                "startMs": 55000,
+                "confidence": 0.23375,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-027",
+                "text": "1331 East Randolph.",
+                "endMs": 61000,
+                "speaker": "Speaker 1",
+                "startMs": 58000,
+                "confidence": 0.5666666666666667,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-028",
+                "text": "All right.",
+                "endMs": 62000,
+                "speaker": "Speaker 1",
+                "startMs": 61000,
+                "confidence": 0.425,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-029",
+                "text": "Now this time kindly verify for me your city, state, and your zip code, please.",
+                "endMs": 68000,
+                "speaker": "Speaker 1",
+                "startMs": 62000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-030",
+                "text": "Oklahoma.",
+                "endMs": 70000,
+                "speaker": "Speaker 1",
+                "startMs": 68000,
+                "confidence": 0.6375,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-031",
+                "text": "Mm-hmm.",
+                "endMs": 72000,
+                "speaker": "Speaker 1",
+                "startMs": 70000,
+                "confidence": 0.255,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-032",
+                "text": "74447.",
+                "endMs": 75000,
+                "speaker": "Speaker 2",
+                "startMs": 72000,
+                "confidence": 0.255,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-033",
+                "text": "Thank you, sir.",
+                "endMs": 76000,
+                "speaker": "Speaker 1",
+                "startMs": 75000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-034",
+                "text": "Now lastly kindly verify for me your email address, please.",
+                "endMs": 84000,
+                "speaker": "Speaker 1",
+                "startMs": 76000,
+                "confidence": 0.23375,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-035",
+                "text": "All right.",
+                "endMs": 85000,
+                "speaker": "Speaker 1",
+                "startMs": 84000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-036",
+                "text": "Thank you for that, sir.",
+                "endMs": 86000,
+                "speaker": "Speaker 1",
+                "startMs": 85000,
+                "confidence": 0.425,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-037",
+                "text": "Now may I ask what area of interest you're looking to further education career in",
+                "endMs": 91000,
+                "speaker": "Speaker 1",
+                "startMs": 86000,
+                "confidence": 0.34,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-038",
+                "text": "or what course would you like to...",
+                "endMs": 93000,
+                "speaker": "Speaker 1",
+                "startMs": 91000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-039",
+                "text": "Both Oklahoma.",
+                "endMs": 95000,
+                "speaker": "Speaker 1",
+                "startMs": 93000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-040",
+                "text": "Okay.",
+                "endMs": 96000,
+                "speaker": "Speaker 1",
+                "startMs": 95000,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-041",
+                "text": "What course would you like to take up in college, sir?",
+                "endMs": 101000,
+                "speaker": "Speaker 2",
+                "startMs": 96000,
+                "confidence": 0.255,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-042",
+                "text": "Really right now I'm really undecided.",
+                "endMs": 103000,
+                "speaker": "Speaker 1",
+                "startMs": 101000,
+                "confidence": 0.17,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-043",
+                "text": "If I had a few options to look into right now, kind of undecided on that.",
+                "endMs": 112140,
+                "speaker": "Speaker 1",
+                "startMs": 103000,
+                "confidence": 0.2603938730853391,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-044",
+                "text": "Okay.",
+                "endMs": 113140,
+                "speaker": "Speaker 1",
+                "startMs": 112140,
+                "confidence": 0.459,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-045",
+                "text": "All right.",
+                "endMs": 114140,
+                "speaker": "Speaker 1",
+                "startMs": 113140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-046",
+                "text": "No problem there.",
+                "endMs": 115140,
+                "speaker": "Speaker 1",
+                "startMs": 114140,
+                "confidence": 0.221,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-047",
+                "text": "But in the future, if there's any course that you would like to take up,",
+                "endMs": 119140,
+                "speaker": "Speaker 1",
+                "startMs": 115140,
+                "confidence": 0.3825,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-048",
+                "text": "would you like me to match it right now so that you have information in your hand?",
+                "endMs": 124140,
+                "speaker": "Speaker 1",
+                "startMs": 119140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-049",
+                "text": "Would that be fine with you?",
+                "endMs": 126140,
+                "speaker": "Speaker 1",
+                "startMs": 124140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-050",
+                "text": "Yes.",
+                "endMs": 127140,
+                "speaker": "Speaker 1",
+                "startMs": 126140,
+                "confidence": 0.816,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-051",
+                "text": "Okay.",
+                "endMs": 128139,
+                "speaker": "Speaker 2",
+                "startMs": 127140,
+                "confidence": 0.5436936936936937,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-052",
+                "text": "Electronic.",
+                "endMs": 130139,
+                "speaker": "Speaker 2",
+                "startMs": 128139,
+                "confidence": 0.20654999999999998,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-053",
+                "text": "Would that be computer, under computer?",
+                "endMs": 133140,
+                "speaker": "Speaker 1",
+                "startMs": 130139,
+                "confidence": 0.254915028323892,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-054",
+                "text": "Yes.",
+                "endMs": 134140,
+                "speaker": "Speaker 1",
+                "startMs": 133140,
+                "confidence": 0.204,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-055",
+                "text": "Okay.",
+                "endMs": 135140,
+                "speaker": "Speaker 1",
+                "startMs": 134140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-056",
+                "text": "All right.",
+                "endMs": 136140,
+                "speaker": "Speaker 1",
+                "startMs": 135140,
+                "confidence": 0.28900000000000003,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-057",
+                "text": "And what degree type are you looking to obtain?",
+                "endMs": 138140,
+                "speaker": "Speaker 1",
+                "startMs": 136140,
+                "confidence": 0.357,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-058",
+                "text": "All right.",
+                "endMs": 139140,
+                "speaker": "Speaker 1",
+                "startMs": 138140,
+                "confidence": 0.459,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-059",
+                "text": "And what degree type are you looking to obtain?",
+                "endMs": 142140,
+                "speaker": "Speaker 1",
+                "startMs": 139140,
+                "confidence": 0.7536666666666667,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-060",
+                "text": "Would it be just simply an associate or a bachelor's degree?",
+                "endMs": 145140,
+                "speaker": "Speaker 1",
+                "startMs": 142140,
+                "confidence": 0.7536666666666667,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-061",
+                "text": "Associate.",
+                "endMs": 147140,
+                "speaker": "Speaker 1",
+                "startMs": 145140,
+                "confidence": 0.425,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-062",
+                "text": "Associate.",
+                "endMs": 148140,
+                "speaker": "Speaker 1",
+                "startMs": 147140,
+                "confidence": 0.47600000000000003,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-063",
+                "text": "All right.",
+                "endMs": 149140,
+                "speaker": "Speaker 1",
+                "startMs": 148140,
+                "confidence": 0.75225,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-064",
+                "text": "This won't take long.",
+                "endMs": 150140,
+                "speaker": "Speaker 2",
+                "startMs": 149140,
+                "confidence": 0.53975,
+                "speakerLabel": "Speaker 2"
+            },
+            {
+                "id": "seg-065",
+                "text": "And I'm just simply going to match it with schools here.",
+                "endMs": 152140,
+                "speaker": "Speaker 1",
+                "startMs": 150140,
+                "confidence": 0.5780000000000001,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-066",
+                "text": "All right, sir.",
+                "endMs": 153140,
+                "speaker": "Speaker 1",
+                "startMs": 152140,
+                "confidence": 0.306,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-067",
+                "text": "Now may I ask how old are you, please?",
+                "endMs": 157140,
+                "speaker": "Speaker 1",
+                "startMs": 153140,
+                "confidence": 0.34,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-068",
+                "text": "Twenty-one.",
+                "endMs": 159140,
+                "speaker": "Speaker 1",
+                "startMs": 157140,
+                "confidence": 0.323,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-069",
+                "text": "Okay.",
+                "endMs": 160140,
+                "speaker": "Speaker 1",
+                "startMs": 159140,
+                "confidence": 0.28900000000000003,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-070",
+                "text": "All right.",
+                "endMs": 163140,
+                "speaker": "Speaker 1",
+                "startMs": 160140,
+                "confidence": 0.48166666666666663,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-071",
+                "text": "Just one second here.",
+                "endMs": 165140,
+                "speaker": "Speaker 1",
+                "startMs": 163140,
+                "confidence": 0.49299999999999994,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-072",
+                "text": "Would you be interested in information system?",
+                "endMs": 170140,
+                "speaker": "Speaker 1",
+                "startMs": 165140,
+                "confidence": 0.5372,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-073",
+                "text": "Information system.",
+                "endMs": 171140,
+                "speaker": "Speaker 1",
+                "startMs": 170140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-074",
+                "text": "Can you tell me what is that very early?",
+                "endMs": 174140,
+                "speaker": "Speaker 1",
+                "startMs": 171140,
+                "confidence": 0.5836666666666667,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-075",
+                "text": "Okay.",
+                "endMs": 175140,
+                "speaker": "Speaker 1",
+                "startMs": 174140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-076",
+                "text": "I'm not certain.",
+                "endMs": 176140,
+                "speaker": "Speaker 1",
+                "startMs": 175140,
+                "confidence": 0.816,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-077",
+                "text": "I don't have the full details here.",
+                "endMs": 178140,
+                "speaker": "Speaker 1",
+                "startMs": 176140,
+                "confidence": 0.8245,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-078",
+                "text": "But certainly it will be involved.",
+                "endMs": 180140,
+                "speaker": "Speaker 1",
+                "startMs": 178140,
+                "confidence": 0.748,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-079",
+                "text": "It will certainly involve computers.",
+                "endMs": 182140,
+                "speaker": "Speaker 1",
+                "startMs": 180140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-080",
+                "text": "Yes.",
+                "endMs": 183140,
+                "speaker": "Speaker 1",
+                "startMs": 182140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-081",
+                "text": "I don't know what time it is.",
+                "endMs": 184140,
+                "speaker": "Speaker 1",
+                "startMs": 183140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-082",
+                "text": "Every time we come, I don't know what's going on.",
+                "endMs": 188140,
+                "speaker": "Speaker 1",
+                "startMs": 184140,
+                "confidence": 0.26775,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-083",
+                "text": "Excuse me, sir.",
+                "endMs": 189140,
+                "speaker": "Speaker 1",
+                "startMs": 188140,
+                "confidence": 0.561,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-084",
+                "text": "Go ahead, please.",
+                "endMs": 191140,
+                "speaker": "Speaker 1",
+                "startMs": 189140,
+                "confidence": 0.51,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-085",
+                "text": "I think this is a feature set again.",
+                "endMs": 193140,
+                "speaker": "Speaker 1",
+                "startMs": 191140,
+                "confidence": 0.6204999999999999,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-086",
+                "text": "Okay.",
+                "endMs": 194140,
+                "speaker": "Speaker 1",
+                "startMs": 193140,
+                "confidence": 0.714,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-087",
+                "text": "Well, I don't have the details about information system,",
+                "endMs": 198140,
+                "speaker": "Speaker 1",
+                "startMs": 194140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-088",
+                "text": "but definitely it will involve computers.",
+                "endMs": 201140,
+                "speaker": "Speaker 1",
+                "startMs": 198140,
+                "confidence": 0.5496666666666666,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-089",
+                "text": "But once I match you with this,",
+                "endMs": 203140,
+                "speaker": "Speaker 1",
+                "startMs": 201140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-090",
+                "text": "school endowment counselors will try to contact you,",
+                "endMs": 206140,
+                "speaker": "Speaker 1",
+                "startMs": 203140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-091",
+                "text": "and they can further explain what this is all about.",
+                "endMs": 209140,
+                "speaker": "Speaker 1",
+                "startMs": 206140,
+                "confidence": 0.47741666666666666,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-092",
+                "text": "Would that be fine with you?",
+                "endMs": 210140,
+                "speaker": "Speaker 1",
+                "startMs": 209140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-093",
+                "text": "Yes.",
+                "endMs": 211140,
+                "speaker": "Speaker 1",
+                "startMs": 210140,
+                "confidence": 0.459,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-094",
+                "text": "Okay.",
+                "endMs": 212140,
+                "speaker": "Speaker 1",
+                "startMs": 211140,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-095",
+                "text": "May I ask, are you associated with the United States military?",
+                "endMs": 217140,
+                "speaker": "Speaker 1",
+                "startMs": 212140,
+                "confidence": 0.459,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-096",
+                "text": "No.",
+                "endMs": 218140,
+                "speaker": "Speaker 1",
+                "startMs": 217140,
+                "confidence": 0.425,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-097",
+                "text": "Okay.",
+                "endMs": 221140,
+                "speaker": "Speaker 1",
+                "startMs": 218140,
+                "confidence": 0.19833333333333333,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-098",
+                "text": "All right.",
+                "endMs": 224100,
+                "speaker": "Speaker 1",
+                "startMs": 221140,
+                "confidence": 0.1722972972972973,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-099",
+                "text": "Okay.",
+                "endMs": 225100,
+                "speaker": "Speaker 1",
+                "startMs": 224100,
+                "confidence": 0.765,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-100",
+                "text": "One second here.",
+                "endMs": 227600,
+                "speaker": "unknown",
+                "startMs": 225100,
+                "confidence": 0.8937,
+                "speakerLabel": "unknown"
+            },
+            {
+                "id": "seg-101",
+                "text": "Excuse me.",
+                "endMs": 228600,
+                "speaker": "Speaker 1",
+                "startMs": 227600,
+                "confidence": 0.34,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-102",
+                "text": "Okay.",
+                "endMs": 229600,
+                "speaker": "Speaker 1",
+                "startMs": 228600,
+                "confidence": 0.51,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-103",
+                "text": "Is your GED your highest level of education,",
+                "endMs": 232600,
+                "speaker": "Speaker 1",
+                "startMs": 229600,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-104",
+                "text": "or are we able to pick up some colleges?",
+                "endMs": 235600,
+                "speaker": "Speaker 1",
+                "startMs": 232600,
+                "confidence": 0.6233333333333333,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-105",
+                "text": "Oh, no.",
+                "endMs": 236600,
+                "speaker": "Speaker 1",
+                "startMs": 235600,
+                "confidence": 0.68,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-106",
+                "text": "That's my higher education.",
+                "endMs": 239600,
+                "speaker": "Speaker 1",
+                "startMs": 236600,
+                "confidence": 0.595,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-107",
+                "text": "Okay.",
+                "endMs": 240600,
+                "speaker": "Speaker 1",
+                "startMs": 239600,
+                "confidence": 0.68,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-108",
+                "text": "Okay.",
+                "endMs": 243040,
+                "speaker": "Speaker 1",
+                "startMs": 240600,
+                "confidence": 0.25778688524590165,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-109",
+                "text": "And what is your time zone there?",
+                "endMs": 246040,
+                "speaker": "Speaker 1",
+                "startMs": 243040,
+                "confidence": 0.442,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-110",
+                "text": "My what?",
+                "endMs": 247040,
+                "speaker": "Speaker 1",
+                "startMs": 246040,
+                "confidence": 0.47600000000000003,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-111",
+                "text": "Your time zone.",
+                "endMs": 248040,
+                "speaker": "Speaker 1",
+                "startMs": 247040,
+                "confidence": 0.7989999999999999,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-112",
+                "text": "What time zone are you in?",
+                "endMs": 249040,
+                "speaker": "Speaker 1",
+                "startMs": 248040,
+                "confidence": 0.629,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-113",
+                "text": "My time zone is Central.",
+                "endMs": 252040,
+                "speaker": "Speaker 1",
+                "startMs": 249040,
+                "confidence": 0.4136666666666667,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-114",
+                "text": "What is it again, please?",
+                "endMs": 254040,
+                "speaker": "Speaker 1",
+                "startMs": 252040,
+                "confidence": 0.6204999999999999,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-115",
+                "text": "Central.",
+                "endMs": 255040,
+                "speaker": "Speaker 1",
+                "startMs": 254040,
+                "confidence": 0.7989999999999999,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-116",
+                "text": "Central time.",
+                "endMs": 256040,
+                "speaker": "Speaker 1",
+                "startMs": 255040,
+                "confidence": 0.374,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-117",
+                "text": "Is that right?",
+                "endMs": 261440,
+                "speaker": "Speaker 1",
+                "startMs": 256040,
+                "confidence": 0.14796296296296296,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-118",
+                "text": "Is it Central time?",
+                "endMs": 263440,
+                "speaker": "Speaker 1",
+                "startMs": 261440,
+                "confidence": 0.51,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-119",
+                "text": "Yes, sir.",
+                "endMs": 264440,
+                "speaker": "Speaker 1",
+                "startMs": 263440,
+                "confidence": 0.629,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-120",
+                "text": "Oh, okay.",
+                "endMs": 265440,
+                "speaker": "Speaker 1",
+                "startMs": 264440,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-121",
+                "text": "That's good.",
+                "endMs": 267440,
+                "speaker": "Speaker 1",
+                "startMs": 265440,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-122",
+                "text": "So I was able to match with school already, and...",
+                "endMs": 271440,
+                "speaker": "Speaker 1",
+                "startMs": 267440,
+                "confidence": 0.57375,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-123",
+                "text": "Yes.",
+                "endMs": 272440,
+                "speaker": "Speaker 1",
+                "startMs": 271440,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-124",
+                "text": "Okay.",
+                "endMs": 275580,
+                "speaker": "Speaker 1",
+                "startMs": 272440,
+                "confidence": 0.2328025477707006,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-125",
+                "text": "All right.",
+                "endMs": 276580,
+                "speaker": "Speaker 1",
+                "startMs": 275580,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-126",
+                "text": "So I would like to thank you for your time,",
+                "endMs": 277580,
+                "speaker": "Speaker 1",
+                "startMs": 276580,
+                "confidence": 0.85,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-127",
+                "text": "and the school endowment counselor will contact you in the near future.",
+                "endMs": 280580,
+                "speaker": "Speaker 1",
+                "startMs": 277580,
+                "confidence": 0.6743333333333333,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-128",
+                "text": "All right.",
+                "endMs": 281580,
+                "speaker": "Speaker 1",
+                "startMs": 280580,
+                "confidence": 0.697,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-129",
+                "text": "Okay.",
+                "endMs": 282580,
+                "speaker": "Speaker 1",
+                "startMs": 281580,
+                "confidence": 0.833,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-130",
+                "text": "Thank you, Mr. Pauldrell.",
+                "endMs": 284580,
+                "speaker": "Speaker 1",
+                "startMs": 282580,
+                "confidence": 0.4165,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-131",
+                "text": "Have a nice day, sir.",
+                "endMs": 286580,
+                "speaker": "Speaker 1",
+                "startMs": 284580,
+                "confidence": 0.816,
+                "speakerLabel": "Speaker 1"
+            },
+            {
+                "id": "seg-132",
+                "text": "I'm sorry.",
+                "endMs": 293730,
+                "speaker": "unknown",
+                "startMs": 286580,
+                "confidence": 0.8485,
+                "speakerLabel": "unknown"
+            }
+        ]
+    },
+    "schemaVersion": "meeting-intelligence-result.v2"
+}

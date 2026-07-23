@@ -103,6 +103,53 @@ class OperationalLogServiceTestCase(unittest.TestCase):
 
         self.assertEqual(self.provider.events, [])
 
+    def test_vector_and_rule_resources_are_not_reported_as_models(self) -> None:
+        self.service.emit(
+            level="info",
+            flow="processing",
+            stage="vector_upsert",
+            status="succeeded",
+            message="Vector index updated.",
+            provider="milvus-rest",
+            model="meeting_chunks",
+        )
+        vector = self.service.tail(limit=1)[0]
+        self.assertEqual(vector["executorType"], "vector_store")
+        self.assertEqual(vector["resource"], "meeting_chunks")
+        self.assertIsNone(vector["model"])
+
+        self.service.emit(
+            level="info",
+            flow="rag",
+            stage="input_guardrail",
+            status="succeeded",
+            message="Input guardrail completed.",
+            provider="rule-based",
+            model="text-length",
+        )
+        rule = self.service.tail(limit=1)[0]
+        self.assertEqual(rule["executorType"], "rule")
+        self.assertEqual(rule["resource"], "text-length")
+        self.assertIsNone(rule["model"])
+
+    def test_cache_event_keeps_origin_answer_provenance(self) -> None:
+        self.service.emit(
+            level="info",
+            flow="rag",
+            stage="answer_cache",
+            status="hit",
+            message="Cached answer served.",
+            provider="redis",
+            executor_type="cache",
+            resource="exact-answer-cache",
+            origin_provider="openai-compatible",
+            origin_model="answer-model",
+        )
+        event = self.service.tail(limit=1)[0]
+        self.assertEqual(event["effectiveProvider"], "redis")
+        self.assertEqual(event["originProvider"], "openai-compatible")
+        self.assertEqual(event["originModel"], "answer-model")
+
     def test_clear_by_meeting_removes_only_matching_events(self) -> None:
         for meeting_id in ("meeting-a", "meeting-b"):
             self.service.emit(

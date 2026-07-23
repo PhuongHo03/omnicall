@@ -154,9 +154,14 @@ class RetrievalCandidateService:
         return reranked
 
     def intent_pinned(
-        self, *, meeting_id: str, query: str, limit: int
+        self,
+        *,
+        meeting_id: str,
+        query: str,
+        limit: int,
+        section_types: list[str] | None = None,
     ) -> list[RetrievedChunk]:
-        section_types = self.scoring.intent_section_types(query)
+        section_types = section_types or self.scoring.intent_section_types(query)
         if not section_types:
             return []
         order = {section_type: index for index, section_type in enumerate(section_types)}

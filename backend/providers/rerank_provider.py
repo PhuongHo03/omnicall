@@ -61,6 +61,10 @@ class LocalModelRerankProvider:
                 timeout=self.settings.rerank_timeout_seconds,
                 check=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RerankProviderError(
+                "Local rerank model command timed out; fused retrieval order will be used."
+            ) from exc
         except OSError as exc:
             raise RerankProviderError("Local rerank model command could not start.") from exc
         if completed.returncode != 0:

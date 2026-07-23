@@ -8,10 +8,13 @@ from backend.models import (
     AccountSession,
     AuditEvent,
     ChatMessage,
+    ChatMessageFeedback,
+    ChatTurn,
     Meeting,
     MeetingAsset,
     MeetingChunkRecord,
     MeetingIntelligenceResult,
+    MeetingRetrievalSnapshot,
     MeetingTranscriptWindow,
     User,
 )

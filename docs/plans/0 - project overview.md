@@ -40,7 +40,7 @@ Primary user flows:
 | Manage uploaded files | Review files uploaded by the current account | Account-scoped file library lists owned uploads, allows playback, and allows deletion only when the file is not linked to an existing meeting session |
 | Delete meeting session | Remove an analysis session and its linked artifacts | Admin-only backend flow deletes the meeting session and cascades cleanup to linked file bytes, metadata, processed result, retrieval data, and chat history |
 | Monitor operations | See system health and processing state | Admin dashboard reads normalized backend metrics |
-| Inspect operational logs | Follow processing and RAG steps in realtime | Admin logs page tails temporary structured Redis events with provider/model and safe error details |
+| Inspect operational logs | Follow processing and RAG steps in realtime | Admin logs page tails temporary structured Redis events, hydrates linked Questions from PostgreSQL, exposes Answers only on terminal answer events, and displays only effective runtime/answer-origin provenance without presenting configured defaults, local logic, or vector collections as answer LLMs |
 
 Frontend route map:
 
@@ -54,6 +54,8 @@ Frontend route map:
 | `/admin/logs` | Admin-only realtime processing and RAG operational logs |
 
 `/` redirects authenticated accounts to `/meetings`; the navbar Meetings action also returns to `/meetings`. `/admin` redirects to `/admin/metrics`. The right-side Admin Portal dropdown is rendered only for `Admin`, while route guards redirect unauthenticated users to `/auth` and non-admin users away from `/admin/*`.
+
+Authenticated routes share one accessible top-center toast surface owned by the App Shell. Meeting lifecycle and error events publish there; conversational clarification remains in the persisted live-region chat thread. Admin pages publish only the result of an explicit Refresh action, not initial loads or polling.
 
 Out of MVP unless explicitly pulled forward:
 
@@ -75,10 +77,14 @@ Durable business state belongs in PostgreSQL.
 | `meeting` | Main aggregate for uploaded/recorded meeting content |
 | `meeting_asset` | File metadata for raw uploads, recordings, transcripts, exports, and standalone account-library files stored in MinIO |
 | `meeting_intelligence_result` | Versioned processed transcript JSON used as the main knowledge base for chat |
+| `meeting_transcript_window` | Bounded window checkpoint and local extraction state for processed transcript slices |
 | `meeting_chunk` | Retrieval unit derived from processed JSON sections and source ranges |
 | `chat_message` | Saved user questions, assistant answers, citations, and timestamps |
+| `chat_turn` | Durable, leased unit of chat work pairing one user message with one terminal assistant message |
+| `meeting_retrieval_snapshot` | Authoritative index generation, embedding identity, retrieval contract, and vector-repair lifecycle for one meeting |
+| `chat_message_feedback` | Revisioned `up`/`down`/`neutral` feedback state for an owned assistant message |
 
-The current PostgreSQL local-dev schema intentionally has 8 business tables: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `meeting_intelligence_results`, `meeting_chunks`, and `chat_messages`. `workspaces`, `workspace_members`, `account_files`, `processing_jobs`, `transcript_segments`, `meeting_insights`, and `chat_sessions` were removed during the schema consolidation; their responsibilities are handled by direct account ownership, meeting status/attempt fields, JSONB result storage, derived `meeting_chunks`, and meeting-scoped chat messages.
+The current PostgreSQL local-dev schema intentionally has 12 business tables: `users`, `account_sessions`, `audit_events`, `meetings`, `meeting_assets`, `meeting_intelligence_results`, `meeting_transcript_windows`, `meeting_chunks`, `chat_messages`, `chat_turns`, `meeting_retrieval_snapshots`, and `chat_message_feedback`. `workspaces`, `workspace_members`, `account_files`, `processing_jobs`, `transcript_segments`, `meeting_insights`, `chat_sessions`, and `agent_memories` were removed during the schema consolidation; their responsibilities are handled by direct account ownership, meeting/turn lifecycle fields, JSONB result storage, bounded transcript windows, derived `meeting_chunks`, authoritative retrieval snapshots, and meeting-scoped chat.
 
 Meeting status lifecycle:
 
@@ -120,34 +126,34 @@ Chat retrieval flow:
 ```text
 question
 -> backend permission check
--> query normalization
--> query embedding
--> vector search in Milvus
--> load authoritative processed JSON sections/chunks
--> evidence guard against irrelevant local-embedding hits
--> rerank candidate chunks when rerank provider is enabled
--> load source evidence from transcript entries inside the JSON
--> guardrail input checks when guardrails are enabled
--> answer generation with cited context
--> guardrail output check when guardrails are enabled
--> save chat messages
--> response with answer + citations
+-> durable queued chat turn (one active turn per meeting)
+-> credential redaction + input guardrail
+-> deterministic-first QuerySpec with typed durable history anchors
+-> clarification when an entity/reference slot is missing
+-> deterministic structured-first retrieval plan
+-> per-goal EvidenceBundle with current snapshot generation and transcript refs
+-> evidence validation
+-> SynthesisContract -> primary LLM or Ollama fallback
+-> mandatory AnswerVerificationService; one contract retry only
+-> evidence-aware output guardrail
+-> leased terminal turn/message commit
+-> response with citations and bounded pipelineTrace v1
 ```
+
+History contributes only backend-authored typed targets/fields/entities anchored to durable messages; assistant prose is never factual evidence. Every successful direct or meeting answer is generated by an LLM and verified against the contract. Clarification, `not_enough_evidence`, blocked, and error/control are the only fixed responses. Redis holds temporary coordination state only; chat does not read or write Answer Cache, Semantic Cache, or Agent Memory.
+
+The output guardrail keeps its normal safety boundary. A contact value classified as sensitive may pass only when the owner-authorized meeting request explicitly asked for that typed field and the answer is grounded, cited, claim-verified, and backed by verified evidence refs. Credentials, payment data, government identifiers, unrelated contact types, and unverified disclosure remain blocked.
 
 RAG-first processed intelligence JSON categories:
 
 | Category | Meaning |
 |---|---|
 | Transcript evidence | Authoritative transcript segments with speaker label, time range, text, and confidence |
-| Evidence citations | Canonical transcript/time-range evidence records with deterministic quotes |
-| Speaker stats | Deterministic speaker count, talk time, segment count, and participant mapping metadata |
-| Participants | Attendees and mentioned-only people with normalized names, roles, speaker labels, confidence, and citations |
-| Facts | Atomic queryable claims such as participant count, deadlines, statuses, dates, amounts, owners, and outcomes |
-| Events | Timeline records for requests, escalations, decisions, assignments, issues, resolutions, and follow-ups |
-| Entities | People, organizations, products, services, systems, dates, amounts, locations, and domain terms |
-| Relationships | Graph edges between participants, entities, facts, events, actions, decisions, risks, questions, and topics |
-| Topics and summaries | Hierarchical topic records plus executive, topic-level, and timeline-level summaries |
-| Actions, decisions, risks, questions | Canonical operational records with status, owner/maker/assignee references, confidence, and evidence |
+| Evidence items | Canonical transcript, structured, derived, or source provenance records under `evidence.items` |
+| Speaker stats | Deterministic `participant`/`fact` records for speaker profiles, counts, talk time, and segment count, plus a stable participant overview containing exact count and attendee-only names; there is no top-level `speakers` projection |
+| Knowledge records | One `knowledge.records` collection for participants, entities, facts, events, topics, actions, decisions, risks, questions, relationships, and observations |
+| Relationships | Typed `knowledge.relationships` graph edges whose endpoints reference canonical record IDs |
+| Topics and summaries | Topic records plus executive and hierarchical summary projections |
 | Quality and extraction | Transcript/source quality, extraction confidence, unsupported claims, and warnings |
 
 Processed JSON draft:
@@ -155,16 +161,10 @@ Processed JSON draft:
 ```json
 {
   "schemaVersion": "meeting-intelligence-result.v2",
-  "meeting": {
-    "id": "meeting-id",
-    "title": "Meeting title",
-    "startedAt": "2026-06-12T09:00:00Z",
-    "durationSeconds": 3600
-  },
-  "source": {
+  "document": {
+    "meetingId": "meeting-id",
     "assetIds": ["asset-id"],
-    "transcriptionProvider": "provider-name",
-    "analysisProvider": "provider-name",
+    "title": "Meeting title",
     "generatedAt": "2026-06-12T10:30:00Z"
   },
   "transcript": {
@@ -185,43 +185,43 @@ Processed JSON draft:
     }
   },
   "evidence": {
-    "citations": [
+    "items": [
       {
         "id": "cite-001",
+        "kind": "transcript",
         "segmentIds": ["seg-001"],
         "startMs": 0,
         "endMs": 12000,
-        "speakerLabels": ["Speaker 1"],
-        "quote": "Transcript text",
-        "evidenceType": "direct_quote"
+        "quote": "Transcript text"
       }
     ]
   },
-  "speakers": {
-    "speakerCount": 1,
-    "identifiedParticipantCount": 0,
-    "mentionedOnlyCount": 0,
-    "items": []
+  "knowledge": {
+    "records": [
+      {
+        "id": "participant-profile-001",
+        "type": "participant",
+        "subtype": "speaker_profile",
+        "data": {"speakerLabel": "Speaker 1"},
+        "scope": "meeting",
+        "evidenceRefs": ["cite-001"],
+        "sourceRefs": [],
+        "derivedFrom": ["transcript"],
+        "confidence": 0.92,
+        "status": "verified"
+      }
+    ],
+    "relationships": []
   },
-  "participants": [],
-  "entities": [],
-  "facts": [],
-  "events": [],
-  "relationships": [],
-  "topics": [],
   "summaries": {
     "executive": {
-      "text": "",
+      "text": "Meeting summary.",
       "topicIds": [],
       "citationIds": []
     },
     "topicLevel": [],
     "timelineLevel": []
   },
-  "actions": [],
-  "decisions": [],
-  "risks": [],
-  "questions": [],
   "quality": {
     "coverage": "complete",
     "warnings": [],
@@ -238,12 +238,12 @@ Processed JSON draft:
 
 Processed JSON quality requirements:
 
-- Every important extracted record should include citation IDs or an explicit deterministic source such as `speakers`.
-- Deterministic `transcript`, `source`, `evidence`, and `speakers` fields must not be overwritten by LLM output.
+- Every important extracted record includes valid `evidenceRefs` or an explicit deterministic `derivedFrom` lineage.
+- Deterministic transcript/evidence fields and speaker-derived knowledge records must not be overwritten by LLM output.
 - Actions should separate owner, task, due date, priority, status, confidence, and source evidence.
 - Events should normalize type, status, participants, entities, transcript time range, and citations.
 - Risks should distinguish blocker, dependency, uncertainty, impact, mitigation, owner, status, and citations when available.
-- Chat retrieval should prefer structured JSON sections over plain transcript text.
+- Chat retrieval should prefer canonical `knowledge.records` and summary projections over plain transcript text.
 - Transcript entries inside the JSON remain available for audit, source citations, and fallback transcript-window retrieval.
 
 ## Model Provider Strategy
@@ -276,7 +276,9 @@ LLM usage rules:
 - The provider must be selected by environment variables, not hardcoded in services.
 - Private server endpoints should be treated as first-class providers, not temporary hacks.
 - Ollama is the default local fallback path for development and degraded operation.
-- Ollama fallback should use a small local model and may produce lower-quality JSON; schema validation remains mandatory.
+- Ollama fallback uses a compact extraction contract, a bounded output budget, and one serialized local generation slot; schema validation remains mandatory.
+- Executor-based LLM calls carry request-scoped provenance; logs separate configured primary provider/model from the effective fallback even when the caller's bounded deadline expires before local generation finishes.
+- Failed analysis retries reuse an asset-bound PostgreSQL transcript checkpoint instead of rerunning ASR and diarization.
 - Generation of `meeting_intelligence_result` JSON should prefer the best available API/endpoint model.
 - Chat answer generation can use a cheaper/faster model first and escalate to a stronger provider for difficult or low-confidence questions.
 - Provider prompts, raw provider responses, and secrets must not be exposed to the frontend.
@@ -308,14 +310,16 @@ LLM_FALLBACK_PROVIDER=ollama
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=qwen2.5:1.5b
 
-AGENTIC_RAG_MAX_ITERATIONS=2
-AGENTIC_RAG_MAX_REPLANS=1
-AGENTIC_RAG_MAX_TOOL_CALLS_PER_ITERATION=4
-AGENTIC_RAG_MAX_CHUNKS_PER_TOOL=5
-AGENTIC_RAG_MAX_TOTAL_CHUNKS=12
-AGENTIC_RAG_ITERATION_TIMEOUT_SECONDS=30.0
-AGENTIC_RAG_TOTAL_TIMEOUT_SECONDS=60.0
-AGENTIC_RAG_MAX_CONTEXT_TOKENS=4000
+RAG_QUERY_INTERPRETATION_TIMEOUT_SECONDS=15
+RAG_EVIDENCE_RETRIEVAL_TIMEOUT_SECONDS=20
+RAG_SYNTHESIS_PRIMARY_TIMEOUT_SECONDS=60
+RAG_SYNTHESIS_FALLBACK_TIMEOUT_SECONDS=40
+RAG_FINALIZATION_RESERVE_SECONDS=15
+RAG_CHAT_TURN_TIMEOUT_SECONDS=150
+RAG_SYNTHESIS_CONTRACT_RETRIES=1
+LLM_REASONING_MODE=disabled
+CHAT_TURN_LEASE_SECONDS=300
+LLM_PROMPT_DATA_POLICY=trusted
 
 RATE_LIMIT_ENABLED=true
 CONCURRENCY_LIMIT_MEETINGS=5
@@ -324,6 +328,8 @@ CIRCUIT_BREAKER_ENABLED=true
 
 ASR_TIMEOUT_SECONDS=120
 ASR_TIMEOUT_REALTIME_FACTOR=1.0
+ASR_MIN_SEGMENT_CONFIDENCE=0.1
+ASR_MAX_NO_SPEECH_PROBABILITY=0.6
 EMBEDDING_MODEL=nomic-embed-text
 EMBEDDING_DIMENSIONS=768
 EMBEDDING_TIMEOUT_SECONDS=30
@@ -380,8 +386,9 @@ Backend endpoints:
 | `POST` | `/api/meetings/{meetingId}/process` | Implemented | Queue processing |
 | `GET` | `/api/meetings/{meetingId}/processing-status` | Implemented | Read meeting/job progress |
 | `GET` | `/api/meetings/{meetingId}/intelligence-result` | Implemented | Read the complete processed transcript JSON when needed |
-| `POST` | `/api/meetings/{meetingId}/chat` | Implemented | Ask a meeting-grounded question |
-| `GET` | `/api/meetings/{meetingId}/chat` | Implemented | Read the meeting-scoped chat history |
+| `POST` | `/api/meetings/{meetingId}/chat` | Implemented | Queue one durable meeting-grounded turn; returns `409 chat_busy` while another turn for the meeting is active |
+| `GET` | `/api/meetings/{meetingId}/chat` | Implemented | Read meeting-scoped chat history with public metadata and persisted feedback state |
+| `PUT` | `/api/meetings/{meetingId}/chat/messages/{messageId}/feedback` | Implemented | Set revision-aware `up`, `down`, or `neutral` feedback for an eligible owned assistant message |
 | `GET` | `/api/admin/metrics` | Implemented | Read normalized admin metrics through backend admin auth and Redis cache |
 | `GET` | `/api/admin/accounts` | Implemented | List local accounts and role metadata for admin management |
 | `PATCH` | `/api/admin/accounts/{userId}/role` | Implemented | Change another account's role between `Admin` and `User` |
@@ -467,7 +474,7 @@ Current meeting intake rule: one meeting accepts only one uploaded or recorded a
 | Local backend command | `uvicorn backend.main:app --reload` |
 | Local Compose command | `docker compose up -d --build` |
 | Migration command | `docker compose exec -T backend alembic upgrade head` |
-| Worker command | `celery -A backend.configs.celery_app.celery_app worker --queues=meeting-processing,processing-maintenance` |
+| Worker command | `celery -A backend.configs.celery_app.celery_app worker --queues=chat-processing,meeting-processing,processing-maintenance` |
 | Beat command | `celery -A backend.configs.celery_app.celery_app beat` |
 | Env template | Root `.env.example` |
 | Public URL | `http://127.0.0.1:8080` locally when `APP_BIND_IP=0.0.0.0` and `NGINX_PORT=8080` |
@@ -571,49 +578,52 @@ The frontend may hide unavailable actions for UX, but backend authorization rema
 | 36 | Frontend v2 intelligence rendering | Done |
 | 37 | Database reset and v2 cutover | Done |
 | 38 | Evaluation, operations, and completion | Done |
-| 39 | Agentic RAG v2 alignment | In Progress |
-| 40 | Generic query graph and answer projections | In Progress |
+| 39 | Agentic RAG v2 alignment | Done |
+| 40 | Generic query graph and answer projections | Done |
+| 41 | Conversation-aware agent | Done |
+| 42 | Answer cache strategy | Done |
+| 43 | Verified agent memory | Done |
+| 44 | Context-aware verified RAG orchestration | Done |
+| 45 | Meeting recording and playback lifecycle | In Progress |
+| 46 | Semantic query intelligence and grounded answer reliability | Done |
+| 47 | Direct cutover to Simple Evidence-First RAG | In Progress |
 | Refactor 1-6 | Backend layered refactor and runtime cleanup | Done |
 
-## Agentic RAG Architecture (Phase 26)
+Phase 47 directly replaces the previous chat runtime. It has no legacy/shadow/canary pipeline mode and no answer-cache or Agent Memory path. Runtime reset, reprocessing, provider matrix, and final deploy acceptance remain pending.
+
+## Simple Evidence-First RAG Architecture (Phase 47)
 
 ### Overview
 
-The system uses an Agentic RAG approach where an AI agent dynamically selects tools and performs multi-hop reasoning to answer meeting questions.
+The system uses one deterministic retrieval plan and one mandatory LLM synthesis/verification boundary.
 
 ### Flow
 
 ```text
-Question → Fast Path Check → Immediate Response (greeting/chitchat)
-                │
-                ▼ Meeting Question
-         Query Planner → parallel retrieval
-         ├── Evidence Verifier
-         ├── one bounded replan when fields are missing
-         └── AnswerSynthesizer from verified JSON-derived evidence
-                │
-                ▼
-         Synthesize → Verified citations → Transcript/playback links
+Request gate → QuerySpec → deterministic retrieval plan → EvidenceBundle
+→ evidence validation → LLM synthesis → mandatory answer verification
+→ output policy → durable persistence → citations/pipelineTrace v1
 ```
 
-### Tools
+### Services
 
-- **Search**: semantic, keyword, section, speaker
-- **Retrieval**: summary, action_items, decisions, risks, timeline, participants
-- **Synthesis**: backend `AnswerSynthesizer` service boundary
+- `QueryInterpretationService`
+- `EvidenceRetrievalService`
+- `AnswerSynthesisService`
+- `AnswerVerificationService`
+- `OutputPolicyService`
 
 ### Evidence States
 
-- `fast_path`: Immediate response
+- `direct`: Successful non-meeting answer synthesized by the LLM
 - `grounded`: Full context
 - `partial`: Partial context
 - `not_enough_evidence`: No context
+- `clarification_needed`: Conversational reference is ambiguous
 - `blocked`: Guardrail blocked
 - `error`: System error
 
-### Feature Flag
-
-The system uses Agentic RAG exclusively.
+There is no runtime pipeline feature flag. Rollback uses the previous images/git revision and restore-tested backup.
 
 ## Phase 17 - Typewriter Expansion
 

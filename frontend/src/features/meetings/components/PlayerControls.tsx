@@ -13,6 +13,7 @@ import { formatTime } from "../utils/meetingFormatters";
 
 type PlayerControlsProps = {
   isPlaying: boolean;
+  disabled?: boolean;
   currentTime: number;
   duration: number;
   volume: number;
@@ -28,6 +29,7 @@ type PlayerControlsProps = {
 
 export function PlayerControls({
   isPlaying,
+  disabled,
   currentTime,
   duration,
   volume,
@@ -45,9 +47,9 @@ export function PlayerControls({
   return (
     <div className="apb-controls">
       <div className="apb-controls__transport">
-        <IconOnlyButton className="apb-controls__btn--skip" icon={<SkipBack size={16} />} label="Back 10 seconds" onClick={() => onSeekRelative(-10)} />
-        <IconOnlyButton className="apb-controls__btn--play" icon={isPlaying ? <Pause size={18} /> : <Play size={18} />} label={isPlaying ? "Pause" : "Play"} onClick={onTogglePlay} />
-        <IconOnlyButton className="apb-controls__btn--skip" icon={<SkipForward size={16} />} label="Forward 10 seconds" onClick={() => onSeekRelative(10)} />
+        <IconOnlyButton className="apb-controls__btn--skip" icon={<SkipBack size={16} />} label="Back 10 seconds" disabled={disabled} onClick={() => onSeekRelative(-10)} />
+        <IconOnlyButton className="apb-controls__btn--play" icon={isPlaying ? <Pause size={18} /> : <Play size={18} />} label={isPlaying ? "Pause" : "Play"} disabled={disabled} onClick={onTogglePlay} />
+        <IconOnlyButton className="apb-controls__btn--skip" icon={<SkipForward size={16} />} label="Forward 10 seconds" disabled={disabled} onClick={() => onSeekRelative(10)} />
       </div>
 
       <div className="apb-controls__seek">
@@ -60,6 +62,7 @@ export function PlayerControls({
             max={Math.floor(duration * 100)}
             value={Math.floor(currentTime * 100)}
             aria-label="Seek"
+            disabled={disabled}
             onChange={(e) => onSeek(Number(e.target.value) / 100)}
           />
           <div
@@ -76,6 +79,7 @@ export function PlayerControls({
           type="button"
           title={`Speed: ${playbackRate}x`}
           aria-label={`Playback speed: ${playbackRate}x`}
+          disabled={disabled}
           onClick={onCycleSpeed}
         >
           <Gauge size={14} />
@@ -83,7 +87,7 @@ export function PlayerControls({
         </button>
 
         <div className="apb-controls__volume">
-          <IconOnlyButton className="apb-controls__btn--volume" icon={isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />} label={isMuted ? "Unmute" : "Mute"} onClick={onToggleMute} />
+          <IconOnlyButton className="apb-controls__btn--volume" icon={isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />} label={isMuted ? "Unmute" : "Mute"} disabled={disabled} onClick={onToggleMute} />
           <input
             className="apb-controls__volume-input"
             type="range"
@@ -91,6 +95,7 @@ export function PlayerControls({
             max={100}
             value={isMuted ? 0 : Math.round(volume * 100)}
             aria-label="Volume"
+            disabled={disabled}
             onChange={(e) => onVolumeChange(Number(e.target.value) / 100)}
           />
         </div>

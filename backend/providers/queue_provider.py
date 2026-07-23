@@ -27,6 +27,27 @@ class ProcessingQueueProvider:
             }
         return {"requested": len(requested), "revoked": len(requested), "status": "requested"}
 
+    def enqueue_retrieval_repair(self, *, meeting_id: str, repair_token: str) -> None:
+        celery_app.send_task(
+            "omnicall.processing.repair_retrieval_index",
+            kwargs={"meeting_id": meeting_id, "repair_token": repair_token},
+            queue="processing-maintenance",
+        )
+
 
 def get_processing_queue_provider() -> ProcessingQueueProvider:
     return ProcessingQueueProvider()
+
+
+class ChatQueueProvider:
+    """Publish only durable identifiers; workers reload authoritative state."""
+
+    def enqueue_turn(self, *, turn_id: str) -> None:
+        celery_app.send_task(
+            "omnicall.chat.generate_answer",
+            kwargs={"turn_id": turn_id},
+            queue="chat-processing",
+        )
+
+def get_chat_queue_provider() -> ChatQueueProvider:
+    return ChatQueueProvider()

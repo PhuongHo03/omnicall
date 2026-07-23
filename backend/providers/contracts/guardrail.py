@@ -5,7 +5,7 @@ from typing import Any, Literal, Protocol
 
 GuardrailAction = Literal["allowed", "blocked"]
 GuardrailKind = Literal["chat_input", "answer"]
-PROMPT_VERSION = "v3-simplified"
+PROMPT_VERSION = "v6-typed-contact-verification-mode"
 
 
 class GuardrailProviderError(RuntimeError):

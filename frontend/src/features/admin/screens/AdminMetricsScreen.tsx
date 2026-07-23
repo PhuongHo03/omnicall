@@ -27,7 +27,7 @@ export function AdminMetricsScreen({ token }: AdminMetricsScreenProps) {
           label="Refresh"
           disabled={dashboard.isLoading}
           type="button"
-          onClick={() => void dashboard.refreshMetrics()}
+          onClick={() => void dashboard.refreshMetrics(true)}
         />
       </PageHeader>
 

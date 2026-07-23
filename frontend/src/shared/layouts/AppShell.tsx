@@ -16,7 +16,7 @@ type AppShellProps = {
 export function AppShell({ account, children, onLogout }: AppShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { extraContent, onCreateMeeting } = useSidebarSlot();
+  const { extraContent, onCreateMeeting, isCreateMeetingDisabled } = useSidebarSlot();
   const { theme, toggleTheme } = useTheme();
   const AccountRoleIcon = account.role === "Admin" ? ShieldCheck : UserRound;
   const isMeetingsRoute = location.pathname.startsWith("/meetings");
@@ -108,8 +108,9 @@ export function AppShell({ account, children, onLogout }: AppShellProps) {
             <button
               className={`sidebar-item active${isSidebarCollapsed ? " sidebar-item--icon-only" : ""}`}
               type="button"
+              disabled={isCreateMeetingDisabled}
               onClick={() => onCreateMeeting?.()}
-              title="New Meeting"
+              title={isCreateMeetingDisabled ? "Resolve the current recording or upload first" : "New Meeting"}
             >
               <Plus size={18} />
               {!isSidebarCollapsed && "New Meeting"}

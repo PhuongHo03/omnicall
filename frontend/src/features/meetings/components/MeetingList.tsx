@@ -17,7 +17,7 @@ function statusClass(status: string): string {
   return "draft";
 }
 
-export function MeetingList({ meetings, selectedMeetingId, onSelect }: MeetingListProps) {
+export function MeetingList({ disabled, meetings, selectedMeetingId, onSelect }: MeetingListProps) {
   if (meetings.length === 0) {
     return (
       <EmptyState message="No meetings yet." />
@@ -31,6 +31,7 @@ export function MeetingList({ meetings, selectedMeetingId, onSelect }: MeetingLi
           key={meeting.id}
           className={`meeting-card-sidebar${meeting.id === selectedMeetingId ? " active" : ""}`}
           type="button"
+          disabled={disabled && meeting.id !== selectedMeetingId}
           onClick={() => onSelect(meeting.id)}
         >
           <span className={`status-dot status-dot--${statusClass(meeting.status)}`} />

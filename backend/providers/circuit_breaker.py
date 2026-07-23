@@ -112,7 +112,7 @@ class CircuitBreaker:
                 logger.warning(
                     "Circuit breaker '%s' reached failure threshold (%d), opening",
                     self.name,
-                    self.failure_count,
+                    self._failure_count,
                 )
                 self._state = _State.OPEN
                 self._opened_at = time.monotonic()

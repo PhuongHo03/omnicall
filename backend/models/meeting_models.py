@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -101,16 +101,19 @@ class MeetingTranscriptWindow(Base):
     __table_args__ = (
         UniqueConstraint("meeting_id", "generation", "sequence_no", name="uq_transcript_windows_generation_sequence"),
         UniqueConstraint("meeting_id", "generation", "window_id", name="uq_transcript_windows_generation_window"),
+        Index("ix_transcript_windows_meeting_id", "meeting_id"),
+        Index("ix_transcript_windows_generation", "generation"),
+        Index("ix_transcript_windows_status", "status"),
     )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     meeting_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=False), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False
     )
     intelligence_result_id: Mapped[str | None] = mapped_column(
-        UUID(as_uuid=False), ForeignKey("meeting_intelligence_results.id", ondelete="CASCADE"), nullable=True, index=True
+        UUID(as_uuid=False), ForeignKey("meeting_intelligence_results.id", ondelete="CASCADE"), nullable=True
     )
-    generation: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    generation: Mapped[str] = mapped_column(String(120), nullable=False)
     window_id: Mapped[str] = mapped_column(String(140), nullable=False)
     sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
     start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -118,7 +121,7 @@ class MeetingTranscriptWindow(Base):
     segment_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     window_hash: Mapped[str] = mapped_column(String(128), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     local_result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -164,8 +167,19 @@ class MeetingChunkRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+Index(
+    "ix_meeting_chunks_text_trgm",
+    func.lower(MeetingChunkRecord.text).label("text_lower"),
+    postgresql_using="gin",
+    postgresql_ops={"text_lower": "gin_trgm_ops"},
+)
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("ix_chat_messages_meeting_created_id", "meeting_id", "created_at", "id"),
+    )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     meeting_id: Mapped[str] = mapped_column(
@@ -180,3 +194,109 @@ class ChatMessage(Base):
     citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class ChatTurn(Base):
+    """Durable unit of work pairing one user question with one terminal answer."""
+
+    __tablename__ = "chat_turns"
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "sequence_no", name="uq_chat_turns_meeting_sequence"),
+        UniqueConstraint("user_message_id", name="uq_chat_turns_user_message"),
+        UniqueConstraint("assistant_message_id", name="uq_chat_turns_assistant_message"),
+        CheckConstraint(
+            "status IN ('queued','started','completed','clarification_needed','blocked','error')",
+            name="ck_chat_turns_status",
+        ),
+        CheckConstraint("sequence_no > 0", name="ck_chat_turns_sequence_positive"),
+        CheckConstraint("attempt_count >= 0", name="ck_chat_turns_attempt_nonnegative"),
+        CheckConstraint(
+            "assistant_message_id IS NULL OR assistant_message_id <> user_message_id",
+            name="ck_chat_turns_distinct_messages",
+        ),
+        Index(
+            "uq_chat_turns_one_active_per_meeting",
+            "meeting_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued','started')"),
+        ),
+        Index("ix_chat_turns_meeting_status", "meeting_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    meeting_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_message_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    assistant_message_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class MeetingRetrievalSnapshot(Base):
+    """Authoritative generation boundary for derived retrieval data."""
+
+    __tablename__ = "meeting_retrieval_snapshots"
+    __table_args__ = (
+        CheckConstraint("status IN ('building','ready','failed')", name="ck_retrieval_snapshots_status"),
+        CheckConstraint("chunk_count >= 0", name="ck_retrieval_snapshots_chunk_count"),
+        CheckConstraint(
+            "repair_status IN ('none','pending','queued','started')",
+            name="ck_retrieval_snapshots_repair_status",
+        ),
+        CheckConstraint(
+            "repair_attempt_count >= 0",
+            name="ck_retrieval_snapshots_repair_attempt_count",
+        ),
+    )
+
+    meeting_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    intelligence_result_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("meeting_intelligence_results.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    index_generation: Mapped[str] = mapped_column(String(240), nullable=False)
+    embedding_identity: Mapped[str] = mapped_column(String(240), nullable=False, default="unknown")
+    retrieval_contract: Mapped[str] = mapped_column(String(80), nullable=False, default="v2")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ready", index=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    repair_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none", index=True)
+    repair_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    repair_lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    repair_lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    repair_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ChatMessageFeedback(Base):
+    __tablename__ = "chat_message_feedback"
+    __table_args__ = (
+        UniqueConstraint("chat_message_id", name="uq_chat_message_feedback_message"),
+        CheckConstraint("rating IN ('up','down','neutral')", name="ck_chat_message_feedback_rating"),
+        CheckConstraint("revision >= 1", name="ck_chat_message_feedback_revision"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    chat_message_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False)
+    meeting_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    rating: Mapped[str] = mapped_column(String(8), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

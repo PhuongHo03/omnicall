@@ -48,6 +48,11 @@
 /* ── Mobile (< 768px) ── */
 
 @media (max-width: 768px) {
+  .global-toast-viewport {
+    top: 10px;
+    width: calc(100vw - 20px);
+  }
+
   /* Sidebar: hidden off-screen by default */
   .sidebar {
     position: fixed;
@@ -170,4 +175,3 @@
     width: 100%;
   }
 }
-

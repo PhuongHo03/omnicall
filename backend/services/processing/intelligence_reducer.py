@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from datetime import UTC, datetime
 import hashlib
+import json
 import re
 import unicodedata
 
@@ -22,6 +23,29 @@ RECORD_SECTIONS = (
     "questions",
 )
 
+_GLOBAL_PARTICIPANT_COUNT_ID = "derived-transcript-participant-count"
+_IGNORED_SPEAKER_LABELS = frozenset(
+    {
+        "background",
+        "background noise",
+        "crosstalk",
+        "n a",
+        "na",
+        "noise",
+        "none",
+        "null",
+        "other",
+        "overlap",
+        "silence",
+        "speaker unknown",
+        "unk",
+        "unassigned",
+        "unidentified",
+        "unknown",
+        "unknown speaker",
+    }
+)
+
 
 def reduce_window_results(
     *,
@@ -33,6 +57,10 @@ def reduce_window_results(
     provider_name: str,
     provider_model: str,
 ) -> dict:
+    provider_executions = _provider_executions(local_results)
+    if provider_executions:
+        provider_name = provider_executions[0]["provider"] if len(provider_executions) == 1 else "multiple"
+        provider_model = provider_executions[0]["model"] if len(provider_executions) == 1 else "multiple"
     citations = _build_citations(transcript_segments)
     records: OrderedDict[str, dict] = OrderedDict()
     relationships: OrderedDict[str, dict] = OrderedDict()
@@ -46,6 +74,8 @@ def reduce_window_results(
         for section in RECORD_SECTIONS:
             for item in local.get(section, []) if isinstance(local.get(section), list) else []:
                 if not isinstance(item, dict):
+                    continue
+                if section == "facts" and _is_window_participant_count(item):
                     continue
                 record = _record_from_local(item, section, source_window_id, citation_map)
                 record_id = record["id"]
@@ -68,7 +98,15 @@ def reduce_window_results(
         for warning in _warnings(local):
             warnings.append(f"{source_window_id}: {warning}")
 
-    summary = _reduce_summary(local_results, citations, citation_maps)
+    _drop_unsupported_semantic_records(records, citations)
+    summary = _reduce_summary(local_results, citations, citation_maps, windows)
+    if (
+        summary.get("executive", {}).get("text")
+        and not summary.get("executive", {}).get("evidenceRefs")
+    ):
+        warnings.append(
+            "Executive summary was retained as context only because its source windows did not provide citation lineage."
+        )
     window_manifest = [
         {
             "id": window["windowId"],
@@ -79,7 +117,16 @@ def reduce_window_results(
         }
         for window in windows
     ]
-    for record in _speaker_records(transcript_segments, citations, window_manifest):
+    speaker_stats = _speaker_stats(transcript_segments)
+    if not speaker_stats.get("speakerCount") and speaker_stats.get("ignoredSegmentCount"):
+        warnings.append("Participant count was omitted because no reliable diarization speaker label was available.")
+    for record in _speaker_records(
+        transcript_segments,
+        citations,
+        window_manifest,
+        speaker_stats,
+        existing_record_ids=set(records),
+    ):
         existing = records.get(record["id"])
         if existing is None:
             records[record["id"]] = record
@@ -108,8 +155,11 @@ def reduce_window_results(
             "analysisProvider": "hierarchical-llm-analysis",
             "analysisModel": provider_model,
             "llmProvider": provider_name,
+            "providerExecutions": provider_executions,
+            "fallbackUsed": any(bool(item.get("fallbackUsed")) for item in provider_executions),
             "generatedAt": datetime.now(UTC).isoformat(),
         },
+        "speakers": speaker_stats,
         "transcript": {
             "segments": [_segment_json(segment) for segment in transcript_segments],
             "windows": window_manifest,
@@ -138,8 +188,37 @@ def reduce_window_results(
     }
 
 
+def _provider_executions(local_results: list[dict]) -> list[dict]:
+    counts: OrderedDict[tuple[str, str | None, bool, str | None, str | None], int] = OrderedDict()
+    for local in local_results:
+        source = local.get("source", {}) if isinstance(local, dict) else {}
+        provider = source.get("llmProvider")
+        model = source.get("analysisModel")
+        if not isinstance(provider, str) or not provider:
+            continue
+        key = (
+            provider,
+            model if isinstance(model, str) and model else None,
+            bool(source.get("fallbackUsed", False)),
+            source.get("primaryErrorType") if isinstance(source.get("primaryErrorType"), str) else None,
+            source.get("primaryErrorMessage") if isinstance(source.get("primaryErrorMessage"), str) else None,
+        )
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {
+            "provider": provider,
+            "model": model,
+            "fallbackUsed": fallback,
+            "primaryErrorType": error_type,
+            "primaryErrorMessage": error_message,
+            "windowCount": count,
+        }
+        for (provider, model, fallback, error_type, error_message), count in counts.items()
+    ]
+
+
 def _record_from_local(item: dict, section: str, source_window_id: str, citation_map: dict[str, str]) -> dict:
-    record_id = item.get("id") or f"{section}-{abs(hash(str(item))) % 100000:05d}"
+    record_id = item.get("id") or _stable_candidate_id(section, item)
     record_type = {
         "participants": "participant",
         "entities": "entity",
@@ -159,6 +238,38 @@ def _record_from_local(item: dict, section: str, source_window_id: str, citation
         record_id=record_id,
         source_ref=source_window_id,
         evidence_refs=list(dict.fromkeys(citation_ids)),
+    )
+
+
+def _stable_candidate_id(section: str, item: dict) -> str:
+    payload = {
+        key: value
+        for key, value in item.items()
+        if key not in {"citationIds", "confidence", "sourceWindowIds"}
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:12]
+    prefix = {
+        "participants": "participant",
+        "entities": "entity",
+        "facts": "fact",
+        "events": "event",
+        "topics": "topic",
+        "actions": "action",
+        "decisions": "decision",
+        "risks": "risk",
+        "questions": "question",
+        "relationship": "relationship",
+    }.get(section, section.rstrip("s"))
+    return f"{prefix}-{digest}"
+
+
+def _is_window_participant_count(item: dict) -> bool:
+    return (
+        (item.get("subtype") or item.get("type")) == "participant_count"
+        and item.get("derivedFrom") == "speakers"
+        and str(item.get("predicate") or "").startswith("has_")
     )
 
 
@@ -187,22 +298,98 @@ def _attach_derived_citations(records: OrderedDict[str, dict], citations: list[d
             record["status"] = "verified" if data.get("derivedFrom") else "candidate"
 
 
-def _reduce_summary(local_results: list[dict], citations: list[dict], citation_maps: list[dict[str, str]]) -> dict:
+def _reduce_summary(
+    local_results: list[dict],
+    citations: list[dict],
+    citation_maps: list[dict[str, str]],
+    windows: list[dict],
+) -> dict:
     texts = []
     citation_ids = []
-    for result, citation_map in zip(local_results, citation_maps, strict=True):
+    covered_window_ids: list[str] = []
+    sentences: list[dict] = []
+    for result, citation_map, window in zip(local_results, citation_maps, windows, strict=True):
         executive = result.get("summaries", {}).get("executive", {})
         if isinstance(executive, dict) and executive.get("text"):
-            texts.append(str(executive["text"]).strip())
-            citation_ids.extend(citation_map.get(item, item) for item in executive.get("citationIds", []))
+            summary_text = str(executive["text"]).strip()
+            texts.append(summary_text)
+            context_only = executive.get("lineageStatus") == "context_only"
+            if not context_only:
+                covered_window_ids.append(window["windowId"])
+            local_citation_ids = executive.get("citationIds", [])
+            if not isinstance(local_citation_ids, list):
+                local_citation_ids = []
+            mapped_refs = [] if context_only else [
+                citation_map.get(item, item)
+                for item in local_citation_ids
+                if isinstance(item, str)
+            ]
+            citation_ids.extend(mapped_refs)
+            sentences.append({"text": summary_text, "evidenceRefs": mapped_refs, "coveredWindowIds": [] if context_only else [window["windowId"]]})
+            # A provider may link an executive summary to typed topics while
+            # omitting the duplicate citationIds field.  Preserve that
+            # explicit graph lineage, but never infer that every citation in
+            # the window supports the whole summary.
+            if not context_only and not local_citation_ids:
+                referenced_topic_ids = {
+                    item
+                    for item in executive.get("topicIds", [])
+                    if isinstance(item, str)
+                }
+                for topic in result.get("topics", []) if isinstance(result.get("topics"), list) else []:
+                    if not isinstance(topic, dict) or topic.get("id") not in referenced_topic_ids:
+                        continue
+                    citation_ids.extend(
+                        citation_map.get(item, item)
+                        for item in topic.get("citationIds", [])
+                        if isinstance(item, str)
+                    )
     known = {citation["id"] for citation in citations}
     citation_ids = [item for item in dict.fromkeys(citation_ids) if item in known]
     text = " ".join(texts)
+    coverage_ratio = len(set(covered_window_ids)) / len(windows) if windows else 0.0
+    whole_meeting = bool(windows) and coverage_ratio == 1.0 and bool(citation_ids)
     return {
-        "executive": {"text": text[:4000], "topicIds": [], "evidenceRefs": citation_ids},
+        "executive": {
+            "text": text[:4000],
+            "topicIds": [],
+            "evidenceRefs": citation_ids if whole_meeting else [],
+            "coveredWindowIds": list(dict.fromkeys(covered_window_ids)),
+            "coverageRatio": round(coverage_ratio, 4),
+            "sentences": sentences,
+            "lineageStatus": "verified" if whole_meeting else "context_only",
+        },
         "topics": [],
         "timeline": [],
     }
+
+
+def _drop_unsupported_semantic_records(records: OrderedDict[str, dict], citations: list[dict]) -> None:
+    """Drop semantic records whose cited transcript cannot establish provenance."""
+    known = {item.get("id") for item in citations if isinstance(item, dict)}
+    for record_id, record in list(records.items()):
+        if record.get("type") not in {"action", "decision", "risk", "question", "topic"}:
+            continue
+        refs = [ref for ref in record.get("evidenceRefs", []) if ref in known]
+        if not refs:
+            del records[record_id]
+    action_signatures = {
+        _semantic_record_signature(record)
+        for record in records.values()
+        if record.get("type") == "action"
+    }
+    for record_id, record in list(records.items()):
+        if record.get("type") == "decision" and _semantic_record_signature(record) in action_signatures:
+            del records[record_id]
+
+
+def _semantic_record_signature(record: dict) -> str:
+    data = record.get("data", {})
+    text = " ".join(
+        str(data.get(key) or "")
+        for key in ("text", "summary", "task", "decision", "title", "name")
+    )
+    return " ".join(_normalized_name(text).split())
 
 
 def _citation_map(local: dict, global_citations: list[dict]) -> dict[str, str]:
@@ -255,8 +442,17 @@ def _segment_json(segment) -> dict:
 def _speaker_stats(segments: list) -> dict:
     stats: dict[str, dict] = {}
     for segment in segments:
-        label = segment.speaker or "Unknown"
-        item = stats.setdefault(label, {"label": label, "segmentCount": 0, "totalTalkTimeMs": 0, "confidence": 0.0})
+        label = _speaker_label(segment.speaker)
+        item = stats.setdefault(
+            label,
+            {
+                "label": label,
+                "segmentCount": 0,
+                "totalTalkTimeMs": 0,
+                "confidence": 0.0,
+                "countsTowardParticipantCount": _is_countable_speaker_label(label),
+            },
+        )
         item["segmentCount"] += 1
         item["totalTalkTimeMs"] += max(0, (segment.end_ms or 0) - (segment.start_ms or 0))
         item["confidence"] += float(segment.confidence or 0)
@@ -264,11 +460,52 @@ def _speaker_stats(segments: list) -> dict:
     for item in stats.values():
         item["confidence"] = round(item["confidence"] / max(1, item["segmentCount"]), 4)
         items.append(item)
-    return {"speakerCount": len(items), "identifiedParticipantCount": 0, "mentionedOnlyCount": 0, "items": items}
+    items.sort(key=lambda item: str(item["label"]))
+    counted_items = [item for item in items if item["countsTowardParticipantCount"]]
+    ignored_items = [item for item in items if not item["countsTowardParticipantCount"]]
+    reconciled_ignored_segments = sum(
+        1
+        for index, segment in enumerate(segments)
+        if not _is_countable_speaker_label(_speaker_label(segment.speaker))
+        and _ignored_segment_is_reconciled(segments, index)
+    )
+    ignored_segment_count = sum(
+        int(item["segmentCount"])
+        for item in ignored_items
+    )
+    unresolved_ignored_segments = max(
+        0,
+        ignored_segment_count - reconciled_ignored_segments,
+    )
+    return {
+        "speakerCount": len(counted_items),
+        "speakerCountExact": bool(counted_items) and unresolved_ignored_segments == 0,
+        "identifiedParticipantCount": 0,
+        "mentionedOnlyCount": 0,
+        "ignoredSpeakerLabelCount": len(ignored_items),
+        "ignoredSegmentCount": ignored_segment_count,
+        "reconciledIgnoredSegmentCount": reconciled_ignored_segments,
+        "unresolvedIgnoredSegmentCount": unresolved_ignored_segments,
+        "items": items,
+    }
 
 
-def _speaker_records(segments: list, citations: list[dict], windows: list[dict]) -> list[dict]:
+def _speaker_records(
+    segments: list,
+    citations: list[dict],
+    windows: list[dict],
+    speaker_stats: dict | None = None,
+    existing_record_ids: set[str] | None = None,
+) -> list[dict]:
     """Represent deterministic speaker intelligence as canonical v2 records."""
+    speaker_stats = speaker_stats or _speaker_stats(segments)
+    countable_labels = {
+        item["label"]
+        for item in speaker_stats.get("items", [])
+        if isinstance(item, dict)
+        and item.get("countsTowardParticipantCount")
+        and isinstance(item.get("label"), str)
+    }
     grouped: dict[str, dict] = {}
     citation_by_segment = {
         segment_id: citation.get("id")
@@ -277,7 +514,9 @@ def _speaker_records(segments: list, citations: list[dict], windows: list[dict])
         if isinstance(citation, dict) and isinstance(citation.get("id"), str)
     }
     for segment in segments:
-        label = segment.speaker or "Unknown"
+        label = _speaker_label(segment.speaker)
+        if label not in countable_labels:
+            continue
         item = grouped.setdefault(label, {"segmentCount": 0, "totalTalkTimeMs": 0, "confidenceTotal": 0.0, "evidenceRefs": []})
         item["segmentCount"] += 1
         item["totalTalkTimeMs"] += max(0, (segment.end_ms or 0) - (segment.start_ms or 0))
@@ -286,6 +525,7 @@ def _speaker_records(segments: list, citations: list[dict], windows: list[dict])
             item["evidenceRefs"].append(citation_by_segment[segment.id])
 
     records = []
+    reserved_ids = set(existing_record_ids or ())
     for label, values in grouped.items():
         speaker_id = f"speaker-{hashlib.sha1(label.strip().lower().encode('utf-8')).hexdigest()[:12]}"
         records.append(build_record(
@@ -304,17 +544,121 @@ def _speaker_records(segments: list, citations: list[dict], windows: list[dict])
             confidence=round(values["confidenceTotal"] / max(1, values["segmentCount"]), 4),
             status="verified",
         ))
-    records.append(build_record(
-        record_id="fact-speaker-count",
-        record_type="fact",
-        subtype="speaker_count",
-        data={"value": len(grouped), "unit": "speakers"},
-        source_refs=[window["id"] for window in windows if isinstance(window, dict) and isinstance(window.get("id"), str)],
-        derived_from=[record["id"] for record in records],
-        confidence=1.0,
-        status="verified",
-    ))
+        reserved_ids.add(speaker_id)
+    if speaker_stats.get("speakerCount"):
+        speaker_count_exact = speaker_stats.get("speakerCountExact") is True
+        records.append(build_record(
+            record_id=_available_record_id(_GLOBAL_PARTICIPANT_COUNT_ID, reserved_ids),
+            record_type="fact",
+            subtype="participant_count",
+            data={
+                "subject": {"type": "meeting", "id": "meeting"},
+                "predicate": "has_reliable_speaker_count",
+                "value": int(speaker_stats.get("speakerCount") or 0),
+                "unit": "people",
+                "countBasis": "reliable_diarization_labels",
+                "ignoredSpeakerLabelCount": int(speaker_stats.get("ignoredSpeakerLabelCount") or 0),
+                "ignoredSegmentCount": int(speaker_stats.get("ignoredSegmentCount") or 0),
+                "reconciledIgnoredSegmentCount": int(
+                    speaker_stats.get("reconciledIgnoredSegmentCount") or 0
+                ),
+                "unresolvedIgnoredSegmentCount": int(
+                    speaker_stats.get("unresolvedIgnoredSegmentCount") or 0
+                ),
+                "countCompleteness": "exact" if speaker_count_exact else "lower_bound",
+                "isLowerBound": not speaker_count_exact,
+            },
+            source_refs=[window["id"] for window in windows if isinstance(window, dict) and isinstance(window.get("id"), str)],
+            derived_from=[record["id"] for record in records],
+            confidence=1.0 if speaker_count_exact else 0.9,
+            status="verified",
+        ))
     return records
+
+
+def _available_record_id(base: str, existing_ids: set[str]) -> str:
+    if base not in existing_ids:
+        return base
+    suffix = 2
+    while f"{base}-{suffix}" in existing_ids:
+        suffix += 1
+    return f"{base}-{suffix}"
+
+
+def _speaker_label(value: object) -> str:
+    label = re.sub(r"\s+", " ", str(value or "")).strip()
+    return label or "Unknown"
+
+
+def _is_countable_speaker_label(value: object) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized.casefold()).strip()
+    if not normalized or normalized in _IGNORED_SPEAKER_LABELS:
+        return False
+    return not bool(
+        re.fullmatch(
+            r"(?:background(?: noise)?|crosstalk|noise|silence|overlap|unk|unknown|unassigned|unidentified)(?: \d+)?",
+            normalized,
+        )
+    )
+
+
+def _ignored_segment_is_reconciled(segments: list, index: int) -> bool:
+    """Prove an ignored diarization segment cannot introduce another speaker."""
+    segment = segments[index]
+    label = _normalized_speaker_label(getattr(segment, "speaker", None))
+    if label in {
+        "background",
+        "background noise",
+        "crosstalk",
+        "noise",
+        "overlap",
+        "silence",
+    }:
+        return True
+    duration_ms = max(
+        0,
+        int(getattr(segment, "end_ms", 0) or 0)
+        - int(getattr(segment, "start_ms", 0) or 0),
+    )
+    if duration_ms > 10_000:
+        return False
+
+    previous = segments[index - 1] if index > 0 else None
+    following = segments[index + 1] if index + 1 < len(segments) else None
+    previous_label = _adjacent_countable_speaker(previous, segment, before=True)
+    following_label = _adjacent_countable_speaker(following, segment, before=False)
+    if previous_label and following_label:
+        return previous_label == following_label
+    if previous_label and following is None:
+        return True
+    if following_label and previous is None:
+        return True
+    return False
+
+
+def _adjacent_countable_speaker(neighbor, segment, *, before: bool) -> str | None:
+    if neighbor is None:
+        return None
+    label = _speaker_label(getattr(neighbor, "speaker", None))
+    if not _is_countable_speaker_label(label):
+        return None
+    gap_ms = (
+        int(getattr(segment, "start_ms", 0) or 0)
+        - int(getattr(neighbor, "end_ms", 0) or 0)
+        if before
+        else int(getattr(neighbor, "start_ms", 0) or 0)
+        - int(getattr(segment, "end_ms", 0) or 0)
+    )
+    return label if -250 <= gap_ms <= 500 else None
+
+
+def _normalized_speaker_label(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "")).encode(
+        "ascii",
+        "ignore",
+    ).decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", normalized.casefold()).strip()
 
 
 def _infer_identity_relationships(

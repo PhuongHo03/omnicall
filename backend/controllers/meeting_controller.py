@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 from urllib.parse import quote
 
@@ -11,6 +12,8 @@ from backend.dependencies.auth import CurrentUserContext, get_current_context
 from backend.dtos.meeting_dto import (
     MeetingChatAcceptedResponse,
     MeetingChatHistoryResponse,
+    MeetingChatFeedbackRequest,
+    MeetingChatFeedbackResponse,
     MeetingChatRequest,
     MeetingAssetResponse,
     MeetingCreateRequest,
@@ -198,7 +201,7 @@ def ask_meeting_chat(
     result = chat_service.ask(context, meeting_id, request)
     event_provider.publish(
         f"chat:{meeting_id}",
-        {"type": "status", "stage": "queued", "message": "Đang chờ xử lý..."},
+        {"type": "status", "turnId": result.turn_id, "stage": "queued", "message": "Đang chờ xử lý..."},
     )
     return result
 
@@ -212,9 +215,29 @@ def get_meeting_chat_history(
     return chat_service.get_history(context, meeting_id)
 
 
+@router.put("/{meeting_id}/chat/messages/{message_id}/feedback", response_model=MeetingChatFeedbackResponse)
+def set_meeting_chat_feedback(
+    meeting_id: str,
+    message_id: str,
+    request: MeetingChatFeedbackRequest,
+    context: CurrentUserContext = Depends(get_current_context),
+    chat_service: MeetingChatService = Depends(get_chat_service),
+) -> MeetingChatFeedbackResponse:
+    return MeetingChatFeedbackResponse.model_validate(
+        chat_service.set_feedback(
+            context,
+            meeting_id,
+            message_id,
+            request.rating,
+            expected_revision=request.expected_revision,
+        )
+    )
+
+
 @router.get("/{meeting_id}/chat/stream")
 def stream_chat_events(
     meeting_id: str,
+    turn_id: str | None = Query(default=None),
     context: CurrentUserContext = Depends(get_current_context),
     chat_service: MeetingChatService = Depends(get_chat_service),
     event_provider: ChatEventProvider = Depends(_get_chat_event_provider),
@@ -222,13 +245,15 @@ def stream_chat_events(
     meeting = chat_service.meetings.get_for_owner(meeting_id, context.user_id)
     if meeting is None:
         raise ApplicationError(404, "meeting_not_found", "Meeting was not found.")
-
     channel = f"chat:{meeting_id}"
     pubsub = event_provider.subscribe(channel)
+    snapshot = chat_service.stream_snapshot(context, meeting_id, turn_id)
 
     def event_stream():
         try:
             yield 'event: connected\ndata: {"type": "connected", "status": "connected"}\n\n'
+            if snapshot is not None:
+                yield f"data: {json.dumps(snapshot, ensure_ascii=False, separators=(',', ':'))}\n\n"
             for message in pubsub.listen():
                 if message["type"] != "message":
                     continue

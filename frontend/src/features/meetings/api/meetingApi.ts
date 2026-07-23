@@ -2,16 +2,22 @@ import { apiErrorMessage, apiUrl, authHeaders, jsonHeaders, parseBlobResponse, p
 import { retryWithBackoff } from "../../../shared/utils/retryWithBackoff";
 import {
   buildChatPayload,
+  buildChatFeedbackPayload,
   buildMeetingTitlePayload,
+  parseChatFeedbackResponse,
   parseAsset,
   parseMeeting,
+  parseMeetingChatAccepted,
   parseMeetingChatHistory,
   parseMeetingIntelligenceResult,
   parseMeetingList,
 } from "../dtos/meetingDtos";
 import type {
+  ChatFeedbackResult,
+  ChatFeedbackSelection,
   Meeting,
   MeetingAsset,
+  MeetingChatAcceptedResult,
   MeetingChatHistory,
   MeetingIntelligenceResult,
 } from "../types/meetingTypes";
@@ -52,6 +58,21 @@ export async function updateMeetingTitle(token: string, meetingId: string, title
     body: JSON.stringify(buildMeetingTitlePayload(title))
   });
   return parseMeeting(await parseJsonResponse(response));
+}
+
+export async function setChatFeedback(
+  token: string,
+  meetingId: string,
+  messageId: string,
+  rating: ChatFeedbackSelection,
+  expectedRevision?: number,
+): Promise<ChatFeedbackResult> {
+  const response = await fetch(apiUrl(`/meetings/${meetingId}/chat/messages/${messageId}/feedback`), {
+    method: "PUT",
+    headers: jsonHeaders(token),
+    body: JSON.stringify(buildChatFeedbackPayload(rating, expectedRevision)),
+  });
+  return parseChatFeedbackResponse(await parseJsonResponse(response));
 }
 
 export async function uploadMeetingAsset(
@@ -120,9 +141,10 @@ export async function getMeetingIntelligenceResult(token: string, meetingId: str
   return parseMeetingIntelligenceResult(await parseJsonResponse(response));
 }
 
-export async function downloadMeetingAsset(token: string, meetingId: string, assetId: string): Promise<Blob> {
+export async function downloadMeetingAsset(token: string, meetingId: string, assetId: string, options?: { signal?: AbortSignal }): Promise<Blob> {
   const response = await fetch(apiUrl(`/meetings/${meetingId}/assets/${assetId}/content`), {
-    headers: authHeaders(token)
+    headers: authHeaders(token),
+    signal: options?.signal,
   });
   return parseBlobResponse(response, "Asset download failed.");
 }
@@ -133,7 +155,7 @@ export async function askMeetingChat(
   token: string,
   meetingId: string,
   question: string
-): Promise<{ status: string; message: string }> {
+): Promise<MeetingChatAcceptedResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), CHAT_POST_TIMEOUT_MS);
   try {
@@ -143,10 +165,35 @@ export async function askMeetingChat(
       body: JSON.stringify(buildChatPayload(question)),
       signal: controller.signal
     });
-    return parseJsonResponse(response) as Promise<{ status: string; message: string }>;
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const code = payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string"
+        ? payload.code
+        : "request_failed";
+      throw new MeetingChatApiError(response.status, code, apiErrorMessage(payload));
+    }
+    return parseMeetingChatAccepted(payload);
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export class MeetingChatApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "MeetingChatApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function isChatBusyError(caught: unknown): caught is MeetingChatApiError {
+  return caught instanceof MeetingChatApiError
+    && caught.status === 409
+    && caught.code === "chat_busy";
 }
 
 export async function getMeetingChatHistory(token: string, meetingId: string, options?: { signal?: AbortSignal }): Promise<MeetingChatHistory> {

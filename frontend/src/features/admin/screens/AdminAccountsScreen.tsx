@@ -21,7 +21,7 @@ export function AdminAccountsScreen({ token }: AdminAccountsScreenProps) {
         isLoading={accounts.isLoading}
         updatingAccountId={accounts.updatingAccountId}
         onDeleteAccount={(userId) => void accounts.deleteAccount(userId)}
-        onRefresh={() => void accounts.refreshAccounts()}
+        onRefresh={() => void accounts.refreshAccounts(true)}
         onRoleChange={(userId, role) => void accounts.updateAccountRole(userId, role)}
       />
 

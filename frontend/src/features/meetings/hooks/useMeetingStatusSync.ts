@@ -16,6 +16,7 @@ import type {
 } from "../types/meetingTypes";
 
 type UseMeetingStatusSyncArgs = {
+  applyChatHistory: (messages: MeetingChatMessage[]) => void;
   abortControllerRef: RefObject<AbortController | null>;
   checkPendingAnswer: (
     meetingId: string,
@@ -35,6 +36,7 @@ type UseMeetingStatusSyncArgs = {
 };
 
 export function useMeetingStatusSync({
+  applyChatHistory,
   abortControllerRef,
   checkPendingAnswer,
   currentMeetingIdRef,
@@ -51,10 +53,10 @@ export function useMeetingStatusSync({
   const prevSelectedStatusRef = useRef<string | null>(null);
 
   const refreshSelectedMeetingState = useCallback(
-    async (meeting: Meeting) => {
+    async (meeting: Meeting): Promise<Meeting | null> => {
       const detail = await getMeeting(token, meeting.id, { signal: abortControllerRef.current?.signal });
       if (currentMeetingIdRef.current !== meeting.id) {
-        return;
+        return null;
       }
       setMeetings((current) => current.map((item) => (item.id === detail.id ? detail : item)));
       setLastAsset(detail.latestAsset);
@@ -64,26 +66,28 @@ export function useMeetingStatusSync({
           getMeetingChatHistory(token, meeting.id),
         ]);
         if (currentMeetingIdRef.current !== meeting.id) {
-          return;
+          return null;
         }
         setIntelligenceResult(intelligenceResult);
-        setChatMessages(chatHistory.messages);
+        applyChatHistory(chatHistory.messages);
         await checkPendingAnswer(meeting.id, chatHistory.messages, detail.pendingChatStatus);
       } else if (detail.status === "QUEUED" || detail.status === "PROCESSING") {
         const chatHistory = await getMeetingChatHistory(token, meeting.id);
         if (currentMeetingIdRef.current !== meeting.id) {
-          return;
+          return null;
         }
         setIntelligenceResult(null);
-        setChatMessages(chatHistory.messages);
+        applyChatHistory(chatHistory.messages);
         await checkPendingAnswer(meeting.id, chatHistory.messages, detail.pendingChatStatus);
       } else {
         setIntelligenceResult(null);
         setChatMessages([]);
       }
+      return currentMeetingIdRef.current === meeting.id ? detail : null;
     },
     [
       abortControllerRef,
+      applyChatHistory,
       checkPendingAnswer,
       currentMeetingIdRef,
       setChatMessages,
@@ -112,7 +116,7 @@ export function useMeetingStatusSync({
         ]);
         if (currentMeetingIdRef.current !== selectedId) return;
         setIntelligenceResult(intelligenceResult);
-        setChatMessages(chatHistory.messages);
+        applyChatHistory(chatHistory.messages);
         setLastAsset(nextSelected.latestAsset);
         await checkPendingAnswer(selectedId, chatHistory.messages, nextSelected?.pendingChatStatus);
       } else if (nextStatus !== "QUEUED" && nextStatus !== "PROCESSING") {
@@ -122,7 +126,7 @@ export function useMeetingStatusSync({
       } else {
         const chatHistory = await getMeetingChatHistory(token, selectedId);
         if (currentMeetingIdRef.current !== selectedId) return;
-        setChatMessages(chatHistory.messages);
+        applyChatHistory(chatHistory.messages);
         setLastAsset(nextSelected.latestAsset);
         await checkPendingAnswer(selectedId, chatHistory.messages, nextSelected?.pendingChatStatus);
       }
@@ -132,6 +136,7 @@ export function useMeetingStatusSync({
     }
   }, [
     abortControllerRef,
+    applyChatHistory,
     checkPendingAnswer,
     currentMeetingIdRef,
     setChatMessages,
